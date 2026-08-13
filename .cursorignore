@@ -1,0 +1,14 @@
+.env
+.env.*
+secrets.enc
+*.pem
+*.key
+runs/
+cache/
+library/
+venvs/
+archive/
+node_modules/
+.venv/
+frontend/dist/
+app/web/
