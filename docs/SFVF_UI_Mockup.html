@@ -1,0 +1,1519 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SFVF Interface Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   TOKENS
+   ============================================================ */
+:root{
+  --bg:#1a1b1d;
+  --surface:#212326;
+  --surface-2:#292b2f;
+  --surface-3:#313338;
+  --line:#3b3e44;
+  --line-soft:#2e3136;
+
+  --text:#f0f1f3;
+  --text-dim:#aab0b7;
+  --text-faint:#8b9299;
+
+  --amber:#d4a24c;
+  --green:#63a67f;
+  --red:#d1746c;
+
+  --amber-bg:rgba(212,162,76,.10);
+  --green-bg:rgba(99,166,127,.10);
+  --red-bg:rgba(209,116,108,.10);
+
+  --font-display:"Space Grotesk", system-ui, sans-serif;
+  --font-body:"IBM Plex Sans", system-ui, sans-serif;
+  --font-mono:"IBM Plex Mono", ui-monospace, monospace;
+
+  --r:4px;
+  --topbar-h:52px;
+  --statusbar-h:30px;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--font-body);
+  font-size:14px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  overflow:hidden;
+}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--text-dim);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition-duration:.01ms !important;animation-duration:.01ms !important}
+}
+
+/* ============================================================
+   SHELL
+   ============================================================ */
+.app{display:flex;flex-direction:column;height:100vh}
+
+.topbar{
+  height:var(--topbar-h);flex:0 0 auto;
+  display:flex;align-items:stretch;
+  border-bottom:1px solid var(--line);
+  background:var(--surface);
+}
+.brand{
+  display:flex;align-items:center;gap:9px;
+  padding:0 20px;border-right:1px solid var(--line);
+}
+.brand-mark{flex:0 0 auto;color:var(--text-dim);display:flex}
+.brand-name{
+  font-family:var(--font-display);font-weight:600;letter-spacing:-.005em;
+  font-size:13.5px;white-space:nowrap;
+}
+.brand-sub{font-family:var(--font-mono);font-size:10px;color:var(--text-faint);letter-spacing:.08em}
+
+.tabs{display:flex;align-items:stretch}
+.tab{
+  padding:0 20px;display:flex;align-items:center;gap:8px;
+  color:var(--text-dim);font-size:13px;font-weight:500;
+  border-right:1px solid var(--line-soft);
+  border-bottom:2px solid transparent;
+  transition:color .12s,background .12s;
+}
+.tab:hover{color:var(--text);background:var(--surface-2)}
+.tab.on{color:var(--text);border-bottom-color:var(--text-dim);background:var(--surface-2)}
+.tab .ico{opacity:.75}
+.tab-badge{
+  font-family:var(--font-mono);font-size:10px;
+  background:var(--surface-3);color:var(--text-dim);
+  padding:1px 5px;border-radius:2px;
+}
+
+
+.main{flex:1 1 auto;overflow-y:auto;position:relative}
+.view{display:none;padding:26px 30px 44px}
+.view.on{display:block}
+
+/* ---- status bar ---- */
+.statusbar{
+  height:var(--statusbar-h);flex:0 0 auto;
+  display:flex;align-items:center;gap:0;
+  border-top:1px solid var(--line);background:var(--surface);
+  font-family:var(--font-mono);font-size:11px;color:var(--text-faint);
+}
+.st{display:flex;align-items:center;gap:7px;padding:0 16px;height:100%;border-right:1px solid var(--line-soft)}
+.st:last-child{border-right:none;margin-left:auto;border-left:1px solid var(--line-soft)}
+.st b{font-weight:500;color:var(--text-dim)}
+
+/* ============================================================
+   PRIMITIVES
+   ============================================================ */
+.page-head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:22px;gap:20px}
+.page-title{font-family:var(--font-display);font-size:19px;font-weight:600;letter-spacing:-.01em}
+.page-note{color:var(--text-faint);font-size:12.5px;margin-top:3px;max-width:62ch}
+
+.eyebrow{
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--text-faint);
+}
+
+.btn{
+  padding:7px 15px;border:1px solid var(--line);border-radius:var(--r);
+  background:var(--surface-2);color:var(--text-dim);font-size:12.5px;font-weight:500;
+  display:inline-flex;align-items:center;gap:7px;
+  transition:.12s;
+}
+.btn:hover{background:var(--surface-3);color:var(--text);border-color:var(--text-faint)}
+.btn-primary{background:#d8dade;color:#1a1b1d;border-color:#d8dade;font-weight:600}
+.btn-primary:hover{background:#fff;color:#1a1b1d;border-color:#fff}
+.btn-sm{padding:5px 11px;font-size:11.5px}
+.btn-ghost{background:transparent;border-color:transparent}
+.btn-ghost:hover{background:var(--surface-2);border-color:var(--line)}
+.btn[disabled]{opacity:.35;cursor:not-allowed}
+
+.dot{width:6px;height:6px;border-radius:50%;flex:0 0 auto}
+.dot.run{background:var(--amber);box-shadow:0 0 0 3px var(--amber-bg)}
+.dot.done{background:var(--green);box-shadow:0 0 0 3px var(--green-bg)}
+.dot.fail{background:var(--red);box-shadow:0 0 0 3px var(--red-bg)}
+.dot.idle{background:var(--text-faint)}
+
+.pill{
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.05em;
+  padding:2px 7px;border-radius:2px;border:1px solid var(--line);
+  color:var(--text-dim);background:var(--surface-2);text-transform:uppercase;
+}
+.pill.run{color:var(--amber);border-color:rgba(212,162,76,.35);background:var(--amber-bg)}
+.pill.done{color:var(--green);border-color:rgba(99,166,127,.35);background:var(--green-bg)}
+.pill.fail{color:var(--red);border-color:rgba(209,116,108,.35);background:var(--red-bg)}
+
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+.panel-head{
+  padding:11px 15px;border-bottom:1px solid var(--line-soft);
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+}
+.panel-body{padding:15px}
+
+/* ---- SIGNATURE: meter strip ---- */
+.meters{display:flex;align-items:stretch;border:1px solid var(--line-soft);border-radius:2px;overflow:hidden}
+.meter{
+  flex:1 1 0;padding:6px 10px;border-right:1px solid var(--line-soft);
+  background:rgba(0,0,0,.14);min-width:0;
+}
+.meter:last-child{border-right:none}
+.meter-name{
+  font-family:var(--font-mono);font-size:9px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.meter-val{font-family:var(--font-mono);font-size:13px;font-weight:500;color:var(--text);margin-top:1px}
+.meter-unit{font-size:10px;color:var(--text-faint);margin-left:3px;font-weight:400}
+.meter-val.none{font-size:11px;color:var(--text-faint);letter-spacing:.02em}
+.meter-sub{
+  font-family:var(--font-mono);font-size:9.5px;color:var(--text-faint);
+  margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.meter.lg .meter-val{font-size:17px}
+.meter-bar{height:2px;background:var(--surface-3);margin-top:6px;border-radius:1px;overflow:hidden}
+.meter-bar i{display:block;height:100%;background:var(--text-dim)}
+.meter-bar i.warn{background:var(--amber)}
+
+/* ---- segmented stage progress ---- */
+.segs{display:flex;gap:3px;margin-top:8px}
+.segs i{flex:1 1 0;height:3px;background:var(--surface-3);border-radius:1px}
+.segs i.fill{background:var(--amber)}
+.segs i.cur{background:var(--amber);opacity:.45}
+
+/* ============================================================
+   MAIN / workflow grid
+   ============================================================ */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(400px,1fr));gap:14px}
+
+.card{
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+  display:flex;overflow:hidden;transition:border-color .14s;
+}
+.card:hover{border-color:var(--text-faint)}
+.card.s-run{border-color:var(--amber);box-shadow:inset 0 0 0 1px rgba(212,162,76,.18)}
+.card.s-done{border-color:var(--green);box-shadow:inset 0 0 0 1px rgba(99,166,127,.18)}
+.card.s-fail{border-color:var(--red);box-shadow:inset 0 0 0 1px rgba(209,116,108,.18)}
+.card.s-arch{opacity:.42}
+.card.s-arch:hover{opacity:.62}
+
+.thumb{
+  width:104px;flex:0 0 auto;aspect-ratio:9/16;
+  background:var(--surface-2);border-right:1px solid var(--line-soft);
+  position:relative;overflow:hidden;
+}
+.thumb-a{background:linear-gradient(155deg,#33383f,#22252a 55%,#2c3138)}
+.thumb-b{background:linear-gradient(155deg,#3b3630,#24211e 55%,#332e28)}
+.thumb-c{background:linear-gradient(155deg,#2f3a38,#1f2726 55%,#2a3432)}
+.thumb-d{background:linear-gradient(155deg,#3a3038,#241f24 55%,#332b32)}
+.thumb-e{background:linear-gradient(155deg,#2e343d,#1e2126 55%,#282d35)}
+.thumb-empty{display:flex;align-items:center;justify-content:center;color:var(--text-faint)}
+
+.card-body{flex:1 1 auto;padding:13px 15px;display:flex;flex-direction:column;min-width:0}
+.card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.card-title{font-family:var(--font-display);font-size:14.5px;font-weight:600;letter-spacing:-.005em}
+.card-desc{color:var(--text-dim);font-size:12.5px;margin-top:4px;line-height:1.45}
+.card-state{
+  display:flex;align-items:center;gap:7px;margin-top:10px;
+  font-family:var(--font-mono);font-size:11px;color:var(--text-dim);
+}
+.card-meters{margin-top:11px}
+.card-foot{
+  margin-top:auto;padding-top:12px;display:flex;justify-content:center;
+}
+.avg-label{
+  font-family:var(--font-mono);font-size:9px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--text-faint);margin-bottom:5px;
+}
+
+/* ============================================================
+   PSEUDO-TAB
+   ============================================================ */
+.pseudo{
+  position:absolute;inset:0;background:var(--bg);
+  overflow-y:auto;padding:26px 30px 44px;display:none;
+}
+.pseudo.on{display:block}
+.pseudo-close{
+  position:absolute;top:20px;right:26px;
+  width:30px;height:30px;border-radius:var(--r);
+  background:var(--red);color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  border:none;z-index:5;
+}
+.pseudo-close:hover{background:#dd8079}
+.crumb{
+  font-family:var(--font-mono);font-size:11px;color:var(--text-faint);
+  display:flex;align-items:center;gap:8px;margin-bottom:6px;
+}
+.crumb b{color:var(--text-dim);font-weight:500}
+
+/* ---- request group ---- */
+.rq{margin-bottom:30px}
+.rq-head{
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding-bottom:9px;margin-bottom:0;border-bottom:1px solid var(--line);
+}
+.rq-id{font-family:var(--font-mono);font-size:12.5px;color:var(--text);letter-spacing:.02em}
+.rq-meta{font-family:var(--font-mono);font-size:11px;color:var(--text-faint)}
+.rq-videos{display:flex;flex-direction:column}
+.vrow{
+  display:flex;align-items:center;gap:15px;padding:11px 3px;width:100%;text-align:left;
+  border-bottom:1px solid var(--line-soft);transition:background .12s;
+}
+.vrow:hover .vact,.vrow:focus-within .vact{opacity:1}
+.vrow:hover{background:var(--surface)}
+.vrow:last-child{border-bottom:none}
+.vthumb{width:34px;aspect-ratio:9/16;border-radius:2px;flex:0 0 auto;border:1px solid var(--line-soft)}
+.vname{font-family:var(--font-mono);font-size:12px;min-width:34px;color:var(--text-dim)}
+.vcap{
+  flex:1 1 auto;font-size:13px;color:var(--text);min-width:0;text-align:left;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  background:none;border:none;padding:0;font-family:inherit;cursor:pointer;
+}
+.vcap:hover{text-decoration:underline;text-underline-offset:3px}
+.vcost{font-family:var(--font-mono);font-size:11px;color:var(--text-faint);white-space:nowrap}
+.vact{display:flex;gap:6px;opacity:0;transition:opacity .12s}
+
+/* ============================================================
+   VIDEO DETAIL
+   ============================================================ */
+.detail-grid{display:grid;grid-template-columns:1fr 340px;gap:16px;align-items:start}
+@media(max-width:1080px){.detail-grid{grid-template-columns:1fr}}
+
+.player{
+  aspect-ratio:9/16;max-height:380px;background:var(--surface-2);
+  border:1px solid var(--line);border-radius:var(--r);
+  display:flex;align-items:center;justify-content:center;color:var(--text-faint);
+  flex:0 0 auto;width:214px;
+}
+.detail-top{display:flex;gap:18px;margin-bottom:16px}
+
+.kv{display:grid;grid-template-columns:130px 1fr;gap:7px 14px;font-size:12.5px}
+.kv dt{color:var(--text-faint);font-family:var(--font-mono);font-size:11px;padding-top:1px}
+.kv dd{color:var(--text-dim)}
+.kv dd b{color:var(--text);font-weight:500}
+
+.steps{display:flex;flex-direction:column}
+.step{
+  display:flex;align-items:center;gap:11px;padding:8px 0;
+  border-bottom:1px solid var(--line-soft);font-size:12.5px;
+}
+.step:last-child{border-bottom:none}
+.step-n{font-family:var(--font-mono);font-size:10px;color:var(--text-faint);width:18px}
+.step-name{font-family:var(--font-mono);font-size:12px;flex:1 1 auto;color:var(--text)}
+.step-t{font-family:var(--font-mono);font-size:11px;color:var(--text-faint);width:56px;text-align:right}
+.tag-cache{
+  font-family:var(--font-mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--text-faint);border:1px solid var(--line);padding:1px 5px;border-radius:2px;
+}
+
+.instr{border-left:2px solid var(--line);padding-left:12px;margin-bottom:13px}
+.instr-agent{font-family:var(--font-mono);font-size:11px;color:var(--text);margin-bottom:5px}
+.instr-file{
+  display:flex;align-items:center;gap:9px;font-family:var(--font-mono);font-size:11px;
+  color:var(--text-faint);padding:2.5px 0;
+}
+.instr-file b{color:var(--text-dim);font-weight:400}
+.scope{font-size:9px;letter-spacing:.06em;text-transform:uppercase;padding:0 4px;border:1px solid var(--line);border-radius:2px}
+
+.check{display:flex;align-items:center;gap:9px;padding:5px 0;font-size:12.5px;color:var(--text-dim)}
+.check .ico{color:var(--green)}
+
+/* ---- quality ---- */
+.factor{margin-bottom:18px}
+.factor-q{font-size:13px;color:var(--text);margin-bottom:7px;font-weight:500}
+.ta{
+  width:100%;background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r);
+  padding:9px 11px;font-size:12.5px;color:var(--text);resize:vertical;min-height:62px;
+  font-family:var(--font-body);
+}
+.ta::placeholder{color:var(--text-faint)}
+.rank{margin-top:9px}
+.rank-label{font-family:var(--font-mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-faint);margin-bottom:6px}
+.rank-list{display:flex;flex-direction:column;gap:5px}
+.rank-item{
+  display:flex;align-items:center;gap:10px;padding:7px 10px;
+  background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r);
+  font-size:12.5px;cursor:grab;
+}
+.rank-item:hover{border-color:var(--text-faint)}
+.rank-pos{font-family:var(--font-mono);font-size:11px;color:var(--text-faint);width:14px}
+.rank-thumb{width:16px;aspect-ratio:9/16;border-radius:1px;flex:0 0 auto}
+.verdict{display:flex;gap:8px;margin-top:4px}
+
+/* ============================================================
+   MODAL
+   ============================================================ */
+.scrim{
+  position:fixed;inset:0;background:rgba(10,11,12,.66);
+  display:none;align-items:center;justify-content:center;z-index:50;padding:30px;
+  backdrop-filter:blur(2px);
+}
+.scrim.on{display:flex}
+.modal{
+  width:100%;max-width:560px;max-height:88vh;overflow-y:auto;
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:0 24px 60px rgba(0,0,0,.5);
+}
+.modal-head{padding:16px 20px;border-bottom:1px solid var(--line)}
+.modal-title{font-family:var(--font-display);font-size:15px;font-weight:600}
+.modal-sub{font-family:var(--font-mono);font-size:11px;color:var(--text-faint);margin-top:2px}
+.modal-body{padding:18px 20px}
+.modal-foot{
+  padding:14px 20px;border-top:1px solid var(--line);
+  display:flex;justify-content:space-between;align-items:center;gap:12px;
+  position:sticky;bottom:0;background:var(--surface);
+}
+
+.fieldset{margin-bottom:20px}
+.fieldset:last-child{margin-bottom:0}
+.legend{
+  font-family:var(--font-mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--text-faint);padding-bottom:7px;margin-bottom:13px;
+  border-bottom:1px solid var(--line-soft);display:flex;justify-content:space-between;
+}
+.field{margin-bottom:13px}
+.field:last-child{margin-bottom:0}
+.label{display:block;font-size:12.5px;color:var(--text-dim);margin-bottom:5px}
+.help{font-size:11.5px;color:var(--text-faint);margin-top:4px}
+.inp,.sel{
+  width:100%;background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r);
+  padding:7px 10px;font-size:13px;
+}
+.inp:focus,.sel:focus{border-color:var(--text-dim);outline:none}
+.inp[type=number]{-moz-appearance:textfield}
+.inp[type=number]::-webkit-outer-spin-button,
+.inp[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.inp:invalid{border-color:var(--red);background:var(--red-bg)}
+.inp:invalid+.affix-unit{color:var(--red)}
+.affix{position:relative;display:flex;align-items:center}
+.affix .inp{padding-right:52px}
+.affix.wide .inp{padding-right:70px}
+.affix.sm .inp{padding-right:32px}
+.affix .inp.pre{padding-right:10px;padding-left:26px}
+.affix-unit{
+  position:absolute;right:10px;font-family:var(--font-mono);font-size:11px;
+  color:var(--text-faint);pointer-events:none;letter-spacing:.04em;
+}
+.affix-unit.pre{left:10px;right:auto}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:11px}
+
+.switch{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 0}
+.tog{width:32px;height:18px;border-radius:9px;background:var(--surface-3);border:1px solid var(--line);position:relative;flex:0 0 auto;padding:0}
+.tog::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:var(--text-faint);transition:.15s}
+.tog.on{background:var(--surface-3);border-color:var(--text-dim)}
+.tog.on::after{left:16px;background:var(--text)}
+
+.estimate{
+  border:1px solid var(--line);border-radius:var(--r);padding:11px 13px;
+  background:rgba(0,0,0,.16);
+}
+.est-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px}
+.est-conf{font-family:var(--font-mono);font-size:10px;color:var(--text-faint)}
+
+.blocker{
+  display:flex;gap:10px;padding:10px 12px;border-radius:var(--r);
+  border:1px solid rgba(209,116,108,.4);background:var(--red-bg);
+  font-size:12.5px;color:var(--text-dim);margin-bottom:16px;
+}
+.blocker .ico{color:var(--red);flex:0 0 auto;margin-top:1px}
+
+.modal.ro .inp,.modal.ro .sel,.modal.ro .tog{pointer-events:none;opacity:.6}
+.modal.ro .blocker,.modal.ro .estimate{display:none}
+.locked{
+  display:flex;gap:10px;padding:10px 12px;border-radius:var(--r);
+  border:1px solid var(--line);background:var(--surface-2);
+  font-size:12.5px;color:var(--text-dim);margin-bottom:16px;
+}
+.locked .ico{color:var(--text-faint);flex:0 0 auto;margin-top:1px}
+.modal:not(.ro) .locked{display:none}
+
+/* ============================================================
+   SCHEDULE / LEARNING / STATS / SETTINGS
+   ============================================================ */
+.list{display:flex;flex-direction:column}
+.li{
+  display:flex;align-items:center;gap:16px;padding:14px 16px;
+  border-bottom:1px solid var(--line-soft);
+}
+.li:last-child{border-bottom:none}
+.li-main{flex:1 1 auto;min-width:0}
+.li-title{font-size:13.5px;font-weight:500}
+.li-sub{font-family:var(--font-mono);font-size:11px;color:var(--text-faint);margin-top:3px}
+.days{display:flex;gap:3px}
+.day{
+  width:22px;height:22px;border-radius:2px;border:1px solid var(--line);
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--font-mono);font-size:9.5px;color:var(--text-faint);
+}
+.day.on{background:var(--surface-3);border-color:var(--text-faint);color:var(--text)}
+.time{font-family:var(--font-mono);font-size:14px;color:var(--text);letter-spacing:.02em}
+
+.lrn{
+  display:flex;align-items:center;gap:16px;padding:15px 16px;
+  border-bottom:1px solid var(--line-soft);
+}
+.lrn:last-child{border-bottom:none}
+.lrn.s-run{border-left:2px solid var(--amber);background:var(--amber-bg)}
+.lrn.s-done{border-left:2px solid var(--green);background:var(--green-bg)}
+.lrn-count{font-family:var(--font-mono);font-size:20px;color:var(--text);width:44px;text-align:right}
+.lrn-count small{display:block;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-faint)}
+
+.diff{border:1px solid var(--line);border-radius:var(--r);overflow:hidden;margin-bottom:13px}
+.diff-head{
+  padding:8px 12px;background:var(--surface-2);border-bottom:1px solid var(--line);
+  font-family:var(--font-mono);font-size:11px;color:var(--text-dim);
+  display:flex;justify-content:space-between;
+}
+.diff-body{font-family:var(--font-mono);font-size:11.5px;line-height:1.65}
+.dl{padding:2px 12px;display:flex;gap:10px}
+.dl-mark{color:var(--text-faint);width:9px;flex:0 0 auto}
+.dl.add{background:var(--green-bg)}
+.dl.add .dl-mark{color:var(--green)}
+.dl.del{background:var(--red-bg);color:var(--text-faint)}
+.dl.del .dl-mark{color:var(--red)}
+.dl.del span:last-child{text-decoration:line-through;opacity:.75}
+
+.chart{display:flex;align-items:flex-end;gap:7px;height:104px;padding-top:8px}
+.bar{flex:1 1 0;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:6px;height:100%}
+.bar i{width:100%;background:var(--surface-3);border-radius:1px 1px 0 0;border-top:1.5px solid var(--text-dim)}
+.bar span{font-family:var(--font-mono);font-size:9.5px;color:var(--text-faint)}
+
+.keyrow{
+  display:flex;align-items:center;gap:14px;padding:12px 16px;
+  border-bottom:1px solid var(--line-soft);
+}
+.keyrow:last-child{border-bottom:none}
+.keyname{width:150px;font-size:13px;flex:0 0 auto}
+.keyval{
+  flex:1 1 auto;font-family:var(--font-mono);font-size:12px;color:var(--text-faint);
+  background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r);padding:6px 10px;
+}
+
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+@media(max-width:960px){.two{grid-template-columns:1fr}.grid{grid-template-columns:1fr}.detail-grid{grid-template-columns:1fr}}
+
+.ico{display:inline-flex;flex:0 0 auto}
+.ico svg{display:block}
+.stack{display:flex;flex-direction:column;gap:16px}
+.mt{margin-top:16px}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ============ TOP BAR ============ -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg width="28" height="21" viewBox="0 0 581 442" fill="currentColor" aria-hidden="true">
+          <path fill-rule="evenodd" d="M51 35H196V34A34 34 0 0 1 230 0H350A34 34 0 0 1 384 34V35H530A51 51 0 0 1 581 86V391A51 51 0 0 1 530 442H51A51 51 0 0 1 0 391V86A51 51 0 0 1 51 35ZM143 237.5A147 147 0 1 0 437 237.5A147 147 0 1 0 143 237.5ZM179 237.5A111 111 0 1 0 401 237.5A111 111 0 1 0 179 237.5ZM470 114A28 28 0 1 0 526 114A28 28 0 1 0 470 114Z"/>
+        </svg>
+      </div>
+      <div>
+        <div class="brand-name">Short-Form Video Factory</div>
+        <div class="brand-sub">v0.1 MOCK</div>
+      </div>
+    </div>
+
+    <nav class="tabs">
+      <button class="tab on" data-view="v-main">
+        <span class="ico"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="1.5" width="5" height="5"/><rect x="9.5" y="1.5" width="5" height="5"/><rect x="1.5" y="9.5" width="5" height="5"/><rect x="9.5" y="9.5" width="5" height="5"/></svg></span>
+        Workflows
+      </button>
+      <button class="tab" data-view="v-schedule">
+        <span class="ico"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.8" width="13" height="11.7" rx="1"/><path d="M1.5 6.2h13M5 1.5v2.6M11 1.5v2.6"/></svg></span>
+        Schedule
+        <span class="tab-badge">3</span>
+      </button>
+      <button class="tab" data-view="v-learning">
+        <span class="ico"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.6 14.4 5 8 8.4 1.6 5 8 1.6Z"/><path d="M3.6 6.6v3.9c0 1 2 2 4.4 2s4.4-1 4.4-2V6.6"/></svg></span>
+        Learning
+        <span class="tab-badge">12</span>
+      </button>
+      <button class="tab" data-view="v-stats">
+        <span class="ico"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1.8 14.2h12.4"/><path d="M4 14V8.5M8 14V3.4M12 14v-7"/></svg></span>
+        Statistics
+      </button>
+      <button class="tab" data-view="v-settings">
+        <span class="ico"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2.4"/><path d="M8 1.4v1.9M8 12.7v1.9M14.6 8h-1.9M3.3 8H1.4M12.7 3.3l-1.3 1.3M4.6 11.4l-1.3 1.3M12.7 12.7l-1.3-1.3M4.6 4.6 3.3 3.3"/></svg></span>
+        Settings
+      </button>
+    </nav>
+
+  </header>
+
+  <!-- ============ MAIN ============ -->
+  <main class="main">
+
+    <!-- ---------- WORKFLOWS ---------- -->
+    <section class="view on" id="v-main">
+      <div class="page-head">
+        <div>
+          <div class="page-title">Workflows</div>
+          <div class="page-note">Six plug-ins found in <span style="font-family:var(--font-mono);font-size:12px">workflows/</span>. One request runs per workflow at a time.</div>
+        </div>
+        <button class="btn btn-sm">
+          <span class="ico"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M14 8a6 6 0 1 1-1.8-4.3"/><path d="M14 1.6V4.4h-2.8"/></svg></span>
+          Rescan folder
+        </button>
+      </div>
+
+      <div class="grid">
+
+        <!-- idle -->
+        <article class="card">
+          <div class="thumb thumb-a"></div>
+          <div class="card-body">
+            <div class="card-top">
+              <div>
+                <div class="card-title">News Explainer</div>
+                <div class="card-desc">Researches a current topic and renders a 45-second explainer with animated typography.</div>
+              </div>
+              <span class="pill">Idle</span>
+            </div>
+            <div class="card-meters">
+              <div class="avg-label">Average per video · last 10 runs</div>
+              <div class="meters">
+                <div class="meter"><div class="meter-name">OpenRouter</div><div class="meter-val">0.41<span class="meter-unit">EUR</span></div></div>
+                <div class="meter"><div class="meter-name">ElevenLabs</div><div class="meter-val">1,180<span class="meter-unit">chars</span></div></div>
+                <div class="meter"><div class="meter-name">Higgsfield</div><div class="meter-val none">not used</div></div>
+              </div>
+            </div>
+            <div class="card-foot"><button class="btn btn-primary btn-sm" onclick="openModal()">Run workflow</button></div>
+          </div>
+        </article>
+
+        <!-- running -->
+        <article class="card s-run">
+          <div class="thumb thumb-b"></div>
+          <div class="card-body">
+            <div class="card-top">
+              <div>
+                <div class="card-title">Cinematic Shorts</div>
+                <div class="card-desc">Generates and chains 15-second clips into a continuous 60-second narrative piece.</div>
+              </div>
+              <span class="pill run">Running</span>
+            </div>
+            <div class="card-state">4 / 7 &nbsp;·&nbsp; Generating shot 3 of 6</div>
+            <div class="segs"><i class="fill"></i><i class="fill"></i><i class="fill"></i><i class="cur"></i><i></i><i></i><i></i></div>
+            <div class="card-meters">
+              <div class="avg-label">Spent this request</div>
+              <div class="meters">
+                <div class="meter"><div class="meter-name">OpenRouter</div><div class="meter-val">0.88<span class="meter-unit">EUR</span></div><div class="meter-bar"><i style="width:44%"></i></div></div>
+                <div class="meter"><div class="meter-name">ElevenLabs</div><div class="meter-val">3,402<span class="meter-unit">chars</span></div><div class="meter-bar"><i style="width:18%"></i></div></div>
+                <div class="meter"><div class="meter-name">Higgsfield</div><div class="meter-val">96<span class="meter-unit">cr</span></div><div class="meter-bar"><i class="warn" style="width:78%"></i></div></div>
+              </div>
+            </div>
+            <div class="card-foot" style="gap:8px">
+              <button class="btn btn-sm">Stop after this step</button>
+              <button class="btn btn-sm btn-ghost" onclick="openModal('view')">See settings</button>
+            </div>
+          </div>
+        </article>
+
+        <!-- finished -->
+        <article class="card s-done">
+          <div class="thumb thumb-c"></div>
+          <div class="card-body">
+            <div class="card-top">
+              <div>
+                <div class="card-title">Paper Collage</div>
+                <div class="card-desc">Halftone collage explainer with cut-paper motion and hand-drawn transitions.</div>
+              </div>
+              <span class="pill done">Finished</span>
+            </div>
+            <div class="card-state">3 videos ready &nbsp;·&nbsp; 12 min ago</div>
+            <div class="card-meters">
+              <div class="avg-label">Average per video · last 10 runs</div>
+              <div class="meters">
+                <div class="meter"><div class="meter-name">OpenRouter</div><div class="meter-val">0.29<span class="meter-unit">EUR</span></div></div>
+                <div class="meter"><div class="meter-name">ElevenLabs</div><div class="meter-val">960<span class="meter-unit">chars</span></div></div>
+                <div class="meter"><div class="meter-name">Higgsfield</div><div class="meter-val">18<span class="meter-unit">cr</span></div></div>
+              </div>
+            </div>
+            <div class="card-foot"><button class="btn btn-primary btn-sm" onclick="openPseudo('p-videos')">Review 3 videos</button></div>
+          </div>
+        </article>
+
+        <!-- error -->
+        <article class="card s-fail">
+          <div class="thumb thumb-d"></div>
+          <div class="card-body">
+            <div class="card-top">
+              <div>
+                <div class="card-title">Product Teaser</div>
+                <div class="card-desc">Fifteen-second product reveal with kinetic type and a synchronised sound design pass.</div>
+              </div>
+              <span class="pill fail">Paused</span>
+            </div>
+            <div class="card-state">Higgsfield credits exhausted at shot 5</div>
+            <div class="card-meters">
+              <div class="avg-label">Spent before stopping</div>
+              <div class="meters">
+                <div class="meter"><div class="meter-name">OpenRouter</div><div class="meter-val">0.34<span class="meter-unit">EUR</span></div></div>
+                <div class="meter"><div class="meter-name">ElevenLabs</div><div class="meter-val">840<span class="meter-unit">chars</span></div></div>
+                <div class="meter"><div class="meter-name">Higgsfield</div><div class="meter-val" style="color:var(--red)">150<span class="meter-unit">cr</span></div><div class="meter-bar"><i class="warn" style="width:100%;background:var(--red)"></i></div></div>
+              </div>
+            </div>
+            <div class="card-foot" style="gap:8px">
+              <button class="btn btn-sm">Raise budget</button>
+              <button class="btn btn-sm btn-ghost" onclick="openModal('view')">See settings</button>
+              <button class="btn btn-sm btn-ghost">Discard</button>
+            </div>
+          </div>
+        </article>
+
+        <!-- blocked -->
+        <article class="card">
+          <div class="thumb thumb-e"></div>
+          <div class="card-body">
+            <div class="card-top">
+              <div>
+                <div class="card-title">Animation → Realism</div>
+                <div class="card-desc">Takes reference animation, describes each shot, and regenerates it photorealistically.</div>
+              </div>
+              <span class="pill">Blocked</span>
+            </div>
+            <div class="card-state">Higgsfield connection not signed in</div>
+            <div class="card-meters">
+              <div class="avg-label">No runs yet</div>
+              <div class="meters">
+                <div class="meter"><div class="meter-name">OpenRouter</div><div class="meter-val none">no runs</div></div>
+                <div class="meter"><div class="meter-name">ElevenLabs</div><div class="meter-val none">no runs</div></div>
+                <div class="meter"><div class="meter-name">Higgsfield</div><div class="meter-val none">no runs</div></div>
+              </div>
+            </div>
+            <div class="card-foot"><button class="btn btn-sm">Sign in to Higgsfield</button></div>
+          </div>
+        </article>
+
+        <!-- archived -->
+        <article class="card s-arch">
+          <div class="thumb thumb-empty">
+            <span class="ico"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.8" y="3.4" width="12.4" height="10.8" rx="1"/><path d="M1.8 6.6h12.4M6.2 9.6h3.6"/></svg></span>
+          </div>
+          <div class="card-body">
+            <div class="card-top">
+              <div>
+                <div class="card-title">Vertical Quotes</div>
+                <div class="card-desc">Code removed. 41 videos kept and still playable.</div>
+              </div>
+              <span class="pill">Archived</span>
+            </div>
+            <div class="card-foot"><button class="btn btn-sm" onclick="openPseudo('p-videos')">Browse 41 videos</button></div>
+          </div>
+        </article>
+
+      </div>
+    </section>
+
+    <!-- ---------- SCHEDULE ---------- -->
+    <section class="view" id="v-schedule">
+      <div class="page-head">
+        <div>
+          <div class="page-title">Schedule</div>
+          <div class="page-note">A slot is skipped if the workflow is still running or the budget is short. Missed slots are not queued.</div>
+        </div>
+        <button class="btn btn-primary btn-sm">Add entry</button>
+      </div>
+
+      <div class="panel">
+        <div class="list">
+          <div class="li">
+            <div class="li-main">
+              <div class="li-title">News Explainer</div>
+              <div class="li-sub">3 videos, budget €2.00 and 150 cr</div>
+              <div class="li-sub">Gates pass automatically</div>
+            </div>
+            <div class="days">
+              <span class="day on">M</span><span class="day">T</span><span class="day on">W</span><span class="day">T</span><span class="day on">F</span><span class="day">S</span><span class="day">S</span>
+            </div>
+            <div class="time">07:00</div>
+            <button class="btn btn-sm btn-ghost">Edit</button>
+          </div>
+
+          <div class="li">
+            <div class="li-main">
+              <div class="li-title">Paper Collage</div>
+              <div class="li-sub">5 videos, budget €3.50 and 200 cr</div>
+              <div class="li-sub">Pauses at gates</div>
+            </div>
+            <div class="days">
+              <span class="day">M</span><span class="day">T</span><span class="day">T</span><span class="day">W</span><span class="day">F</span><span class="day on">S</span><span class="day">S</span>
+            </div>
+            <div class="time">09:30</div>
+            <button class="btn btn-sm btn-ghost">Edit</button>
+          </div>
+
+          <div class="li">
+            <div class="li-main">
+              <div class="li-title">Cinematic Shorts</div>
+              <div class="li-sub">3 videos, budget €4.00 and 300 cr</div>
+              <div class="li-sub" style="color:var(--red)">Last slot skipped, previous run still going</div>
+            </div>
+            <div class="days">
+              <span class="day on">M</span><span class="day on">T</span><span class="day on">W</span><span class="day on">T</span><span class="day on">F</span><span class="day">S</span><span class="day">S</span>
+            </div>
+            <div class="time">22:00</div>
+            <button class="btn btn-sm btn-ghost">Edit</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- LEARNING ---------- -->
+    <section class="view" id="v-learning">
+      <div class="page-head">
+        <div>
+          <div class="page-title">Learning</div>
+          <div class="page-note">Proposes edits to a workflow's own rules and skills from your answers and rankings. Global instructions are never touched.</div>
+        </div>
+      </div>
+
+      <div class="two">
+        <div class="panel">
+          <div class="panel-head"><span class="eyebrow">Workflows</span></div>
+          <div class="list">
+            <div class="lrn">
+              <div class="lrn-count">12<small>labels</small></div>
+              <div class="li-main">
+                <div class="li-title">News Explainer</div>
+                <div class="li-sub">Last learned 2026-07-22 · 4 rules, 2 skills</div>
+              </div>
+              <button class="btn btn-sm">Start learning</button>
+            </div>
+
+            <div class="lrn s-run">
+              <div class="lrn-count">27<small>labels</small></div>
+              <div class="li-main">
+                <div class="li-title">Cinematic Shorts</div>
+                <div class="li-sub" style="color:var(--amber)">Reading 27 labels…</div>
+              </div>
+              <span class="pill run">Running</span>
+            </div>
+
+            <div class="lrn s-done">
+              <div class="lrn-count">18<small>labels</small></div>
+              <div class="li-main">
+                <div class="li-title">Paper Collage</div>
+                <div class="li-sub" style="color:var(--green)">3 edits proposed, awaiting your review</div>
+              </div>
+              <button class="btn btn-primary btn-sm">Review</button>
+            </div>
+
+            <div class="lrn">
+              <div class="lrn-count">0<small>labels</small></div>
+              <div class="li-main">
+                <div class="li-title">Product Teaser</div>
+                <div class="li-sub">Nothing new since 2026-08-01</div>
+              </div>
+              <button class="btn btn-sm" disabled>Start learning</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <span class="eyebrow">Proposed · Paper Collage</span>
+            <span class="pill done">3 edits</span>
+          </div>
+          <div class="panel-body">
+            <div class="diff">
+              <div class="diff-head">
+                <span>rules/hook.md</span>
+                <span>v3 → v4</span>
+              </div>
+              <div class="diff-body">
+                <div class="dl"><span class="dl-mark"> </span><span>Open on the strongest visual, never on a title card.</span></div>
+                <div class="dl del"><span class="dl-mark">−</span><span>Keep the first line under twelve words.</span></div>
+                <div class="dl add"><span class="dl-mark">+</span><span>Keep the first line under eight words, and place the</span></div>
+                <div class="dl add"><span class="dl-mark">+</span><span>concrete noun before the verb.</span></div>
+                <div class="dl"><span class="dl-mark"> </span><span>Do not use a question as the opening line.</span></div>
+              </div>
+            </div>
+
+            <div style="font-size:12.5px;color:var(--text-dim);margin-bottom:14px">
+              <span class="eyebrow" style="display:block;margin-bottom:5px">Why</span>
+              Across 18 labelled videos, the three ranked first on <b style="color:var(--text)">hook</b> all opened with a concrete object. Your notes on the two lowest-ranked both mention the opening line being abstract.
+            </div>
+
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-primary btn-sm">Accept all 3</button>
+              <button class="btn btn-sm">Accept selected</button>
+              <button class="btn btn-sm btn-ghost">Reject</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- STATISTICS ---------- -->
+    <section class="view" id="v-stats">
+      <div class="page-head">
+        <div>
+          <div class="page-title">Statistics</div>
+          <div class="page-note">Meters are shown separately and never combined. Credits from different providers are not comparable.</div>
+        </div>
+        <select class="sel" style="width:auto">
+          <option>Last 6 months</option>
+          <option>Last 30 days</option>
+          <option>This year</option>
+        </select>
+      </div>
+
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Fiat currency</span>
+              <div style="font-family:var(--font-mono);font-size:17px;margin-top:3px">€ 84.19</div>
+            </div>
+            <span class="pill">OpenRouter</span>
+          </div>
+          <div class="panel-body">
+            <div class="chart">
+              <div class="bar"><i style="height:38%"></i><span>MAR</span></div>
+              <div class="bar"><i style="height:52%"></i><span>APR</span></div>
+              <div class="bar"><i style="height:44%"></i><span>MAY</span></div>
+              <div class="bar"><i style="height:71%"></i><span>JUN</span></div>
+              <div class="bar"><i style="height:88%"></i><span>JUL</span></div>
+              <div class="bar"><i style="height:31%"></i><span>AUG</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="two">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <span class="eyebrow">Credits · Higgsfield</span>
+                <div style="font-family:var(--font-mono);font-size:17px;margin-top:3px">4,820 cr</div>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div class="chart">
+                <div class="bar"><i style="height:22%"></i><span>MAR</span></div>
+                <div class="bar"><i style="height:40%"></i><span>APR</span></div>
+                <div class="bar"><i style="height:63%"></i><span>MAY</span></div>
+                <div class="bar"><i style="height:80%"></i><span>JUN</span></div>
+                <div class="bar"><i style="height:92%"></i><span>JUL</span></div>
+                <div class="bar"><i style="height:44%"></i><span>AUG</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <span class="eyebrow">Monthly quota · ElevenLabs</span>
+                <div style="font-family:var(--font-mono);font-size:17px;margin-top:3px">184,290 <span style="font-size:12px;color:var(--text-faint)">/ 500,000 chars</span></div>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div class="meter-bar" style="height:6px"><i style="width:37%"></i></div>
+              <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-faint);margin-top:9px">
+                37% used · resets 2026-09-01 · not a budget, cannot be topped up
+              </div>
+              <div class="chart" style="height:68px">
+                <div class="bar"><i style="height:30%"></i><span>MAR</span></div>
+                <div class="bar"><i style="height:48%"></i><span>APR</span></div>
+                <div class="bar"><i style="height:55%"></i><span>MAY</span></div>
+                <div class="bar"><i style="height:74%"></i><span>JUN</span></div>
+                <div class="bar"><i style="height:90%"></i><span>JUL</span></div>
+                <div class="bar"><i style="height:37%"></i><span>AUG</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- SETTINGS ---------- -->
+    <section class="view" id="v-settings">
+      <div class="page-head">
+        <div>
+          <div class="page-title">Settings</div>
+          <div class="page-note">Keys and tokens are held in an encrypted file. The passphrase is asked for once, when the app starts.</div>
+        </div>
+      </div>
+
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-head"><span class="eyebrow">API keys</span></div>
+          <div class="list">
+            <div class="keyrow">
+              <div class="keyname">OpenRouter</div>
+              <div class="keyval">sk-or-v1-••••••••••••••••••••••4c7a</div>
+              <span class="pill done">Valid</span>
+              <button class="btn btn-sm btn-ghost">Replace</button>
+            </div>
+            <div class="keyrow">
+              <div class="keyname">ElevenLabs</div>
+              <div class="keyval">••••••••••••••••••••••••••e91b</div>
+              <span class="pill done">Valid</span>
+              <button class="btn btn-sm btn-ghost">Replace</button>
+            </div>
+            <div class="keyrow">
+              <div class="keyname">Epidemic Sound</div>
+              <div class="keyval">••••••••••••••••••••••••••2f30</div>
+              <span class="pill done">Valid</span>
+              <button class="btn btn-sm btn-ghost">Replace</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><span class="eyebrow">Connections</span></div>
+          <div class="list">
+            <div class="keyrow">
+              <div class="keyname">Higgsfield</div>
+              <div class="keyval" style="color:var(--red)">Not signed in. Sign in through your browser; no password is stored.</div>
+              <button class="btn btn-primary btn-sm">Sign in</button>
+            </div>
+            <div class="keyrow">
+              <div class="keyname">Kinocut</div>
+              <div class="keyval">Local, no sign-in needed</div>
+              <span class="pill done">Ready</span>
+            </div>
+            <div class="keyrow">
+              <div class="keyname">HyperFrames</div>
+              <div class="keyval">Local, Chromium 141, 6 fonts installed</div>
+              <span class="pill done">Ready</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="two">
+          <div class="panel">
+            <div class="panel-head"><span class="eyebrow">Defaults</span></div>
+            <div class="panel-body">
+              <div class="field">
+                <label class="label">Give up on a step after</label>
+                <div class="affix wide"><input class="inp" type="number" inputmode="numeric" value="20" min="1" step="1"><span class="affix-unit">minutes</span></div>
+                <div class="help">Wall-clock limit for one step. A step that runs longer counts as failed and is retried, up to the retry limit set for that request. Approval gates are not steps and are never timed out.</div>
+              </div>
+              <div class="field">
+                <label class="label">Videos at once</label>
+                <input class="inp" type="number" inputmode="numeric" value="2" min="1" max="8" step="1">
+              </div>
+              <div class="field">
+                <label class="label">Cache size limit</label>
+                <div class="affix sm"><input class="inp" type="number" inputmode="numeric" value="120" min="1" step="1"><span class="affix-unit">GB</span></div>
+                <div class="help">Only renders and research are removed. Generated video is never deleted automatically.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head"><span class="eyebrow">Storage</span></div>
+            <div class="panel-body">
+              <div style="font-family:var(--font-mono);font-size:22px">1.42 TB<span style="font-size:12px;color:var(--text-faint)"> free of 2 TB</span></div>
+              <div class="meter-bar" style="height:6px;margin-top:10px"><i style="width:29%"></i></div>
+              <div class="kv" style="margin-top:16px">
+                <dt>WARN AT</dt><dd>20 GB free</dd>
+                <dt>REFUSE AT</dt><dd>5 GB free, new requests blocked</dd>
+                <dt>RUNS</dt><dd><b>412 GB</b> across 6 workflows</dd>
+                <dt>CACHE</dt><dd><b>96 GB</b> (71 GB generated, 25 GB renders)</dd>
+              </div>
+              <div class="help" style="margin-top:14px">Thresholds are fixed. A single run can use 2 to 3 GB.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ PSEUDO-TAB: VIDEO LIST ============ -->
+    <div class="pseudo" id="p-videos">
+      <button class="pseudo-close" onclick="closePseudo('p-videos')" aria-label="Close">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>
+      </button>
+
+      <div class="crumb"><b>Workflows</b> <span>/</span> Paper Collage</div>
+      <div class="page-head">
+        <div>
+          <div class="page-title">Paper Collage</div>
+          <div class="page-note">44 videos across 14 generation requests.</div>
+        </div>
+      </div>
+
+      <div class="rq">
+        <div class="rq-head">
+          <div>
+            <div class="rq-id">20260810-143022</div>
+            <div class="rq-meta" style="margin-top:2px">Today 14:30 UTC · “Why Roman concrete outlasts ours” · 3 videos</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:14px">
+            <div class="meters" style="width:330px">
+              <div class="meter"><div class="meter-name">OpenRouter</div><div class="meter-val">0.87<span class="meter-unit">EUR</span></div></div>
+              <div class="meter"><div class="meter-name">ElevenLabs</div><div class="meter-val">2,880<span class="meter-unit">chars</span></div></div>
+              <div class="meter"><div class="meter-name">Higgsfield</div><div class="meter-val">54<span class="meter-unit">cr</span></div></div>
+            </div>
+            <span class="pill done">Complete</span>
+          </div>
+        </div>
+        <div class="rq-videos">
+          <div class="vrow">
+            <div class="vthumb thumb-c"></div>
+            <div class="vname">01</div>
+            <button class="vcap" onclick="openPseudo('p-video')">Roman concrete has a self-healing trick we lost for 1,800 years</button>
+            <div class="vcost">0.29 EUR · 18 cr</div>
+            <span class="pill done">Accepted</span>
+            <div class="vact"><button class="btn btn-sm btn-ghost">Play</button><button class="btn btn-sm btn-ghost">Delete</button></div>
+          </div>
+          <div class="vrow">
+            <div class="vthumb thumb-a"></div>
+            <div class="vname">02</div>
+            <button class="vcap" onclick="openPseudo('p-video')">The ingredient that makes 2,000-year-old concrete repair itself</button>
+            <div class="vcost">0.31 EUR · 18 cr</div>
+            <span class="pill">Unlabelled</span>
+            <div class="vact"><button class="btn btn-sm btn-ghost">Play</button><button class="btn btn-sm btn-ghost">Delete</button></div>
+          </div>
+          <div class="vrow">
+            <div class="vthumb thumb-e"></div>
+            <div class="vname">03</div>
+            <button class="vcap" onclick="openPseudo('p-video')">Seawater destroys modern concrete. It made Roman concrete stronger.</button>
+            <div class="vcost">0.27 EUR · 18 cr</div>
+            <span class="pill fail">Rejected</span>
+            <div class="vact"><button class="btn btn-sm btn-ghost">Play</button><button class="btn btn-sm btn-ghost">Delete</button></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="rq">
+        <div class="rq-head">
+          <div>
+            <div class="rq-id">20260809-093011</div>
+            <div class="rq-meta" style="margin-top:2px">Yesterday 09:30 UTC · “How lighthouses were staffed” · 2 of 3 complete</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:14px">
+            <div class="meters" style="width:330px">
+              <div class="meter"><div class="meter-name">OpenRouter</div><div class="meter-val">0.58<span class="meter-unit">EUR</span></div></div>
+              <div class="meter"><div class="meter-name">ElevenLabs</div><div class="meter-val">1,910<span class="meter-unit">chars</span></div></div>
+              <div class="meter"><div class="meter-name">Higgsfield</div><div class="meter-val">36<span class="meter-unit">cr</span></div></div>
+            </div>
+            <span class="pill">Partial</span>
+          </div>
+        </div>
+        <div class="rq-videos">
+          <div class="vrow">
+            <div class="vthumb thumb-b"></div>
+            <div class="vname">01</div>
+            <button class="vcap" onclick="openPseudo('p-video')">The last manned lighthouse in Britain switched off in 1998</button>
+            <div class="vcost">0.30 EUR · 18 cr</div>
+            <span class="pill done">Accepted</span>
+            <div class="vact"><button class="btn btn-sm btn-ghost">Play</button><button class="btn btn-sm btn-ghost">Delete</button></div>
+          </div>
+          <div class="vrow">
+            <div class="vthumb thumb-d"></div>
+            <div class="vname">02</div>
+            <button class="vcap" onclick="openPseudo('p-video')">Keepers wound the light by hand every two hours, all night</button>
+            <div class="vcost">0.28 EUR · 18 cr</div>
+            <span class="pill">Unlabelled</span>
+            <div class="vact"><button class="btn btn-sm btn-ghost">Play</button><button class="btn btn-sm btn-ghost">Delete</button></div>
+          </div>
+          <div class="vrow" style="opacity:.55">
+            <div class="vthumb" style="background:var(--surface-2)"></div>
+            <div class="vname">03</div>
+            <div class="vcap" style="color:var(--text-faint)">Provider timed out at “generate-shot-4” after 3 attempts</div>
+            <div class="vcost">0.00 EUR · 0 cr</div>
+            <span class="pill fail">Failed</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ PSEUDO-TAB: VIDEO DETAIL ============ -->
+    <div class="pseudo" id="p-video">
+      <button class="pseudo-close" onclick="closePseudo('p-video')" aria-label="Close">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>
+      </button>
+
+      <div class="crumb"><b>Workflows</b> <span>/</span> <b>Paper Collage</b> <span>/</span> 20260810-143022 <span>/</span> 01</div>
+
+      <div class="detail-top">
+        <div class="player">
+          <span class="ico"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="12" cy="12" r="9.2"/><path d="M10 8.4l6 3.6-6 3.6V8.4Z"/></svg></span>
+        </div>
+
+        <div style="flex:1 1 auto;min-width:0">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px">
+            <div>
+              <div class="page-title">Roman concrete has a self-healing trick we lost for 1,800 years</div>
+              <div class="crumb" style="margin-top:6px">
+                <span class="pill done">Accepted</span>
+                <span>46.2 s, 1080×1920</span>
+                <span>·</span>
+                <span>passed self-review</span>
+              </div>
+            </div>
+            <button class="btn btn-sm">
+              <span class="ico"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 8a6 6 0 1 0 1.8-4.3"/><path d="M2 1.6V4.4h2.8"/></svg></span>
+              Replay run
+            </button>
+          </div>
+
+          <div class="mt">
+            <div class="avg-label">Cost</div>
+            <div class="meters">
+              <div class="meter lg"><div class="meter-name">OpenRouter</div><div class="meter-val">0.29<span class="meter-unit">EUR</span></div><div class="meter-sub">0.29 without cache</div></div>
+              <div class="meter lg"><div class="meter-name">ElevenLabs</div><div class="meter-val">960<span class="meter-unit">chars</span></div><div class="meter-sub">960 without cache</div></div>
+              <div class="meter lg"><div class="meter-name">Higgsfield</div><div class="meter-val">18<span class="meter-unit">cr</span></div><div class="meter-sub">36 without cache</div></div>
+            </div>
+          </div>
+
+          <dl class="kv mt">
+            <dt>WORKFLOW</dt><dd><b>Paper Collage</b> v2.1.0 · SDK 1</dd>
+            <dt>TOPIC</dt><dd>Why Roman concrete outlasts ours <span style="color:var(--text-faint)">(chosen by the research agent)</span></dd>
+            <dt>DURATION</dt><dd><b>45 s</b> target, 3 videos in the request</dd>
+            <dt>VOICE / MODEL</dt><dd><b>Rachel</b> on visual model <b>standard</b></dd>
+            <dt>STARTED</dt><dd>2026-08-10 14:30:22 UTC</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="detail-grid">
+        <div class="stack">
+
+          <div class="panel">
+            <div class="panel-head">
+              <span class="eyebrow">Steps</span>
+              <span class="rq-meta">7 steps · 2 reused · 6 m 11 s</span>
+            </div>
+            <div class="panel-body" style="padding-top:4px;padding-bottom:6px">
+              <div class="steps">
+                <div class="step"><span class="step-n">01</span><span class="step-name">choose-topic</span><span class="tag-cache">reused</span><span class="step-t">0.0 s</span></div>
+                <div class="step"><span class="step-n">02</span><span class="step-name">research</span><span class="tag-cache">reused</span><span class="step-t">0.1 s</span></div>
+                <div class="step"><span class="step-n">03</span><span class="step-name">script</span><span class="step-t">12.4 s</span></div>
+                <div class="step"><span class="step-n">04</span><span class="step-name">approve-script</span><span class="tag-cache">gate</span><span class="step-t">1 m 40 s</span></div>
+                <div class="step"><span class="step-n">05</span><span class="step-name">speech</span><span class="step-t">8.9 s</span></div>
+                <div class="step"><span class="step-n">06</span><span class="step-name">render</span><span class="step-t">3 m 02 s</span></div>
+                <div class="step"><span class="step-n">07</span><span class="step-name">finalize</span><span class="step-t">48.1 s</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head"><span class="eyebrow">Instructions in force</span><span class="rq-meta">frozen at run start</span></div>
+            <div class="panel-body">
+              <div class="instr">
+                <div class="instr-agent">scriptwriter</div>
+                <div class="instr-file"><span class="scope">global</span><b>rules/tone.md</b><span>v2 · 9f2a…</span></div>
+                <div class="instr-file"><span class="scope">workflow</span><b>rules/structure.md</b><span>v5 · 1c88…</span></div>
+                <div class="instr-file"><span class="scope">workflow</span><b>rules/hook.md</b><span>v3 · 7b41…</span></div>
+              </div>
+              <div class="instr">
+                <div class="instr-agent">researcher</div>
+                <div class="instr-file"><span class="scope">global</span><b>rules/sourcing.md</b><span>v1 · a002…</span></div>
+              </div>
+              <div class="instr">
+                <div class="instr-agent">graphics</div>
+                <div class="instr-file"><span class="scope">workflow</span><b>skills/collage-motion.md</b><span>v4 · 33de…</span></div>
+              </div>
+              <button class="btn btn-sm btn-ghost" style="margin-top:6px">View frozen copies</button>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head"><span class="eyebrow">Decisions</span></div>
+            <div class="panel-body">
+              <dl class="kv">
+                <dt>SCRIPT MODEL</dt><dd><b>anthropic/claude-sonnet-4.6</b> <span style="color:var(--text-faint)">(2 others considered; chosen for structured output support)</span></dd>
+                <dt>VOICE</dt><dd><b>Rachel · eleven_v3</b></dd>
+                <dt>MUSIC</dt><dd><b>“Slow Cartography”</b> <span style="color:var(--text-faint)">(Epidemic Sound, licence ES-2026-44120)</span></dd>
+                <dt>RENDERER</dt><dd><b>HyperFrames</b> <span style="color:var(--text-faint)">(no fallback used)</span></dd>
+              </dl>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head"><span class="eyebrow">Artifacts</span></div>
+            <div class="panel-body">
+              <div class="instr-file"><b>artifacts/script.md</b><span>2.1 KB</span></div>
+              <div class="instr-file"><b>artifacts/voice.wav</b><span>4.4 MB · 46.2 s</span></div>
+              <div class="instr-file"><b>artifacts/composition.html</b><span>18 KB</span></div>
+              <div class="instr-file"><b>artifacts/captions.srt</b><span>3.0 KB</span></div>
+              <div class="instr-file"><b>final.mp4</b><span>21 MB</span></div>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="stack">
+
+          <div class="panel">
+            <div class="panel-head"><span class="eyebrow">Self-review</span><span class="pill done">Passed</span></div>
+            <div class="panel-body" style="padding-top:8px;padding-bottom:10px">
+              <div class="check"><span class="ico"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 8.4l3.2 3.2L13 5"/></svg></span> File valid · 46.2 s · 1080×1920</div>
+              <div class="check"><span class="ico"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 8.4l3.2 3.2L13 5"/></svg></span> No black or broken frames</div>
+              <div class="check"><span class="ico"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 8.4l3.2 3.2L13 5"/></svg></span> Audio −14.1 LUFS · no clipping</div>
+              <div class="check"><span class="ico"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 8.4l3.2 3.2L13 5"/></svg></span> Captions present · 96 cues</div>
+              <div class="check"><span class="ico"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 8.4l3.2 3.2L13 5"/></svg></span> Motion adequate · not a slideshow</div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <span class="eyebrow">Your judgement</span>
+              <span class="rq-meta">words and order, no scores</span>
+            </div>
+            <div class="panel-body">
+
+              <div class="factor">
+                <div class="factor-q">Did the first two seconds make you want to keep watching? Why?</div>
+                <textarea class="ta">Opens on the crumbling harbour wall before any words, and that's the reason it works. The narration arrives a beat late, which helps.</textarea>
+                <div class="rank">
+                  <div class="rank-label">Rank the 3 videos of this request</div>
+                  <div class="rank-list">
+                    <div class="rank-item"><span class="rank-pos">1</span><span class="rank-thumb thumb-c"></span> 01 (current)</div>
+                    <div class="rank-item"><span class="rank-pos">2</span><span class="rank-thumb thumb-a"></span> 02</div>
+                    <div class="rank-item"><span class="rank-pos">3</span><span class="rank-thumb thumb-e"></span> 03</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="factor">
+                <div class="factor-q">Did the visuals stay consistent across shots? Where did they drift?</div>
+                <textarea class="ta" placeholder="Describe what you saw…"></textarea>
+                <div class="rank">
+                  <div class="rank-label">Rank the 3 videos of this request</div>
+                  <div class="rank-list">
+                    <div class="rank-item"><span class="rank-pos">1</span><span class="rank-thumb thumb-a"></span> 02</div>
+                    <div class="rank-item"><span class="rank-pos">2</span><span class="rank-thumb thumb-c"></span> 01 (current)</div>
+                    <div class="rank-item"><span class="rank-pos">3</span><span class="rank-thumb thumb-e"></span> 03</div>
+                  </div>
+                </div>
+              </div>
+
+              <div style="border-top:1px solid var(--line-soft);padding-top:13px">
+                <div class="rank-label">Verdict</div>
+                <div class="verdict">
+                  <button class="btn btn-primary btn-sm">Accepted</button>
+                  <button class="btn btn-sm">Reject</button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ============ STATUS BAR ============ -->
+  <footer class="statusbar">
+    <div class="st"><span class="dot run"></span> <b>1 running</b> · Cinematic Shorts 4/7</div>
+    <div class="st">DISK <b>1.42 TB</b> free</div>
+    <div class="st">CACHE <b>96 GB</b></div>
+    <div class="st">TODAY <b>€ 2.14</b></div>
+    <div class="st">HIGGSFIELD <b>168 cr</b></div>
+    <div class="st">ELEVENLABS <b>7,120 chars</b></div>
+    <div class="st">2026-08-10 15:07 UTC</div>
+  </footer>
+
+</div>
+
+<!-- ============ RUN MODAL ============ -->
+<div class="scrim" id="modal" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="m-title">Run News Explainer</div>
+      <div class="modal-sub" id="m-sub">news-explainer v1.3.0 · last used 2026-08-09</div>
+    </div>
+
+    <div class="modal-body">
+
+      <div class="locked">
+        <span class="ico"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3.2" y="7.2" width="9.6" height="6.6" rx="1"/><path d="M5.4 7.2V5.2a2.6 2.6 0 0 1 5.2 0v2"/></svg></span>
+        <div>These settings were locked when the request started and cannot be changed while it is running or paused. Stop the request to run the workflow with different settings.</div>
+      </div>
+
+      <div class="blocker">
+        <span class="ico"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6.4"/><path d="M8 4.6v4M8 10.9v.1"/></svg></span>
+        <div><b style="color:var(--text);font-weight:600">Not enough OpenRouter balance.</b> €0.90 available, €1.23 estimated for these settings. Top up, lower the video count, or shorten the target duration.</div>
+      </div>
+
+      <div class="fieldset">
+        <div class="legend"><span>Workflow settings</span></div>
+        <div class="field">
+          <label class="label">Topic</label>
+          <input class="inp" placeholder="Leave empty to let the research agent choose">
+          <div class="help">Not used for cost estimates. Every topic is different, so it would never match a past run.</div>
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label class="label">Narrator voice</label>
+            <select class="sel">
+              <optgroup label="Your voices">
+                <option>Studio A (cloned)</option>
+                <option>Narrator B (cloned)</option>
+              </optgroup>
+              <optgroup label="ElevenLabs library">
+                <option>Rachel (calm)</option>
+                <option>Adam (energetic)</option>
+              </optgroup>
+            </select>
+          </div>
+          <div class="field">
+            <label class="label">Script length target</label>
+            <div class="affix wide"><input class="inp" type="number" inputmode="decimal" value="45" min="20" max="90" step="5"><span class="affix-unit">seconds</span></div>
+            <div class="help">Guides the scriptwriter. The narration runs for as long as the finished script needs.</div>
+          </div>
+        </div>
+        <div class="field">
+          <label class="label">Visual model</label>
+          <select class="sel">
+            <option>Kling 3.0 (18 cr per clip)</option>
+            <option>WAN 2.7 (24 cr per clip)</option>
+            <option>Veo 3.1 (52 cr per clip)</option>
+            <option>Seedance 2.0 (68 cr per clip)</option>
+          </select>
+          <div class="help">Read from your Higgsfield connection when this pop-up opened. The identifier is pinned into the record, so the run stays reproducible.</div>
+        </div>
+      </div>
+
+      <div class="fieldset">
+        <div class="legend"><span>Run settings</span><span>added to every workflow</span></div>
+        <div class="row3">
+          <div class="field">
+            <label class="label">Videos</label>
+            <input class="inp" type="number" inputmode="numeric" value="3" min="1" max="20" step="1">
+          </div>
+          <div class="field">
+            <label class="label">At once</label>
+            <input class="inp" type="number" inputmode="numeric" value="2" min="1" max="8" step="1">
+          </div>
+          <div class="field">
+            <label class="label">Retries</label>
+            <input class="inp" type="number" inputmode="numeric" value="3" min="0" max="10" step="1">
+          </div>
+        </div>
+        <div class="switch">
+          <div>
+            <div style="font-size:12.5px">Dry run</div>
+            <div class="help" style="margin-top:1px">Runs the whole pipeline with placeholder assets. Spends nothing.</div>
+          </div>
+          <button class="tog" aria-pressed="false" aria-label="Dry run"></button>
+        </div>
+      </div>
+
+      <div class="fieldset">
+        <div class="legend"><span>Budget</span><span>one per meter, never combined</span></div>
+        <div class="row3">
+          <div class="field">
+            <label class="label">OpenRouter</label>
+            <div class="affix"><input class="inp pre" type="number" inputmode="decimal" value="2.00" min="0" step="0.01"><span class="affix-unit pre">€</span></div>
+          </div>
+          <div class="field">
+            <label class="label">Higgsfield</label>
+            <div class="affix sm"><input class="inp" type="number" inputmode="numeric" value="150" min="0" step="1"><span class="affix-unit">cr</span></div>
+          </div>
+          <div class="field">
+            <label class="label">ElevenLabs</label>
+            <div class="affix"><input class="inp" value="no cap" disabled data-off style="opacity:.45"><span class="affix-unit">chars</span></div>
+          </div>
+        </div>
+        <div class="help">Decimals use a point, not a comma. ElevenLabs draws on a monthly allowance rather than a balance, so it is measured but cannot be capped here. 315,710 characters remain this month.</div>
+      </div>
+
+      <div class="estimate">
+        <div class="est-head">
+          <span class="eyebrow">Estimated for these settings</span>
+          <span class="est-conf">matched on 4 similar runs</span>
+        </div>
+        <div class="meters">
+          <div class="meter"><div class="meter-name">OpenRouter</div><div class="meter-val">1.23<span class="meter-unit">EUR</span></div></div>
+          <div class="meter"><div class="meter-name">ElevenLabs</div><div class="meter-val">3,540<span class="meter-unit">chars</span></div></div>
+          <div class="meter"><div class="meter-name">Higgsfield</div><div class="meter-val none">not used</div></div>
+        </div>
+        <div class="help" style="margin-top:9px">3 videos × 0.41 EUR average. Failed and dry runs are left out of the average.</div>
+      </div>
+
+    </div>
+
+    <div class="modal-foot">
+      <div class="est-conf" id="m-note" style="color:var(--red)">Blocked by OpenRouter balance</div>
+      <div style="display:flex;gap:9px">
+        <button class="btn btn-sm" id="m-cancel" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="m-initiate" disabled>Initiate</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* Navigation only. Every other control is deliberately inert. */
+const tabs = document.querySelectorAll('.tab');
+tabs.forEach(t => t.addEventListener('click', () => {
+  document.querySelectorAll('.pseudo.on').forEach(p => p.classList.remove('on'));
+  tabs.forEach(x => x.classList.remove('on'));
+  t.classList.add('on');
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('on'));
+  document.getElementById(t.dataset.view).classList.add('on');
+  document.querySelector('.main').scrollTop = 0;
+}));
+
+let scrollMemory = 0;
+function openPseudo(id){
+  const main = document.querySelector('.main');
+  scrollMemory = main.scrollTop;
+  document.getElementById(id).classList.add('on');
+  main.scrollTop = 0;
+}
+function closePseudo(id){
+  document.getElementById(id).classList.remove('on');
+  document.querySelector('.main').scrollTop = scrollMemory;
+}
+const RUN_HEAD = {
+  run:  ['Run News Explainer', 'news-explainer v1.3.0 · last used 2026-08-09'],
+  view: ['Settings for this request', 'cinematic-shorts v2.4.1 · request 20260810-143022']
+};
+function openModal(mode){
+  const view = mode === 'view';
+  const modal = document.querySelector('#modal .modal');
+  modal.classList.toggle('ro', view);
+  const [title, sub] = RUN_HEAD[view ? 'view' : 'run'];
+  document.getElementById('m-title').textContent = title;
+  document.getElementById('m-sub').textContent = sub;
+  const note = document.getElementById('m-note');
+  note.textContent = view ? 'Read only while the request is active' : 'Blocked by OpenRouter balance';
+  note.style.color = view ? 'var(--text-faint)' : 'var(--red)';
+  document.getElementById('m-cancel').textContent = view ? 'Close' : 'Cancel';
+  document.getElementById('m-initiate').style.display = view ? 'none' : '';
+  modal.querySelectorAll('.inp,.sel').forEach(el => el.disabled = view || el.hasAttribute('data-off'));
+  document.getElementById('modal').classList.add('on');
+  document.querySelector('#modal .modal').scrollTop = 0;
+}
+function closeModal(){ document.getElementById('modal').classList.remove('on'); }
+
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  const open = document.querySelector('.pseudo.on');
+  if (document.getElementById('modal').classList.contains('on')) closeModal();
+  else if (open) closePseudo(open.id);
+});
+
+/* Toggles flip visually so the control reads as real. Nothing behind them. */
+document.querySelectorAll('.tog').forEach(t =>
+  t.addEventListener('click', () => {
+    const on = t.classList.toggle('on');
+    t.setAttribute('aria-pressed', String(on));
+  }));
+</script>
+
+</body>
+</html>
