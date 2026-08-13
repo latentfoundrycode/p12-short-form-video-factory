@@ -1,0 +1,13 @@
+---
+globs: **/*.py
+---
+
+# Python conventions
+
+Python 3.12.
+
+After editing Python, run `python -m ruff check` and `python -m mypy`.
+
+Never add a dependency to a workflow's `requirements.txt` without being asked.
+
+Never write into `runs/`, `cache/`, or `library/` from chassis code outside the designated modules.

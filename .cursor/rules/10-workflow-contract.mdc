@@ -1,0 +1,27 @@
+---
+globs: workflows/**/*.py, sdk/**/*.py
+---
+
+# Workflow contract
+
+The plug-in boundary is specified in `docs/SFVF_Workflow_SDK.md`. Implement it as written.
+
+## Steps (SDK §5)
+
+Wrap every meaningful unit of work in `ctx.step()`. Signature: family, `inputs`, `label` (SDK §5.2).
+
+- **family** — kind of work. Recovery, time limits, statistics, and estimation match on it. Repeating a family in one video is normal.
+- **inputs** — this instance's cache key. The body must be a pure function of declared inputs (SDK §5.3). If changing a value should change the output, it belongs in `inputs`.
+- **label** — display only. Never part of the key.
+
+Do not call `ctx.library.find()` inside a step (SDK §5.3a). Resolve asset ids outside; declare those ids inside. Selection keys on descriptor hashes; generation keys on asset ids.
+
+`ctx.map()` schedules full steps of one family; it is not a new unit (SDK §4.7).
+
+## Events (Architecture §3.3)
+
+Workflows report JSON Lines on stdout. Invalid JSON is a log line, not an error. `stage.total` may change mid-run.
+
+## Finalize (SDK §6.9)
+
+Every workflow ends with `media.finalize()`. Skipping it skips format guarantees and self-review.

@@ -1,0 +1,25 @@
+---
+alwaysApply: true
+---
+
+# Project invariants
+
+Implement the plug-in boundary as specified. Manifest schema, event protocol, and context object are contract. Workflow interiors are free-form; the boundary is not.
+
+Keep no authoritative state in backend memory. Run state lives in files. The supervisor holds only in-flight work.
+
+Never write into `workflows/`, `rules/`, or `skills/` while running. The learning module is the only exception, and it writes to staging, never to live files. `library/` is written while running by design.
+
+Every priced call goes through the budget engine. Spending without reserving first is a bug.
+
+Never fold library membership into a cache key. Steps declare specific asset ids; only those ids affect keys.
+
+Preserve descriptor/blob keying: selection steps key on descriptor hashes; generation steps key on blob ids. Do not collapse these.
+
+Redact secrets on every write path: records, logs, the event stream, and error messages.
+
+Be strict at the boundary, tolerant inside it. Reject bad manifests and settings early with a named problem. Absorb malformed event lines as logs; do not crash the run.
+
+Run ids are `YYYYMMDD-hhmmss` in UTC. A second run in the same second appends a letter (`A`, then `B`). No spaces.
+
+The cache remembers work (derived, version-scoped, evictable). The library holds things (authored, named, never auto-evicted, not version-scoped).
