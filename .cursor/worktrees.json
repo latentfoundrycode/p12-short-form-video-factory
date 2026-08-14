@@ -1,0 +1,7 @@
+{
+    "setup-worktree-windows": [
+      "py -m venv .venv",
+      ".\\.venv\\Scripts\\python.exe -m pip install -r requirements-dev.txt",
+      "npm --prefix frontend install"
+    ]
+  }
