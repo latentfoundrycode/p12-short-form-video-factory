@@ -24,9 +24,9 @@ Short-Form Video Factory is a single-user local app that runs pluggable workflow
 Python commands require `.venv\Scripts\Activate.ps1` first.
 
 ```
-python -m ruff check .
-python -m ruff format --check .
-python -m mypy
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m ruff format --check .
+.\.venv\Scripts\python.exe -m mypy
 npm --prefix frontend run lint
 npm --prefix frontend run typecheck
 ```
