@@ -1,0 +1,10 @@
+{
+    "mcpAllowlist": [
+      "context7:*"
+    ],
+    "terminalAllowlist": [
+      "git",
+      "npm",
+      ".\\.venv\\Scripts\\python.exe"
+    ]
+  }
