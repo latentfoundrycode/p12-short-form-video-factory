@@ -1,0 +1,16 @@
+---
+description: Prefer reusing and extending existing code over writing new code
+alwaysApply: true
+---
+
+# Reuse over rebuild
+
+Before writing any new function, module, or abstraction:
+
+1. Search the codebase for an existing implementation that already does this, or most of it. Use the project index; do not assume nothing exists.
+2. If something close exists, extend or reuse it rather than writing a parallel version. Duplicated logic is a defect, not a convenience.
+3. Prefer the smallest change that satisfies the current requirement. Do not add configuration, abstraction, or generality that no current caller needs (YAGNI).
+
+If reuse is not possible, state briefly why before writing the new code.
+
+Then show me the file. Don't commit or push yet.
