@@ -1,0 +1,8 @@
+{
+    "version": 1,
+    "hooks": {
+      "afterFileEdit": [
+        { "command": ".\\.venv\\Scripts\\python.exe .cursor\\hooks\\lint_edit.py" }
+      ]
+    }
+  }
