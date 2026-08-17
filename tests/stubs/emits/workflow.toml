@@ -1,0 +1,6 @@
+[workflow]
+id = "emits"
+name = "Emits"
+version = "1.0.0"
+entrypoint = "main:run"
+sdk = "1"

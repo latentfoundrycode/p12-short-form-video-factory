@@ -1,0 +1,6 @@
+[workflow]
+id = "unsafe-entry"
+name = "Unsafe"
+version = "1.0.0"
+entrypoint = "../outside:run"
+sdk = "1"

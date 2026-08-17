@@ -1,0 +1,6 @@
+[workflow]
+id = "missing-entry"
+name = "Missing"
+version = "1.0.0"
+entrypoint = "missing:run"
+sdk = "1"

@@ -7,6 +7,9 @@ name = "sfvf"
 version = "0.0.0"
 description = "SFVF workflow SDK"
 requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.13,<3",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["sfvf"]
