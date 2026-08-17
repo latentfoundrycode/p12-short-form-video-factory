@@ -1,9 +1,11 @@
 target-version = "py312"
 line-length = 100
-exclude = ["venvs", "runs", "cache", "library", "archive", "staging", "frontend", ".venv"]
+exclude = ["venvs", "runs", "cache", "library", "archive", "staging", "frontend", ".venv", ".cursor"]
 
 [lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "S", "A", "C4", "SIM", "PTH", "RUF"]
 
 [lint.per-file-ignores]
 "workflows/**/*.py" = ["S603", "S607"]
+"tests/**/*.py" = ["S101"]
+"app/registry/schema.py" = ["A003"]
