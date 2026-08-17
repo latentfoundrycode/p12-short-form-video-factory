@@ -1,0 +1,6 @@
+[workflow]
+id = "succeeds"
+name = "Succeeds"
+version = "1.0.0"
+entrypoint = "main:run"
+sdk = "1"

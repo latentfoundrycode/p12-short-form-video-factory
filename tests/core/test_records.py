@@ -136,16 +136,17 @@ def test_events_jsonl_round_trip_preserves_unicode(
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     payload = {"t": "log", "msg": "café 日本語"}
-    append_event(run_dir, payload)
-    append_event(run_dir, {"t": "stage", "index": 1})
+    append_event(run_dir, payload, source="01")
+    append_event(run_dir, {"t": "stage", "index": 1}, source="prep")
     events = list(read_events(run_dir))
     assert events == [
-        ("2026-08-10T14:30:22Z", {"t": "log", "msg": "café 日本語"}),
-        ("2026-08-10T14:30:22Z", {"t": "stage", "index": 1}),
+        ("2026-08-10T14:30:22Z", "01", {"t": "log", "msg": "café 日本語"}),
+        ("2026-08-10T14:30:22Z", "prep", {"t": "stage", "index": 1}),
     ]
     line = (run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()[0]
     envelope = json.loads(line)
     assert envelope["ts"] == "2026-08-10T14:30:22Z"
+    assert envelope["source"] == "01"
     assert envelope["event"] == payload
     assert line.endswith("}")
     assert "\\u" not in line

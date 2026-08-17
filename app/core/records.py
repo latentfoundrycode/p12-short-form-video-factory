@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -149,7 +149,7 @@ def update_request(
     atomic: bool = False,
     status: RequestStatus | None = None,
     ended_utc: str | None = None,
-    videos: list[VideoRef | Mapping[str, Any]] | None = None,
+    videos: Sequence[VideoRef | Mapping[str, Any]] | None = None,
 ) -> RequestRecord:
     current = read_request(run_dir)
     new_status = current.status if status is None else status
@@ -178,9 +178,9 @@ def read_video(video_dir: Path) -> VideoRecord:
     return VideoRecord.model_validate(read_json(video_dir / "video.json"))
 
 
-def append_event(run_dir: Path, event: dict[str, Any]) -> None:
+def append_event(run_dir: Path, event: dict[str, Any], *, source: str) -> None:
     path = run_dir / "events.jsonl"
-    envelope = {"ts": clock.format_utc_z(clock.utc_now()), "event": event}
+    envelope = {"ts": clock.format_utc_z(clock.utc_now()), "source": source, "event": event}
     line = json.dumps(envelope, ensure_ascii=False) + "\n"
     with path.open("a", encoding="utf-8", newline="\n") as handle:
         handle.write(line)
@@ -188,7 +188,7 @@ def append_event(run_dir: Path, event: dict[str, Any]) -> None:
         os.fsync(handle.fileno())
 
 
-def read_events(run_dir: Path) -> Iterator[tuple[str, dict[str, Any]]]:
+def read_events(run_dir: Path) -> Iterator[tuple[str, str, dict[str, Any]]]:
     path = run_dir / "events.jsonl"
     if not path.is_file():
         return
@@ -196,4 +196,4 @@ def read_events(run_dir: Path) -> Iterator[tuple[str, dict[str, Any]]]:
         if not line.strip():
             continue
         envelope = json.loads(line)
-        yield envelope["ts"], envelope["event"]
+        yield envelope["ts"], envelope["source"], envelope["event"]
