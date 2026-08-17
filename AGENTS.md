@@ -33,6 +33,15 @@ npm --prefix frontend run typecheck
 
 This environment is Windows with PowerShell. POSIX shell syntax will fail.
 
+## Build and run
+
+```
+npm --prefix frontend run build
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Build writes into `app/web/`. Uvicorn then serves the API and that SPA as one process. Use `npm --prefix frontend run dev` (Vite proxy to `:8000`) while iterating on the frontend.
+
 ## Specifications
 
 `docs/` is authoritative:

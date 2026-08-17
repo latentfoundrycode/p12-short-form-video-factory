@@ -58,16 +58,16 @@ export function WorkflowCard({ workflow }: { workflow: Workflow }) {
         </div>
         {broken ? (
           <div className="card-state fail">
-            {errors.map((problem) => (
-              <span key={problem.code}>{problem.message}</span>
+            {errors.map((problem, index) => (
+              <span key={`${problem.code}-${index}`}>{problem.message}</span>
             ))}
           </div>
         ) : null}
         {!broken && warnings.length > 0 ? (
           <div className="card-state warn">
             <span className="pill warn">Warning</span>
-            {warnings.map((problem) => (
-              <span key={problem.code}>{problem.message}</span>
+            {warnings.map((problem, index) => (
+              <span key={`${problem.code}-${index}`}>{problem.message}</span>
             ))}
           </div>
         ) : null}
