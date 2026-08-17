@@ -1,8 +1,9 @@
 {
-    "version": 1,
-    "hooks": {
-      "afterFileEdit": [
-        { "command": ".\\.venv\\Scripts\\python.exe .cursor\\hooks\\lint_edit.py" }
-      ]
-    }
+  "version": 1,
+  "hooks": {
+    "afterFileEdit": [
+      { "command": ".\\.venv\\Scripts\\python.exe .cursor\\hooks\\lint_edit.py" },
+      { "command": ".\\.venv\\Scripts\\python.exe .cursor\\hooks\\format_frontend.py" }
+    ]
   }
+}
