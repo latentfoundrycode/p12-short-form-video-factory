@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import signal
 import subprocess
 import sys
 import threading
@@ -9,7 +10,7 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from sfvf.context import ContextFile, ContextPaths
 
@@ -38,9 +39,17 @@ type PopenFn = Callable[..., subprocess.Popen[str]]
 type RunRequestResult = EnvBlocked | RunBusy | RequestRecord
 
 DEFAULT_SILENCE_SECONDS = 300.0
+# Stage 2: graceful stop writes STOP_SENTINEL and sends the soft signal; stub
+# workflows cooperate by polling the sentinel / handling the signal. The SDK's
+# cooperative check-at-step-boundary and save lands in Stage 3.
+STOP_SENTINEL = ".stop"
+
+type StopMode = Literal["graceful", "hard"]
+type StopResult = StopAccepted | NotRunning
 
 _lock = threading.Lock()
 _active: dict[str, str | None] = {}
+_runs: dict[str, _RunState] = {}
 
 
 @dataclass(frozen=True)
@@ -49,12 +58,26 @@ class RunBusy:
     run_id: str | None = None
 
 
+@dataclass(frozen=True)
+class NotRunning:
+    run_id: str
+
+
+@dataclass(frozen=True)
+class StopAccepted:
+    run_id: str
+    mode: StopMode
+
+
 @dataclass
 class _RunState:
     """Per-run lock and live video statuses. Guards events.jsonl and request.json."""
 
     lock: threading.Lock = field(default_factory=threading.Lock)
     statuses: dict[int, VideoStatus] = field(default_factory=dict)
+    stop_requested: bool = False
+    stop_mode: StopMode | None = None
+    procs: dict[str, tuple[subprocess.Popen[str], Path]] = field(default_factory=dict)
 
     def record_event(self, run_dir: Path, event: dict[str, Any], source: str) -> None:
         with self.lock:
@@ -93,12 +116,48 @@ class _RunState:
                 videos=_video_refs(self.statuses),
             )
 
+    def register_proc(self, key: str, proc: subprocess.Popen[str], folder: Path) -> None:
+        with self.lock:
+            self.procs[key] = (proc, folder)
+
+    def unregister_proc(self, key: str) -> None:
+        with self.lock:
+            self.procs.pop(key, None)
+
+    def request_stop(self, mode: StopMode) -> list[tuple[str, subprocess.Popen[str], Path]]:
+        with self.lock:
+            self.stop_requested = True
+            self.stop_mode = mode
+            return [(key, proc, folder) for key, (proc, folder) in self.procs.items()]
+
+    def was_stopped(self) -> bool:
+        with self.lock:
+            return self.stop_requested
+
+    def mark_pending_stopped(self, run_dir: Path, *, atomic: bool) -> None:
+        with self.lock:
+            for index, status in self.statuses.items():
+                if status == "pending":
+                    self.statuses[index] = "stopped"
+            update_request(
+                run_dir,
+                atomic=atomic,
+                videos=_video_refs(self.statuses),
+            )
+
 
 def _video_refs(statuses: dict[int, VideoStatus]) -> list[VideoRef]:
     return [VideoRef(index=index, status=statuses[index]) for index in sorted(statuses)]
 
 
-def _aggregate_status(statuses: Sequence[VideoStatus], *, atomic: bool) -> RequestStatus:
+def _aggregate_status(
+    statuses: Sequence[VideoStatus],
+    *,
+    atomic: bool,
+    stopped: bool = False,
+) -> RequestStatus:
+    if stopped:
+        return "stopped"
     if any(status in {"pending", "running"} for status in statuses):
         raise RuntimeError("videos remained in-flight after the pool drained")
     completed = all(status == "complete" for status in statuses)
@@ -176,6 +235,8 @@ def run_request(
         state = _RunState(
             statuses=dict.fromkeys(range(1, video_count + 1), "pending"),
         )
+        with _lock:
+            _runs[run_id] = state
         create_request(
             run_dir,
             run_id=run_id,
@@ -198,10 +259,26 @@ def run_request(
                 silence_limit_default=silence_limit_default,
             )
             if not ok:
+                if state.was_stopped():
+                    state.mark_pending_stopped(run_dir, atomic=workflow.atomic)
+                    return state.finish_request(
+                        run_dir,
+                        atomic=workflow.atomic,
+                        status="stopped",
+                        ended_utc=format_utc_z(utc_now()),
+                    )
                 return state.finish_request(
                     run_dir,
                     atomic=workflow.atomic,
                     status="failed",
+                    ended_utc=format_utc_z(utc_now()),
+                )
+            if state.was_stopped():
+                state.mark_pending_stopped(run_dir, atomic=workflow.atomic)
+                return state.finish_request(
+                    run_dir,
+                    atomic=workflow.atomic,
+                    status="stopped",
                     ended_utc=format_utc_z(utc_now()),
                 )
         return _run_videos(
@@ -223,12 +300,43 @@ def run_request(
             held = _active.get(workflow_id)
             if held is None or held == run_id:
                 _active.pop(workflow_id, None)
+            if run_id is not None:
+                _runs.pop(run_id, None)
 
 
 def _process_group_kwargs() -> dict[str, Any]:
     if sys.platform == "win32":
         return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
     return {"start_new_session": True}
+
+
+def _send_soft_signal(proc: subprocess.Popen[str]) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        if sys.platform == "win32":
+            proc.send_signal(signal.CTRL_BREAK_EVENT)
+        else:
+            proc.send_signal(signal.SIGTERM)
+    except (ProcessLookupError, OSError):
+        return
+
+
+def stop(run_id: str, *, mode: StopMode) -> StopResult:
+    if mode not in {"graceful", "hard"}:
+        raise ValueError(f"unknown stop mode: {mode}")
+    with _lock:
+        state = _runs.get(run_id)
+    if state is None:
+        return NotRunning(run_id=run_id)
+    snapshot = state.request_stop(mode)
+    for _key, proc, folder in snapshot:
+        if mode == "graceful":
+            (folder / STOP_SENTINEL).touch()
+            _send_soft_signal(proc)
+        else:
+            kill_tree(proc)
+    return StopAccepted(run_id=run_id, mode=mode)
 
 
 def _start_runner(
@@ -393,17 +501,21 @@ def _run_prepare(
         popen=popen,
         extra_args=["--entry", "prepare", "--result", str(result_path)],
     )
-    _consume_stdout(
-        proc,
-        run_dir,
-        "prep",
-        state=state,
-        silence=_SilenceState(),
-        limits=limits,
-        silence_limit_default=silence_limit_default,
-    )
-    if proc.wait() != 0 or not result_path.is_file():
-        return False, None
+    state.register_proc("prep", proc, shared_dir)
+    try:
+        _consume_stdout(
+            proc,
+            run_dir,
+            "prep",
+            state=state,
+            silence=_SilenceState(),
+            limits=limits,
+            silence_limit_default=silence_limit_default,
+        )
+        if proc.wait() != 0 or not result_path.is_file():
+            return False, None
+    finally:
+        state.unregister_proc("prep")
     payload: object = json.loads(result_path.read_text(encoding="utf-8"))
     if payload is None:
         return True, None
@@ -452,7 +564,11 @@ def _run_videos(
     return state.finish_request(
         run_dir,
         atomic=atomic,
-        status=_aggregate_status(list(state.statuses.values()), atomic=atomic),
+        status=_aggregate_status(
+            list(state.statuses.values()),
+            atomic=atomic,
+            stopped=state.was_stopped(),
+        ),
         ended_utc=format_utc_z(utc_now()),
     )
 
@@ -474,6 +590,15 @@ def _run_one_video(
 ) -> None:
     source = format_video_dir(index, video_count)
     video_dir = (run_dir / source).resolve()
+    with state.lock:
+        if state.stop_requested:
+            state.statuses[index] = "stopped"
+            update_request(
+                run_dir,
+                atomic=atomic,
+                videos=_video_refs(state.statuses),
+            )
+            return
     started: str | None = None
     try:
         context = ContextFile(
@@ -503,16 +628,23 @@ def _run_one_video(
             cwd=video_dir,
             popen=popen,
         )
-        captured = _consume_stdout(
-            proc,
-            run_dir,
-            source,
-            state=state,
-            silence=_SilenceState(),
-            limits=limits,
-            silence_limit_default=silence_limit_default,
+        state.register_proc(source, proc, video_dir)
+        try:
+            captured = _consume_stdout(
+                proc,
+                run_dir,
+                source,
+                state=state,
+                silence=_SilenceState(),
+                limits=limits,
+                silence_limit_default=silence_limit_default,
+            )
+            returncode = proc.wait()
+        finally:
+            state.unregister_proc(source)
+        status: VideoStatus = (
+            "stopped" if state.was_stopped() else ("complete" if returncode == 0 else "failed")
         )
-        status: VideoStatus = "complete" if proc.wait() == 0 else "failed"
         ended = format_utc_z(utc_now())
         write_video(
             video_dir,
@@ -527,14 +659,15 @@ def _run_one_video(
         state.set_video(run_dir, index, status, atomic=atomic)
     except Exception:
         ended = format_utc_z(utc_now())
+        status = "stopped" if state.was_stopped() else "failed"
         if started is not None:
             write_video(
                 video_dir,
                 VideoRecord(
                     index=index,
-                    status="failed",
+                    status=status,
                     started_utc=started,
                     ended_utc=ended,
                 ),
             )
-        state.set_video(run_dir, index, "failed", atomic=atomic)
+        state.set_video(run_dir, index, status, atomic=atomic)

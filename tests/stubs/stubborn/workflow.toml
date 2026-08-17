@@ -1,0 +1,6 @@
+[workflow]
+id = "stubborn"
+name = "Stubborn"
+version = "1.0.0"
+entrypoint = "main:run"
+sdk = "1"

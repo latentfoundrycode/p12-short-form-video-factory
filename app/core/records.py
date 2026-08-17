@@ -14,7 +14,7 @@ from app.core import ids as clock
 type RequestStatus = Literal[
     "running", "complete", "partial", "stopped", "stopped-budget", "failed"
 ]
-type VideoStatus = Literal["pending", "running", "complete", "failed"]
+type VideoStatus = Literal["pending", "running", "complete", "failed", "stopped"]
 
 REQUEST_OPTIONAL_FIELDS = ("budget", "forecast")
 VIDEO_OPTIONAL_FIELDS = (

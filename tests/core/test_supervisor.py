@@ -2,11 +2,19 @@ import json
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 from app.core.env import EnvBlocked, EnvReady
 from app.core.records import read_events, read_request, read_video
-from app.core.supervisor import RunBusy, run_request
+from app.core.supervisor import (
+    STOP_SENTINEL,
+    NotRunning,
+    RunBusy,
+    StopAccepted,
+    run_request,
+    stop,
+)
 
 STUBS = Path(__file__).resolve().parent.parent / "stubs"
 
@@ -340,3 +348,130 @@ def test_gate_suspends_silence_timer(tmp_path: Path) -> None:
     run_dir = next((tmp_path / "runs" / "gated").iterdir())
     assert read_request(run_dir).status == "complete"
     assert read_video(run_dir / "01").status == "complete"
+
+
+def _wait_run_dir(parent: Path, timeout: float = 5) -> Path:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if parent.is_dir():
+            found = [path for path in parent.iterdir() if path.is_dir()]
+            if found:
+                return found[0]
+        time.sleep(0.02)
+    raise AssertionError(f"no run dir under {parent}")
+
+
+def _wait_source_event(run_dir: Path, source: str, timeout: float = 5) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        path = run_dir / "events.jsonl"
+        if path.is_file():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                envelope = json.loads(line)
+                if envelope.get("source") == source:
+                    return
+        time.sleep(0.02)
+    raise AssertionError(f"no event from {source} in {run_dir}")
+
+
+def _run_in_thread(
+    workflow: Path,
+    tmp_path: Path,
+    **kwargs: object,
+) -> tuple[threading.Thread, list[object]]:
+    box: list[object] = []
+
+    def target() -> None:
+        box.append(_run(workflow, tmp_path, **kwargs))
+
+    thread = threading.Thread(target=target)
+    thread.start()
+    return thread, box
+
+
+def _join_run(thread: threading.Thread, box: list[object], timeout: float = 10) -> object:
+    thread.join(timeout=timeout)
+    assert not thread.is_alive()
+    assert box
+    return box[0]
+
+
+def test_graceful_stop_writes_sentinel_and_marks_stopped(tmp_path: Path) -> None:
+    thread, box = _run_in_thread(STUBS / "cooperates", tmp_path)
+    run_dir = _wait_run_dir(tmp_path / "runs" / "cooperates")
+    _wait_source_event(run_dir, "01")
+    run_id = read_request(run_dir).run_id
+    accepted = stop(run_id, mode="graceful")
+    assert isinstance(accepted, StopAccepted)
+    result = _join_run(thread, box)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    assert (run_dir / "01" / STOP_SENTINEL).is_file()
+    assert read_video(run_dir / "01").status == "stopped"
+    assert read_request(run_dir).status == "stopped"
+
+
+def test_hard_stop_kills_tree_and_marks_stopped(tmp_path: Path) -> None:
+    thread, box = _run_in_thread(STUBS / "stubborn", tmp_path)
+    run_dir = _wait_run_dir(tmp_path / "runs" / "stubborn")
+    _wait_source_event(run_dir, "01")
+    run_id = read_request(run_dir).run_id
+    accepted = stop(run_id, mode="hard")
+    assert isinstance(accepted, StopAccepted)
+    result = _join_run(thread, box, timeout=5)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    assert read_video(run_dir / "01").status == "stopped"
+    assert read_request(run_dir).status == "stopped"
+    assert not (run_dir / "01" / STOP_SENTINEL).is_file()
+
+
+def test_stop_cancels_queued_videos_without_launching(tmp_path: Path) -> None:
+    thread, box = _run_in_thread(
+        STUBS / "cooperates",
+        tmp_path,
+        video_count=3,
+        concurrency=1,
+    )
+    run_dir = _wait_run_dir(tmp_path / "runs" / "cooperates")
+    _wait_source_event(run_dir, "01")
+    run_id = read_request(run_dir).run_id
+    stop(run_id, mode="graceful")
+    result = _join_run(thread, box)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    request = read_request(run_dir)
+    assert request.status == "stopped"
+    assert [video.status for video in request.videos] == ["stopped", "stopped", "stopped"]
+    assert (run_dir / "01" / "context.json").is_file()
+    assert not (run_dir / "02" / "context.json").exists()
+    assert not (run_dir / "03" / "context.json").exists()
+    assert not (run_dir / "02" / "video.json").exists()
+    assert not (run_dir / "03" / "video.json").exists()
+
+
+def test_stop_unknown_or_finished_run_returns_not_running(tmp_path: Path) -> None:
+    idle = stop("no-such-run", mode="graceful")
+    assert isinstance(idle, NotRunning)
+    assert idle.run_id == "no-such-run"
+    result = _run(STUBS / "succeeds", tmp_path)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    run_dir = next((tmp_path / "runs" / "succeeds").iterdir())
+    finished = stop(read_request(run_dir).run_id, mode="hard")
+    assert isinstance(finished, NotRunning)
+
+
+def test_stop_during_prep_ends_stopped_without_launching_videos(tmp_path: Path) -> None:
+    thread, box = _run_in_thread(STUBS / "prep_cooperates", tmp_path)
+    run_dir = _wait_run_dir(tmp_path / "runs" / "prep-cooperates")
+    _wait_source_event(run_dir, "prep")
+    run_id = read_request(run_dir).run_id
+    accepted = stop(run_id, mode="graceful")
+    assert isinstance(accepted, StopAccepted)
+    result = _join_run(thread, box)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    request = read_request(run_dir)
+    assert request.status == "stopped"
+    assert [video.status for video in request.videos] == ["stopped"]
+    assert (run_dir / "shared" / STOP_SENTINEL).is_file()
+    assert not (run_dir / "01" / "context.json").exists()
+    assert not (run_dir / "01" / "video.json").exists()

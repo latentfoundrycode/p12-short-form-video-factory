@@ -137,6 +137,7 @@ def test_video_status_rejects_request_only_values() -> None:
     with pytest.raises(ValidationError):
         VideoRef.model_validate({"index": 1, "status": "stopped-budget"})
     assert VideoRef.model_validate({"index": 1, "status": "pending"}).status == "pending"
+    assert VideoRef.model_validate({"index": 1, "status": "stopped"}).status == "stopped"
 
 
 def test_events_jsonl_round_trip_preserves_unicode(
