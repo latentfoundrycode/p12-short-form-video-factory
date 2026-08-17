@@ -15,16 +15,36 @@ def _ready(*_args: object, **_kwargs: object) -> EnvReady:
     return EnvReady(python=Path(sys.executable))
 
 
-def _run(workflow: Path, tmp_path: Path, **kwargs: object) -> object:
+def _run(
+    workflow: Path,
+    tmp_path: Path,
+    *,
+    video_count: int = 1,
+    concurrency: int = 1,
+    **kwargs: object,
+) -> object:
     return run_request(
         workflow,
         params={"topic": "test"},
-        video_count=1,
-        concurrency=1,
+        video_count=video_count,
+        concurrency=concurrency,
         runs_dir=tmp_path / "runs",
         ensure_env=_ready,
         **kwargs,
     )
+
+
+def _assert_events_parse(run_dir: Path) -> None:
+    path = run_dir / "events.jsonl"
+    assert path.is_file()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        envelope = json.loads(line)
+        assert isinstance(envelope, dict)
+        assert isinstance(envelope["ts"], str)
+        assert isinstance(envelope["source"], str)
+        assert isinstance(envelope["event"], dict)
 
 
 def test_happy_stub_completes_and_records_source_tagged_result(tmp_path: Path) -> None:
@@ -198,3 +218,70 @@ def test_stderr_from_workflow_becomes_log_event(tmp_path: Path) -> None:
     bodies = [event for _, _, event in read_events(run_dir)]
     assert {"t": "log", "level": "info", "msg": "lib noise"} in bodies
     assert {"t": "log", "level": "info", "msg": "after stderr"} in bodies
+
+
+def test_concurrency_below_video_count_completes_every_video(tmp_path: Path) -> None:
+    result = _run(STUBS / "succeeds", tmp_path, video_count=3, concurrency=2)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    run_dir = next((tmp_path / "runs" / "succeeds").iterdir())
+    request = read_request(run_dir)
+    assert request.status == "complete"
+    assert [video.status for video in request.videos] == ["complete", "complete", "complete"]
+    _assert_events_parse(run_dir)
+    sources = {source for _, source, _ in read_events(run_dir)}
+    assert sources == {"01", "02", "03"}
+    for name in ("01", "02", "03"):
+        video = read_video(run_dir / name)
+        assert video.status == "complete"
+        assert video.result == {"video": "final.mp4", "caption": "hello"}
+        bodies = [event for _, source, event in read_events(run_dir) if source == name]
+        assert {"t": "log", "level": "info", "msg": "ok"} in bodies
+
+
+def test_concurrency_at_least_video_count_completes_every_video(tmp_path: Path) -> None:
+    result = _run(STUBS / "succeeds", tmp_path, video_count=3, concurrency=4)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    run_dir = next((tmp_path / "runs" / "succeeds").iterdir())
+    request = read_request(run_dir)
+    assert request.status == "complete"
+    assert all(video.status == "complete" for video in request.videos)
+    assert not any(video.status == "pending" for video in request.videos)
+    _assert_events_parse(run_dir)
+    assert {source for _, source, _ in read_events(run_dir)} == {"01", "02", "03"}
+
+
+def test_mixed_non_atomic_request_is_partial(tmp_path: Path) -> None:
+    result = _run(STUBS / "mixed_variants", tmp_path, video_count=3, concurrency=2)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    run_dir = next((tmp_path / "runs" / "mixed-variants").iterdir())
+    request = read_request(run_dir)
+    assert request.status == "partial"
+    assert [video.status for video in request.videos] == ["complete", "failed", "complete"]
+    assert not any(video.status == "pending" for video in request.videos)
+    _assert_events_parse(run_dir)
+    assert {source for _, source, _ in read_events(run_dir)} == {"01", "02", "03"}
+    assert read_video(run_dir / "01").status == "complete"
+    assert read_video(run_dir / "02").status == "failed"
+    assert read_video(run_dir / "03").status == "complete"
+
+
+def test_mixed_atomic_request_is_failed(tmp_path: Path) -> None:
+    result = _run(STUBS / "mixed_atomic", tmp_path, video_count=3, concurrency=3)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    run_dir = next((tmp_path / "runs" / "mixed-atomic").iterdir())
+    request = read_request(run_dir)
+    assert request.status == "failed"
+    assert [video.status for video in request.videos] == ["complete", "failed", "complete"]
+    assert not any(video.status == "pending" for video in request.videos)
+    _assert_events_parse(run_dir)
+
+
+def test_all_failed_videos_aggregate_failed(tmp_path: Path) -> None:
+    result = _run(STUBS / "fails", tmp_path, video_count=2, concurrency=2)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    run_dir = next((tmp_path / "runs" / "fails").iterdir())
+    request = read_request(run_dir)
+    assert request.status == "failed"
+    assert [video.status for video in request.videos] == ["failed", "failed"]
+    _assert_events_parse(run_dir)
+    assert {source for _, source, _ in read_events(run_dir)} == {"01", "02"}

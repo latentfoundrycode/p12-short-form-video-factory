@@ -1,0 +1,7 @@
+[workflow]
+id = "mixed-variants"
+name = "Mixed variants"
+version = "1.0.0"
+entrypoint = "main:run"
+sdk = "1"
+atomic = false

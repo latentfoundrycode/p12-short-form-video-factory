@@ -4,8 +4,9 @@ import json
 import subprocess
 import sys
 import threading
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,68 @@ class RunBusy:
     run_id: str | None = None
 
 
+@dataclass
+class _RunState:
+    """Per-run lock and live video statuses. Guards events.jsonl and request.json."""
+
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    statuses: dict[int, VideoStatus] = field(default_factory=dict)
+
+    def record_event(self, run_dir: Path, event: dict[str, Any], source: str) -> None:
+        with self.lock:
+            append_event(run_dir, event, source=source)
+
+    def set_video(
+        self,
+        run_dir: Path,
+        index: int,
+        status: VideoStatus,
+        *,
+        atomic: bool,
+    ) -> RequestRecord:
+        with self.lock:
+            self.statuses[index] = status
+            return update_request(
+                run_dir,
+                atomic=atomic,
+                videos=_video_refs(self.statuses),
+            )
+
+    def finish_request(
+        self,
+        run_dir: Path,
+        *,
+        atomic: bool,
+        status: RequestStatus,
+        ended_utc: str,
+    ) -> RequestRecord:
+        with self.lock:
+            return update_request(
+                run_dir,
+                atomic=atomic,
+                status=status,
+                ended_utc=ended_utc,
+                videos=_video_refs(self.statuses),
+            )
+
+
+def _video_refs(statuses: dict[int, VideoStatus]) -> list[VideoRef]:
+    return [VideoRef(index=index, status=statuses[index]) for index in sorted(statuses)]
+
+
+def _aggregate_status(statuses: Sequence[VideoStatus], *, atomic: bool) -> RequestStatus:
+    if any(status in {"pending", "running"} for status in statuses):
+        raise RuntimeError("videos remained in-flight after the pool drained")
+    completed = all(status == "complete" for status in statuses)
+    if atomic:
+        return "complete" if completed else "failed"
+    if completed:
+        return "complete"
+    if all(status == "failed" for status in statuses):
+        return "failed"
+    return "partial"
+
+
 def run_request(
     workflow_dir: Path,
     *,
@@ -54,7 +117,6 @@ def run_request(
     ensure_env: EnsureEnv = default_ensure_env,
     popen: PopenFn = subprocess.Popen,
 ) -> RunRequestResult:
-    del concurrency  # applied in commit 2
     workflow_dir = workflow_dir.resolve()
     manifest = parse_manifest_toml((workflow_dir / "workflow.toml").read_text(encoding="utf-8"))
     workflow = manifest.workflow
@@ -75,13 +137,15 @@ def run_request(
         with _lock:
             _active[workflow_id] = run_id
         create_run_skeleton(run_dir, video_count)
-        pending = [VideoRef(index=index, status="pending") for index in range(1, video_count + 1)]
+        state = _RunState(
+            statuses=dict.fromkeys(range(1, video_count + 1), "pending"),
+        )
         create_request(
             run_dir,
             run_id=run_id,
             workflow={"id": workflow.id, "version": workflow.version, "sdk": str(workflow.sdk)},
             params=params,
-            videos=pending,
+            videos=_video_refs(state.statuses),
             atomic=workflow.atomic,
         )
         shared: dict[str, Any] | None = None
@@ -92,25 +156,26 @@ def run_request(
                 run_dir,
                 params=params,
                 popen=popen,
+                state=state,
             )
             if not ok:
-                ended = format_utc_z(utc_now())
-                return update_request(
+                return state.finish_request(
                     run_dir,
                     atomic=workflow.atomic,
                     status="failed",
-                    ended_utc=ended,
-                    videos=pending,
+                    ended_utc=format_utc_z(utc_now()),
                 )
-        return _run_first_video(
+        return _run_videos(
             env.python,
             workflow_dir,
             run_dir,
             params=params,
             video_count=video_count,
+            concurrency=concurrency,
             atomic=workflow.atomic,
             shared=shared,
             popen=popen,
+            state=state,
         )
     finally:
         with _lock:
@@ -161,7 +226,11 @@ def _start_runner(
 
 
 def _consume_stdout(
-    proc: subprocess.Popen[str], run_dir: Path, source: str
+    proc: subprocess.Popen[str],
+    run_dir: Path,
+    source: str,
+    *,
+    state: _RunState,
 ) -> dict[str, Any] | None:
     captured: dict[str, Any] | None = None
     if proc.stdout is None:
@@ -171,7 +240,7 @@ def _consume_stdout(
         if not line:
             continue
         event = to_event(line)
-        append_event(run_dir, event, source=source)
+        state.record_event(run_dir, event, source)
         if event.get("t") == "result":
             captured = {key: event[key] for key in ("video", "caption") if key in event}
     return captured
@@ -184,6 +253,7 @@ def _run_prepare(
     *,
     params: dict[str, Any],
     popen: PopenFn,
+    state: _RunState,
 ) -> tuple[bool, dict[str, Any] | None]:
     shared_dir = (run_dir / "shared").resolve()
     artifacts = shared_dir / "artifacts"
@@ -214,7 +284,7 @@ def _run_prepare(
         popen=popen,
         extra_args=["--entry", "prepare", "--result", str(result_path)],
     )
-    _consume_stdout(proc, run_dir, "prep")
+    _consume_stdout(proc, run_dir, "prep", state=state)
     if proc.wait() != 0 or not result_path.is_file():
         return False, None
     payload: object = json.loads(result_path.read_text(encoding="utf-8"))
@@ -225,70 +295,115 @@ def _run_prepare(
     return True, payload
 
 
-def _run_first_video(
+def _run_videos(
     python: Path,
     workflow_dir: Path,
     run_dir: Path,
     *,
     params: dict[str, Any],
     video_count: int,
+    concurrency: int,
     atomic: bool,
     shared: dict[str, Any] | None,
     popen: PopenFn,
+    state: _RunState,
 ) -> RequestRecord:
-    source = format_video_dir(1, video_count)
-    video_dir = (run_dir / source).resolve()
-    context = ContextFile(
-        settings=params,
-        paths=ContextPaths(
-            video=video_dir,
-            artifacts=(video_dir / "artifacts").resolve(),
-            steps=(video_dir / ".steps").resolve(),
-            shared=(run_dir / "shared").resolve(),
-        ),
-        instructions=[],
-        secrets={},
-        previous=None,
-        shared=shared,
-    )
-    write_json_atomic(video_dir / "context.json", context.model_dump(mode="json"))
-    started = format_utc_z(utc_now())
-    videos_running = [VideoRef(index=1, status="running")]
-    videos_running.extend(
-        VideoRef(index=index, status="pending") for index in range(2, video_count + 1)
-    )
-    update_request(run_dir, atomic=atomic, videos=videos_running)
-    write_video(
-        video_dir,
-        VideoRecord(index=1, status="running", started_utc=started, ended_utc=None),
-    )
-    proc = _start_runner(
-        python,
-        workflow_dir,
-        video_dir / "context.json",
-        cwd=video_dir,
-        popen=popen,
-    )
-    captured = _consume_stdout(proc, run_dir, source)
-    status: VideoStatus = "complete" if proc.wait() == 0 else "failed"
-    ended = format_utc_z(utc_now())
-    write_video(
-        video_dir,
-        VideoRecord(
-            index=1,
-            status=status,
-            started_utc=started,
-            ended_utc=ended,
-            result=captured if status == "complete" else None,
-        ),
-    )
-    videos = [VideoRef(index=1, status=status)]
-    videos.extend(VideoRef(index=index, status="pending") for index in range(2, video_count + 1))
-    request_status: RequestStatus = "complete" if status == "complete" else "failed"
-    return update_request(
+    workers = max(1, concurrency)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [
+            pool.submit(
+                _run_one_video,
+                python,
+                workflow_dir,
+                run_dir,
+                index=index,
+                video_count=video_count,
+                params=params,
+                atomic=atomic,
+                shared=shared,
+                popen=popen,
+                state=state,
+            )
+            for index in range(1, video_count + 1)
+        ]
+        for future in as_completed(futures):
+            future.result()
+    return state.finish_request(
         run_dir,
         atomic=atomic,
-        status=request_status,
-        ended_utc=ended,
-        videos=videos,
+        status=_aggregate_status(list(state.statuses.values()), atomic=atomic),
+        ended_utc=format_utc_z(utc_now()),
     )
+
+
+def _run_one_video(
+    python: Path,
+    workflow_dir: Path,
+    run_dir: Path,
+    *,
+    index: int,
+    video_count: int,
+    params: dict[str, Any],
+    atomic: bool,
+    shared: dict[str, Any] | None,
+    popen: PopenFn,
+    state: _RunState,
+) -> None:
+    source = format_video_dir(index, video_count)
+    video_dir = (run_dir / source).resolve()
+    started: str | None = None
+    try:
+        context = ContextFile(
+            settings=params,
+            paths=ContextPaths(
+                video=video_dir,
+                artifacts=(video_dir / "artifacts").resolve(),
+                steps=(video_dir / ".steps").resolve(),
+                shared=(run_dir / "shared").resolve(),
+            ),
+            instructions=[],
+            secrets={},
+            previous=None,
+            shared=shared,
+        )
+        write_json_atomic(video_dir / "context.json", context.model_dump(mode="json"))
+        started = format_utc_z(utc_now())
+        state.set_video(run_dir, index, "running", atomic=atomic)
+        write_video(
+            video_dir,
+            VideoRecord(index=index, status="running", started_utc=started, ended_utc=None),
+        )
+        proc = _start_runner(
+            python,
+            workflow_dir,
+            video_dir / "context.json",
+            cwd=video_dir,
+            popen=popen,
+        )
+        captured = _consume_stdout(proc, run_dir, source, state=state)
+        status: VideoStatus = "complete" if proc.wait() == 0 else "failed"
+        ended = format_utc_z(utc_now())
+        write_video(
+            video_dir,
+            VideoRecord(
+                index=index,
+                status=status,
+                started_utc=started,
+                ended_utc=ended,
+                result=captured if status == "complete" else None,
+            ),
+        )
+        state.set_video(run_dir, index, status, atomic=atomic)
+    except Exception:
+        ended = format_utc_z(utc_now())
+        if started is not None:
+            write_video(
+                video_dir,
+                VideoRecord(
+                    index=index,
+                    status="failed",
+                    started_utc=started,
+                    ended_utc=ended,
+                ),
+            )
+        state.set_video(run_dir, index, "failed", atomic=atomic)
