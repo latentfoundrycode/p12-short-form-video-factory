@@ -1,4 +1,6 @@
-from app.paths import APP_ROOT, WORKFLOWS_DIR
+from pathlib import Path
+
+from app.paths import APP_ROOT, WORKFLOWS_DIR, is_safe_path_segment, safe_join
 
 
 def test_app_root_is_the_repository_root() -> None:
@@ -8,3 +10,20 @@ def test_app_root_is_the_repository_root() -> None:
 
 def test_workflows_dir_is_under_app_root() -> None:
     assert WORKFLOWS_DIR == APP_ROOT / "workflows"
+
+
+def test_is_safe_path_segment_rejects_traversal() -> None:
+    assert is_safe_path_segment("news-explainer")
+    assert not is_safe_path_segment("")
+    assert not is_safe_path_segment("..")
+    assert not is_safe_path_segment("../secret")
+    assert not is_safe_path_segment("..\\secret")
+    assert not is_safe_path_segment("/etc/passwd")
+
+
+def test_safe_join_stays_inside_folder(tmp_path: Path) -> None:
+    folder = tmp_path / "wf"
+    folder.mkdir()
+    assert safe_join(folder, "thumbnail.png") == folder / "thumbnail.png"
+    assert safe_join(folder, "../secret.png") is None
+    assert safe_join(folder, "/tmp/secret.png") is None

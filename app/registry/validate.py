@@ -3,6 +3,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from app.paths import safe_join
 from app.registry.problems import Problem, ProblemCode
 from app.registry.schema import (
     LibraryFacet,
@@ -131,7 +132,7 @@ def _semantic_problems(folder: Path, manifest: Manifest) -> list[Problem]:
     problems.extend(_requires_problems(manifest))
 
     if workflow.thumbnail:
-        thumb = _safe_file(folder, workflow.thumbnail)
+        thumb = safe_join(folder, workflow.thumbnail)
         if thumb is None or not thumb.is_file():
             problems.append(
                 _problem(
@@ -170,7 +171,7 @@ def _entrypoint_problems(folder: Path, spec: str, *, kind: str) -> list[Problem]
     if parsed is None:
         return [_problem(bad_format, f"{kind} must be file:function, got {spec!r}")]
     file_part, _function = parsed
-    path = _safe_file(folder, file_part if file_part.endswith(".py") else f"{file_part}.py")
+    path = safe_join(folder, file_part if file_part.endswith(".py") else f"{file_part}.py")
     if path is None or not path.is_file():
         return [_problem(missing_file, f"{kind} file {file_part!r} was not found")]
     return []
@@ -315,13 +316,6 @@ def _requires_problems(manifest: Manifest) -> list[Problem]:
                 )
             )
     return problems
-
-
-def _safe_file(folder: Path, relative: str) -> Path | None:
-    rel = Path(relative)
-    if rel.is_absolute() or ".." in rel.parts:
-        return None
-    return folder / rel
 
 
 def _major(sdk: str) -> str:
