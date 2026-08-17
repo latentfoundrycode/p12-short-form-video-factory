@@ -1,0 +1,10 @@
+[workflow]
+id = "unlisted-family"
+name = "Unlisted family"
+version = "1.0.0"
+entrypoint = "main:run"
+sdk = "1"
+
+[[limits]]
+step = "slow"
+seconds = 5

@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -17,6 +18,7 @@ from app.core.env import ensure_env as default_ensure_env
 from app.core.events import to_event
 from app.core.ids import allocate_run, format_utc_z, utc_now
 from app.core.layout import create_run_skeleton, format_video_dir
+from app.core.proc import kill_tree
 from app.core.records import (
     RequestRecord,
     RequestStatus,
@@ -34,6 +36,8 @@ from app.registry.schema import parse_manifest_toml
 type EnsureEnv = Callable[..., EnvResult]
 type PopenFn = Callable[..., subprocess.Popen[str]]
 type RunRequestResult = EnvBlocked | RunBusy | RequestRecord
+
+DEFAULT_SILENCE_SECONDS = 300.0
 
 _lock = threading.Lock()
 _active: dict[str, str | None] = {}
@@ -107,6 +111,37 @@ def _aggregate_status(statuses: Sequence[VideoStatus], *, atomic: bool) -> Reque
     return "partial"
 
 
+@dataclass
+class _SilenceState:
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    last_activity: float = field(default_factory=time.monotonic)
+    current_family: str | None = None
+    gate_open: bool = False
+
+    def note(self, event: dict[str, Any]) -> None:
+        with self.lock:
+            self.last_activity = time.monotonic()
+            kind = event.get("t")
+            if self.gate_open and kind != "gate":
+                self.gate_open = False
+            if kind == "step":
+                name = event.get("name")
+                if isinstance(name, str):
+                    self.current_family = name
+            elif kind == "gate":
+                self.gate_open = True
+
+
+def _family_limit(family: str | None, limits: dict[str, float], default: float) -> float:
+    if family is not None and family in limits:
+        return limits[family]
+    return default
+
+
+def _watchdog_interval(limit: float) -> float:
+    return min(0.25, max(0.05, limit / 4.0))
+
+
 def run_request(
     workflow_dir: Path,
     *,
@@ -116,6 +151,7 @@ def run_request(
     runs_dir: Path | None = None,
     ensure_env: EnsureEnv = default_ensure_env,
     popen: PopenFn = subprocess.Popen,
+    silence_limit_default: float = DEFAULT_SILENCE_SECONDS,
 ) -> RunRequestResult:
     workflow_dir = workflow_dir.resolve()
     manifest = parse_manifest_toml((workflow_dir / "workflow.toml").read_text(encoding="utf-8"))
@@ -149,6 +185,7 @@ def run_request(
             atomic=workflow.atomic,
         )
         shared: dict[str, Any] | None = None
+        limits = {item.step: float(item.seconds) for item in manifest.limits}
         if workflow.prepare:
             ok, shared = _run_prepare(
                 env.python,
@@ -157,6 +194,8 @@ def run_request(
                 params=params,
                 popen=popen,
                 state=state,
+                limits=limits,
+                silence_limit_default=silence_limit_default,
             )
             if not ok:
                 return state.finish_request(
@@ -176,6 +215,8 @@ def run_request(
             shared=shared,
             popen=popen,
             state=state,
+            limits=limits,
+            silence_limit_default=silence_limit_default,
         )
     finally:
         with _lock:
@@ -225,24 +266,90 @@ def _start_runner(
     )
 
 
+def _watch_silence(
+    proc: subprocess.Popen[str],
+    silence: _SilenceState,
+    *,
+    limits: dict[str, float],
+    default: float,
+    state: _RunState,
+    run_dir: Path,
+    source: str,
+    stop: threading.Event,
+) -> None:
+    while not stop.wait(
+        timeout=_watchdog_interval(_family_limit(silence.current_family, limits, default))
+    ):
+        family = "unknown"
+        limit = default
+        with silence.lock:
+            if proc.poll() is not None:
+                return
+            if silence.gate_open:
+                continue
+            family = silence.current_family or "unknown"
+            limit = _family_limit(silence.current_family, limits, default)
+            if time.monotonic() - silence.last_activity <= limit:
+                continue
+            if proc.poll() is not None:
+                return
+        state.record_event(
+            run_dir,
+            {
+                "t": "log",
+                "level": "error",
+                "msg": f"step '{family}' silent past {limit:g}s limit; killed",
+            },
+            source,
+        )
+        if proc.poll() is None:
+            kill_tree(proc)
+        return
+
+
 def _consume_stdout(
     proc: subprocess.Popen[str],
     run_dir: Path,
     source: str,
     *,
     state: _RunState,
+    silence: _SilenceState,
+    limits: dict[str, float],
+    silence_limit_default: float,
 ) -> dict[str, Any] | None:
     captured: dict[str, Any] | None = None
     if proc.stdout is None:
         raise RuntimeError("runner stdout was not piped")
-    for raw in proc.stdout:
-        line = raw.rstrip("\r\n")
-        if not line:
-            continue
-        event = to_event(line)
-        state.record_event(run_dir, event, source)
-        if event.get("t") == "result":
-            captured = {key: event[key] for key in ("video", "caption") if key in event}
+    stop = threading.Event()
+    watcher = threading.Thread(
+        target=_watch_silence,
+        kwargs={
+            "proc": proc,
+            "silence": silence,
+            "limits": limits,
+            "default": silence_limit_default,
+            "state": state,
+            "run_dir": run_dir,
+            "source": source,
+            "stop": stop,
+        },
+        name=f"sfvf-silence-{source}",
+        daemon=True,
+    )
+    watcher.start()
+    try:
+        for raw in proc.stdout:
+            line = raw.rstrip("\r\n")
+            if not line:
+                continue
+            event = to_event(line)
+            silence.note(event)
+            state.record_event(run_dir, event, source)
+            if event.get("t") == "result":
+                captured = {key: event[key] for key in ("video", "caption") if key in event}
+    finally:
+        stop.set()
+        watcher.join(timeout=1)
     return captured
 
 
@@ -254,6 +361,8 @@ def _run_prepare(
     params: dict[str, Any],
     popen: PopenFn,
     state: _RunState,
+    limits: dict[str, float],
+    silence_limit_default: float,
 ) -> tuple[bool, dict[str, Any] | None]:
     shared_dir = (run_dir / "shared").resolve()
     artifacts = shared_dir / "artifacts"
@@ -284,7 +393,15 @@ def _run_prepare(
         popen=popen,
         extra_args=["--entry", "prepare", "--result", str(result_path)],
     )
-    _consume_stdout(proc, run_dir, "prep", state=state)
+    _consume_stdout(
+        proc,
+        run_dir,
+        "prep",
+        state=state,
+        silence=_SilenceState(),
+        limits=limits,
+        silence_limit_default=silence_limit_default,
+    )
     if proc.wait() != 0 or not result_path.is_file():
         return False, None
     payload: object = json.loads(result_path.read_text(encoding="utf-8"))
@@ -307,6 +424,8 @@ def _run_videos(
     shared: dict[str, Any] | None,
     popen: PopenFn,
     state: _RunState,
+    limits: dict[str, float],
+    silence_limit_default: float,
 ) -> RequestRecord:
     workers = max(1, concurrency)
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -323,6 +442,8 @@ def _run_videos(
                 shared=shared,
                 popen=popen,
                 state=state,
+                limits=limits,
+                silence_limit_default=silence_limit_default,
             )
             for index in range(1, video_count + 1)
         ]
@@ -348,6 +469,8 @@ def _run_one_video(
     shared: dict[str, Any] | None,
     popen: PopenFn,
     state: _RunState,
+    limits: dict[str, float],
+    silence_limit_default: float,
 ) -> None:
     source = format_video_dir(index, video_count)
     video_dir = (run_dir / source).resolve()
@@ -380,7 +503,15 @@ def _run_one_video(
             cwd=video_dir,
             popen=popen,
         )
-        captured = _consume_stdout(proc, run_dir, source, state=state)
+        captured = _consume_stdout(
+            proc,
+            run_dir,
+            source,
+            state=state,
+            silence=_SilenceState(),
+            limits=limits,
+            silence_limit_default=silence_limit_default,
+        )
         status: VideoStatus = "complete" if proc.wait() == 0 else "failed"
         ended = format_utc_z(utc_now())
         write_video(

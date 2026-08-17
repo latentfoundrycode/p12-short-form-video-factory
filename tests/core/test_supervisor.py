@@ -285,3 +285,58 @@ def test_all_failed_videos_aggregate_failed(tmp_path: Path) -> None:
     assert [video.status for video in request.videos] == ["failed", "failed"]
     _assert_events_parse(run_dir)
     assert {source for _, source, _ in read_events(run_dir)} == {"01", "02"}
+
+
+def test_silent_stub_is_killed_on_silence_limit(tmp_path: Path) -> None:
+    result = _run(STUBS / "silent", tmp_path, silence_limit_default=0.3)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    run_dir = next((tmp_path / "runs" / "silent").iterdir())
+    assert read_request(run_dir).status == "failed"
+    assert read_video(run_dir / "01").status == "failed"
+    bodies = [event for _, _, event in read_events(run_dir)]
+    assert any(
+        event.get("t") == "log"
+        and event.get("level") == "error"
+        and "silent past" in str(event.get("msg"))
+        and "killed" in str(event.get("msg"))
+        for event in bodies
+    )
+
+
+def test_heartbeating_stub_survives_past_silence_limit(tmp_path: Path) -> None:
+    result = _run(STUBS / "heartbeats", tmp_path, silence_limit_default=0.3)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    run_dir = next((tmp_path / "runs" / "heartbeats").iterdir())
+    assert read_request(run_dir).status == "complete"
+    assert read_video(run_dir / "01").status == "complete"
+
+
+def test_per_family_limit_overrides_global_default(tmp_path: Path) -> None:
+    result = _run(STUBS / "slow_family", tmp_path, silence_limit_default=0.3)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    run_dir = next((tmp_path / "runs" / "slow-family").iterdir())
+    assert read_request(run_dir).status == "complete"
+    assert read_video(run_dir / "01").status == "complete"
+
+
+def test_unlisted_family_falls_back_to_global_default_and_is_killed(tmp_path: Path) -> None:
+    result = _run(STUBS / "unlisted_family", tmp_path, silence_limit_default=0.3)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    run_dir = next((tmp_path / "runs" / "unlisted-family").iterdir())
+    assert read_video(run_dir / "01").status == "failed"
+    bodies = [event for _, _, event in read_events(run_dir)]
+    assert any(
+        event.get("t") == "log"
+        and event.get("level") == "error"
+        and "other" in str(event.get("msg"))
+        and "killed" in str(event.get("msg"))
+        for event in bodies
+    )
+
+
+def test_gate_suspends_silence_timer(tmp_path: Path) -> None:
+    result = _run(STUBS / "gated", tmp_path, silence_limit_default=0.3)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    run_dir = next((tmp_path / "runs" / "gated").iterdir())
+    assert read_request(run_dir).status == "complete"
+    assert read_video(run_dir / "01").status == "complete"

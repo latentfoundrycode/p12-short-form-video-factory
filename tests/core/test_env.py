@@ -1,8 +1,16 @@
+import sys
 from pathlib import Path
 
 import pytest
 
-from app.core.env import EnvBlocked, EnvReady, ensure_env, requirements_hash, venv_python
+from app.core.env import (
+    EnvBlocked,
+    EnvReady,
+    _run_timed,
+    ensure_env,
+    requirements_hash,
+    venv_python,
+)
 
 MARKER = ".requirements.sha256"
 
@@ -156,3 +164,11 @@ def test_failed_install_does_not_store_hash(tmp_path: Path) -> None:
 def test_ensure_env_rejects_unsafe_workflow_id(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="unsafe"):
         ensure_env("../secret", tmp_path, "3.12", venvs_dir=tmp_path / "venvs")
+
+
+def test_env_subprocess_timeout_is_raised_rather_than_hanging() -> None:
+    with pytest.raises(TimeoutError, match="timed out after 0.2"):
+        _run_timed(
+            [sys.executable, "-c", "import time; time.sleep(10)"],
+            timeout=0.2,
+        )

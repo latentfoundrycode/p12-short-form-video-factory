@@ -11,6 +11,7 @@ from pathlib import Path
 from app.paths import SDK_DIR, VENVS_DIR, is_safe_path_segment
 
 HASH_MARKER = ".requirements.sha256"
+ENV_SUBPROCESS_TIMEOUT = 600.0
 
 
 @dataclass(frozen=True)
@@ -65,16 +66,34 @@ def default_find_python(version: str) -> Path | None:
     return None
 
 
-def default_create_venv(python: Path, venv_dir: Path) -> None:
+def _run_timed(command: list[str], *, timeout: float = ENV_SUBPROCESS_TIMEOUT) -> None:
+    try:
+        subprocess.run(command, check=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(f"environment setup timed out after {timeout}s") from exc
+
+
+def default_create_venv(
+    python: Path, venv_dir: Path, *, timeout: float = ENV_SUBPROCESS_TIMEOUT
+) -> None:
     if venv_dir.exists():
         shutil.rmtree(venv_dir)
-    subprocess.run([str(python), "-m", "venv", str(venv_dir)], check=True)
+    _run_timed([str(python), "-m", "venv", str(venv_dir)], timeout=timeout)
 
 
-def default_install(venv_py: Path, sdk_dir: Path, requirements: Path | None) -> None:
-    subprocess.run([str(venv_py), "-m", "pip", "install", "-e", str(sdk_dir)], check=True)
+def default_install(
+    venv_py: Path,
+    sdk_dir: Path,
+    requirements: Path | None,
+    *,
+    timeout: float = ENV_SUBPROCESS_TIMEOUT,
+) -> None:
+    _run_timed([str(venv_py), "-m", "pip", "install", "-e", str(sdk_dir)], timeout=timeout)
     if requirements is not None:
-        subprocess.run([str(venv_py), "-m", "pip", "install", "-r", str(requirements)], check=True)
+        _run_timed(
+            [str(venv_py), "-m", "pip", "install", "-r", str(requirements)],
+            timeout=timeout,
+        )
 
 
 def _read_stored_hash(venv_dir: Path) -> str | None:

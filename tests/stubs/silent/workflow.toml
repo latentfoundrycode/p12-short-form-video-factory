@@ -1,0 +1,6 @@
+[workflow]
+id = "silent"
+name = "Silent"
+version = "1.0.0"
+entrypoint = "main:run"
+sdk = "1"
