@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -141,3 +142,59 @@ def test_single_active_guard_refuses_second_run(tmp_path: Path) -> None:
     assert first_result
     assert not isinstance(first_result[0], EnvBlocked | RunBusy)
     assert read_request(next((tmp_path / "runs" / "succeeds").iterdir())).status == "complete"
+
+
+def test_prepare_feeds_shared_into_video_context(tmp_path: Path) -> None:
+    seen_video_status: list[str] = []
+
+    def wrapping_popen(*args: object, **kwargs: object) -> subprocess.Popen[str]:
+        cwd = Path(str(kwargs["cwd"]))
+        request = json.loads((cwd.parent / "request.json").read_text(encoding="utf-8"))
+        if cwd.name == "01":
+            seen_video_status.append(request["videos"][0]["status"])
+        return subprocess.Popen(*args, **kwargs)  # type: ignore[arg-type]
+
+    result = _run(STUBS / "prepares", tmp_path, popen=wrapping_popen)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    run_dir = next((tmp_path / "runs" / "prepares").iterdir())
+    shared = json.loads((run_dir / "shared" / "result.json").read_text(encoding="utf-8"))
+    assert shared == {"script": "hello from prep"}
+    video_context = json.loads((run_dir / "01" / "context.json").read_text(encoding="utf-8"))
+    assert video_context["shared"] == {"script": "hello from prep"}
+    events = list(read_events(run_dir))
+    prep_bodies = [event for _, source, event in events if source == "prep"]
+    video_bodies = [event for _, source, event in events if source == "01"]
+    assert {"t": "log", "level": "info", "msg": "prep-ok"} in prep_bodies
+    assert {"t": "log", "level": "info", "msg": "hello from prep"} in video_bodies
+    assert seen_video_status == ["running"]
+    assert read_request(run_dir).videos[0].status == "complete"
+    assert read_video(run_dir / "01").status == "complete"
+
+
+def test_failed_prepare_fails_request_without_launching_video(tmp_path: Path) -> None:
+    result = _run(STUBS / "prep_fails", tmp_path)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    run_dir = next((tmp_path / "runs" / "prep-fails").iterdir())
+    request = read_request(run_dir)
+    assert request.status == "failed"
+    assert request.ended_utc is not None
+    assert request.videos[0].status == "pending"
+    assert not (run_dir / "01" / "video.json").exists()
+    assert not (run_dir / "01" / "context.json").exists()
+    bodies = [event for _, source, event in read_events(run_dir)]
+    assert all(source == "prep" for _, source, _ in read_events(run_dir))
+    assert any(
+        event.get("t") == "log"
+        and event.get("level") == "error"
+        and "prep boom" in str(event.get("msg"))
+        for event in bodies
+    )
+
+
+def test_stderr_from_workflow_becomes_log_event(tmp_path: Path) -> None:
+    result = _run(STUBS / "stderr_noise", tmp_path)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    run_dir = next((tmp_path / "runs" / "stderr-noise").iterdir())
+    bodies = [event for _, _, event in read_events(run_dir)]
+    assert {"t": "log", "level": "info", "msg": "lib noise"} in bodies
+    assert {"t": "log", "level": "info", "msg": "after stderr"} in bodies

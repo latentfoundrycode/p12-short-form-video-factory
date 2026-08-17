@@ -3,15 +3,19 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
+import tempfile
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from pydantic import ValidationError
 
 from .context import Context, ContextFile
 from .emit import log
+
+type EntryField = Literal["entrypoint", "prepare"]
 
 
 def _parse_file_function(spec: str) -> tuple[str, str] | None:
@@ -49,7 +53,7 @@ def _load_context(path: Path) -> ContextFile:
         raise RuntimeError(f"context file is invalid: {exc}") from exc
 
 
-def _entrypoint_spec(workflow_dir: Path) -> str:
+def _function_spec(workflow_dir: Path, field: EntryField) -> str:
     manifest_path = workflow_dir / "workflow.toml"
     try:
         with manifest_path.open("rb") as handle:
@@ -61,14 +65,13 @@ def _entrypoint_spec(workflow_dir: Path) -> str:
     section = manifest.get("workflow")
     if not isinstance(section, dict):
         raise RuntimeError("workflow.toml is missing [workflow]")
-    entrypoint = section.get("entrypoint")
-    if not isinstance(entrypoint, str) or not entrypoint:
-        raise RuntimeError("workflow.toml is missing workflow.entrypoint")
-    return entrypoint
+    value = section.get(field)
+    if not isinstance(value, str) or not value:
+        raise RuntimeError(f"workflow.toml does not declare workflow.{field}")
+    return value
 
 
-def _load_entrypoint(workflow_dir: Path) -> Callable[..., Any]:
-    spec = _entrypoint_spec(workflow_dir)
+def _load_function(workflow_dir: Path, spec: str) -> Callable[..., Any]:
     parsed = _parse_file_function(spec)
     if parsed is None:
         raise RuntimeError(f"entrypoint {spec!r} is not a confined file:function")
@@ -91,22 +94,67 @@ def _load_entrypoint(workflow_dir: Path) -> Callable[..., Any]:
     return cast(Callable[..., Any], func)
 
 
-def _run(workflow_dir: Path, context_path: Path) -> None:
-    data = _load_context(context_path)
-    func = _load_entrypoint(workflow_dir.resolve())
+def _write_result(path: Path, value: dict[str, Any] | None) -> None:
+    # Atomic replace, mirrored from app.core.records.write_json_atomic.
+    # The runner runs in the workflow venv and must not import app.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp_path = Path(tmp_name)
     try:
-        func(Context(data))
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(value, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)  # noqa: PTH105  # os.replace is atomic on Windows
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _capture_return(returned: object) -> dict[str, Any] | None:
+    if returned is None:
+        return None
+    if not isinstance(returned, dict):
+        raise RuntimeError("entry must return a JSON object or None")
+    try:
+        json.dumps(returned)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"entry return value is not JSON-serialisable: {exc}") from exc
+    return cast(dict[str, Any], returned)
+
+
+def _run(
+    workflow_dir: Path,
+    context_path: Path,
+    *,
+    entry: EntryField,
+    result_path: Path | None,
+) -> None:
+    data = _load_context(context_path)
+    spec = _function_spec(workflow_dir.resolve(), entry)
+    func = _load_function(workflow_dir.resolve(), spec)
+    try:
+        returned = func(Context(data))
     except Exception as exc:
-        raise RuntimeError(f"entrypoint failed: {exc}") from exc
+        raise RuntimeError(f"{entry} failed: {exc}") from exc
+    if result_path is not None:
+        _write_result(result_path, _capture_return(returned))
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sfvf.runner")
     parser.add_argument("--workflow", type=Path, required=True)
     parser.add_argument("--context", type=Path, required=True)
+    parser.add_argument(
+        "--entry",
+        choices=("entrypoint", "prepare"),
+        default="entrypoint",
+    )
+    parser.add_argument("--result", type=Path, default=None)
     args = parser.parse_args(argv)
     try:
-        _run(args.workflow, args.context)
+        _run(args.workflow, args.context, entry=args.entry, result_path=args.result)
     except Exception as exc:
         log(str(exc), level="error")
         return 1

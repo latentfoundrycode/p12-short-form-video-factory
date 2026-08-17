@@ -14,6 +14,7 @@ from app.core import ids as clock
 type RequestStatus = Literal[
     "running", "complete", "partial", "stopped", "stopped-budget", "failed"
 ]
+type VideoStatus = Literal["pending", "running", "complete", "failed"]
 
 REQUEST_OPTIONAL_FIELDS = ("budget", "forecast")
 VIDEO_OPTIONAL_FIELDS = (
@@ -43,7 +44,7 @@ class WorkflowRef(_RecordModel):
 
 class VideoRef(_RecordModel):
     index: int
-    status: RequestStatus
+    status: VideoStatus
 
 
 class RequestRecord(_RecordModel):
@@ -61,7 +62,7 @@ class RequestRecord(_RecordModel):
 
 class VideoRecord(_RecordModel):
     index: int
-    status: RequestStatus
+    status: VideoStatus
     started_utc: str
     ended_utc: str | None
     cost: dict[str, Any] | None = None
@@ -119,7 +120,7 @@ def create_request(
     run_id: str,
     workflow: WorkflowRef | Mapping[str, str],
     params: dict[str, Any],
-    videos: list[VideoRef | Mapping[str, Any]],
+    videos: Sequence[VideoRef | Mapping[str, Any]],
     atomic: bool = False,
     status: RequestStatus = "running",
 ) -> RequestRecord:

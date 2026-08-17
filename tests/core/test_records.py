@@ -3,9 +3,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from app.core.records import (
     VideoRecord,
+    VideoRef,
     append_event,
     create_request,
     read_events,
@@ -32,7 +34,7 @@ def test_request_json_round_trip_omits_later_fields(
         run_id="20260810-143022",
         workflow={"id": "news-explainer", "version": "1.3.0", "sdk": "1"},
         params={"topic": "cafés", "duration_s": 45},
-        videos=[{"index": 1, "status": "running"}],
+        videos=[{"index": 1, "status": "pending"}],
         atomic=False,
     )
     assert created.status == "running"
@@ -60,7 +62,7 @@ def test_update_request_does_not_mutate_params(
         run_id="20260810-143022",
         workflow={"id": "news-explainer", "version": "1.0.0", "sdk": "1"},
         params={"topic": "locked"},
-        videos=[{"index": 1, "status": "running"}],
+        videos=[{"index": 1, "status": "pending"}],
         atomic=False,
     )
     updated = update_request(
@@ -88,7 +90,7 @@ def test_atomic_true_rejects_partial_status(
         run_id="20260810-143022",
         workflow={"id": "news-explainer", "version": "1.0.0", "sdk": "1"},
         params={},
-        videos=[{"index": 1, "status": "running"}],
+        videos=[{"index": 1, "status": "pending"}],
         atomic=True,
     )
     with pytest.raises(ValueError, match="partial"):
@@ -127,6 +129,14 @@ def test_video_json_round_trip_omits_later_fields(
     loaded = read_video(video_dir)
     assert loaded.index == 1
     assert loaded.status == "running"
+
+
+def test_video_status_rejects_request_only_values() -> None:
+    with pytest.raises(ValidationError):
+        VideoRef.model_validate({"index": 1, "status": "partial"})
+    with pytest.raises(ValidationError):
+        VideoRef.model_validate({"index": 1, "status": "stopped-budget"})
+    assert VideoRef.model_validate({"index": 1, "status": "pending"}).status == "pending"
 
 
 def test_events_jsonl_round_trip_preserves_unicode(

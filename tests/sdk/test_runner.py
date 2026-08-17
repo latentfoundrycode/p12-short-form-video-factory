@@ -33,18 +33,25 @@ def _write_context(tmp_path: Path) -> Path:
 
 
 def _run_runner(
-    workflow: Path, context: Path, *, timeout: float = 10
+    workflow: Path,
+    context: Path,
+    *,
+    extra: list[str] | None = None,
+    timeout: float = 10,
 ) -> subprocess.CompletedProcess[str]:
+    command = [
+        sys.executable,
+        "-m",
+        "sfvf.runner",
+        "--workflow",
+        str(workflow),
+        "--context",
+        str(context),
+    ]
+    if extra:
+        command.extend(extra)
     return subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "sfvf.runner",
-            "--workflow",
-            str(workflow),
-            "--context",
-            str(context),
-        ],
+        command,
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -134,4 +141,51 @@ def test_bad_context_json_exits_nonzero_with_error_log(tmp_path: Path) -> None:
     events = _events(result.stdout)
     assert events
     assert events[-1]["t"] == "log"
+    assert events[-1]["level"] == "error"
+
+
+def test_prepare_entry_without_prepare_errors(tmp_path: Path) -> None:
+    result = _run_runner(STUBS / "succeeds", _write_context(tmp_path), extra=["--entry", "prepare"])
+    assert result.returncode != 0
+    events = _events(result.stdout)
+    assert events
+    assert events[-1]["t"] == "log"
+    assert events[-1]["level"] == "error"
+
+
+def test_prepare_entry_writes_result_dict(tmp_path: Path) -> None:
+    result_path = tmp_path / "result.json"
+    result = _run_runner(
+        STUBS / "prepares",
+        _write_context(tmp_path),
+        extra=["--entry", "prepare", "--result", str(result_path)],
+    )
+    assert result.returncode == 0
+    assert json.loads(result_path.read_text(encoding="utf-8")) == {"script": "hello from prep"}
+    events = _events(result.stdout)
+    assert {"t": "log", "level": "info", "msg": "prep-ok"} in events
+
+
+def test_prepare_none_writes_result_null(tmp_path: Path) -> None:
+    result_path = tmp_path / "result.json"
+    result = _run_runner(
+        STUBS / "prepare_none",
+        _write_context(tmp_path),
+        extra=["--entry", "prepare", "--result", str(result_path)],
+    )
+    assert result.returncode == 0
+    assert json.loads(result_path.read_text(encoding="utf-8")) is None
+
+
+def test_prepare_non_dict_return_is_error(tmp_path: Path) -> None:
+    result_path = tmp_path / "result.json"
+    result = _run_runner(
+        STUBS / "prepare_bad_return",
+        _write_context(tmp_path),
+        extra=["--entry", "prepare", "--result", str(result_path)],
+    )
+    assert result.returncode != 0
+    assert not result_path.exists()
+    events = _events(result.stdout)
+    assert events
     assert events[-1]["level"] == "error"

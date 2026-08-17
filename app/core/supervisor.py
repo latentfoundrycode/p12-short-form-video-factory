@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import threading
@@ -20,6 +21,7 @@ from app.core.records import (
     RequestStatus,
     VideoRecord,
     VideoRef,
+    VideoStatus,
     append_event,
     create_request,
     update_request,
@@ -52,7 +54,7 @@ def run_request(
     ensure_env: EnsureEnv = default_ensure_env,
     popen: PopenFn = subprocess.Popen,
 ) -> RunRequestResult:
-    del concurrency  # applied in 4b
+    del concurrency  # applied in commit 2
     workflow_dir = workflow_dir.resolve()
     manifest = parse_manifest_toml((workflow_dir / "workflow.toml").read_text(encoding="utf-8"))
     workflow = manifest.workflow
@@ -73,14 +75,33 @@ def run_request(
         with _lock:
             _active[workflow_id] = run_id
         create_run_skeleton(run_dir, video_count)
+        pending = [VideoRef(index=index, status="pending") for index in range(1, video_count + 1)]
         create_request(
             run_dir,
             run_id=run_id,
             workflow={"id": workflow.id, "version": workflow.version, "sdk": str(workflow.sdk)},
             params=params,
-            videos=[{"index": index, "status": "running"} for index in range(1, video_count + 1)],
+            videos=pending,
             atomic=workflow.atomic,
         )
+        shared: dict[str, Any] | None = None
+        if workflow.prepare:
+            ok, shared = _run_prepare(
+                env.python,
+                workflow_dir,
+                run_dir,
+                params=params,
+                popen=popen,
+            )
+            if not ok:
+                ended = format_utc_z(utc_now())
+                return update_request(
+                    run_dir,
+                    atomic=workflow.atomic,
+                    status="failed",
+                    ended_utc=ended,
+                    videos=pending,
+                )
         return _run_first_video(
             env.python,
             workflow_dir,
@@ -88,6 +109,7 @@ def run_request(
             params=params,
             video_count=video_count,
             atomic=workflow.atomic,
+            shared=shared,
             popen=popen,
         )
     finally:
@@ -103,6 +125,106 @@ def _process_group_kwargs() -> dict[str, Any]:
     return {"start_new_session": True}
 
 
+def _start_runner(
+    python: Path,
+    workflow_dir: Path,
+    context_path: Path,
+    *,
+    cwd: Path,
+    popen: PopenFn,
+    extra_args: list[str] | None = None,
+) -> subprocess.Popen[str]:
+    command = [
+        str(python),
+        "-m",
+        "sfvf.runner",
+        "--workflow",
+        str(workflow_dir),
+        "--context",
+        str(context_path),
+    ]
+    if extra_args:
+        command.extend(extra_args)
+    return popen(
+        command,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        # Stage-2 workflows are single-threaded so stdout/stderr don't interleave mid-line;
+        # revisit (separate pipes) if Stage-3 in-video concurrency ever corrupts a line.
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+        **_process_group_kwargs(),
+    )
+
+
+def _consume_stdout(
+    proc: subprocess.Popen[str], run_dir: Path, source: str
+) -> dict[str, Any] | None:
+    captured: dict[str, Any] | None = None
+    if proc.stdout is None:
+        raise RuntimeError("runner stdout was not piped")
+    for raw in proc.stdout:
+        line = raw.rstrip("\r\n")
+        if not line:
+            continue
+        event = to_event(line)
+        append_event(run_dir, event, source=source)
+        if event.get("t") == "result":
+            captured = {key: event[key] for key in ("video", "caption") if key in event}
+    return captured
+
+
+def _run_prepare(
+    python: Path,
+    workflow_dir: Path,
+    run_dir: Path,
+    *,
+    params: dict[str, Any],
+    popen: PopenFn,
+) -> tuple[bool, dict[str, Any] | None]:
+    shared_dir = (run_dir / "shared").resolve()
+    artifacts = shared_dir / "artifacts"
+    steps = shared_dir / ".steps"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    steps.mkdir(exist_ok=True)
+    context_path = shared_dir / "context.json"
+    result_path = shared_dir / "result.json"
+    context = ContextFile(
+        settings=params,
+        paths=ContextPaths(
+            video=shared_dir,
+            artifacts=artifacts,
+            steps=steps,
+            shared=shared_dir,
+        ),
+        instructions=[],
+        secrets={},
+        previous=None,
+        shared=None,
+    )
+    write_json_atomic(context_path, context.model_dump(mode="json"))
+    proc = _start_runner(
+        python,
+        workflow_dir,
+        context_path,
+        cwd=shared_dir,
+        popen=popen,
+        extra_args=["--entry", "prepare", "--result", str(result_path)],
+    )
+    _consume_stdout(proc, run_dir, "prep")
+    if proc.wait() != 0 or not result_path.is_file():
+        return False, None
+    payload: object = json.loads(result_path.read_text(encoding="utf-8"))
+    if payload is None:
+        return True, None
+    if not isinstance(payload, dict):
+        return False, None
+    return True, payload
+
+
 def _run_first_video(
     python: Path,
     workflow_dir: Path,
@@ -111,6 +233,7 @@ def _run_first_video(
     params: dict[str, Any],
     video_count: int,
     atomic: bool,
+    shared: dict[str, Any] | None,
     popen: PopenFn,
 ) -> RequestRecord:
     source = format_video_dir(1, video_count)
@@ -126,45 +249,28 @@ def _run_first_video(
         instructions=[],
         secrets={},
         previous=None,
-        shared=None,
+        shared=shared,
     )
     write_json_atomic(video_dir / "context.json", context.model_dump(mode="json"))
     started = format_utc_z(utc_now())
+    videos_running = [VideoRef(index=1, status="running")]
+    videos_running.extend(
+        VideoRef(index=index, status="pending") for index in range(2, video_count + 1)
+    )
+    update_request(run_dir, atomic=atomic, videos=videos_running)
     write_video(
         video_dir,
         VideoRecord(index=1, status="running", started_utc=started, ended_utc=None),
     )
-    proc = popen(
-        [
-            str(python),
-            "-m",
-            "sfvf.runner",
-            "--workflow",
-            str(workflow_dir),
-            "--context",
-            str(video_dir / "context.json"),
-        ],
+    proc = _start_runner(
+        python,
+        workflow_dir,
+        video_dir / "context.json",
         cwd=video_dir,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-        **_process_group_kwargs(),
+        popen=popen,
     )
-    captured: dict[str, Any] | None = None
-    if proc.stdout is None:
-        raise RuntimeError("runner stdout was not piped")
-    for raw in proc.stdout:
-        line = raw.rstrip("\r\n")
-        if not line:
-            continue
-        event = to_event(line)
-        append_event(run_dir, event, source=source)
-        if event.get("t") == "result":
-            captured = {key: event[key] for key in ("video", "caption") if key in event}
-    status: RequestStatus = "complete" if proc.wait() == 0 else "failed"
+    captured = _consume_stdout(proc, run_dir, source)
+    status: VideoStatus = "complete" if proc.wait() == 0 else "failed"
     ended = format_utc_z(utc_now())
     write_video(
         video_dir,
@@ -177,11 +283,12 @@ def _run_first_video(
         ),
     )
     videos = [VideoRef(index=1, status=status)]
-    videos.extend(VideoRef(index=index, status="running") for index in range(2, video_count + 1))
+    videos.extend(VideoRef(index=index, status="pending") for index in range(2, video_count + 1))
+    request_status: RequestStatus = "complete" if status == "complete" else "failed"
     return update_request(
         run_dir,
         atomic=atomic,
-        status=status,
+        status=request_status,
         ended_utc=ended,
         videos=videos,
     )
