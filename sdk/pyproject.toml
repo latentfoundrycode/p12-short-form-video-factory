@@ -1,0 +1,12 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sfvf"
+version = "0.0.0"
+description = "SFVF workflow SDK"
+requires-python = ">=3.12"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sfvf"]
