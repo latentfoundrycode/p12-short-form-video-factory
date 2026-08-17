@@ -3,6 +3,7 @@ from pathlib import Path
 APP_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS_DIR = APP_ROOT / "workflows"
 WEB_DIR = APP_ROOT / "app" / "web"
+RUNS_DIR = APP_ROOT / "runs"
 
 
 def is_safe_path_segment(name: str) -> bool:
