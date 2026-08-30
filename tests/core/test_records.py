@@ -161,3 +161,21 @@ def test_events_jsonl_round_trip_preserves_unicode(
     assert envelope["event"] == payload
     assert line.endswith("}")
     assert "\\u" not in line
+
+
+def test_read_events_stops_at_torn_final_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _pin_clock(monkeypatch)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    append_event(run_dir, {"t": "log", "msg": "one"}, source="01")
+    append_event(run_dir, {"t": "log", "msg": "two"}, source="01")
+    path = run_dir / "events.jsonl"
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write('{"ts":"t","source":"01","event":{"t":"log"')
+    events = list(read_events(run_dir))
+    assert events == [
+        ("2026-08-10T14:30:22Z", "01", {"t": "log", "msg": "one"}),
+        ("2026-08-10T14:30:22Z", "01", {"t": "log", "msg": "two"}),
+    ]

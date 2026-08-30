@@ -196,5 +196,10 @@ def read_events(run_dir: Path) -> Iterator[tuple[str, str, dict[str, Any]]]:
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
-        envelope = json.loads(line)
+        try:
+            envelope = json.loads(line)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(envelope, dict) or not {"ts", "source", "event"} <= envelope.keys():
+            return
         yield envelope["ts"], envelope["source"], envelope["event"]
