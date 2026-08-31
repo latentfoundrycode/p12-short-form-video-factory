@@ -426,6 +426,25 @@ def test_hard_stop_kills_tree_and_marks_stopped(tmp_path: Path) -> None:
     assert not (run_dir / "01" / STOP_SENTINEL).is_file()
 
 
+def test_hard_stop_during_video_launch_kills_unregistered_proc(tmp_path: Path) -> None:
+    """Stop between Popen and register_proc must still kill the process."""
+
+    def wrapping_popen(*args: object, **kwargs: object) -> subprocess.Popen[str]:
+        cwd = Path(str(kwargs["cwd"]))
+        if cwd.name == "01":
+            request = json.loads((cwd.parent / "request.json").read_text(encoding="utf-8"))
+            accepted = stop(request["run_id"], mode="hard")
+            assert isinstance(accepted, StopAccepted)
+        return subprocess.Popen(*args, **kwargs)  # type: ignore[arg-type]
+
+    thread, box = _run_in_thread(STUBS / "stubborn", tmp_path, popen=wrapping_popen)
+    result = _join_run(thread, box, timeout=5)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    run_dir = next((tmp_path / "runs" / "stubborn").iterdir())
+    assert read_video(run_dir / "01").status == "stopped"
+    assert read_request(run_dir).status == "stopped"
+
+
 def test_stop_cancels_queued_videos_without_launching(tmp_path: Path) -> None:
     thread, box = _run_in_thread(
         STUBS / "cooperates",

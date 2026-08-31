@@ -116,9 +116,10 @@ class _RunState:
                 videos=_video_refs(self.statuses),
             )
 
-    def register_proc(self, key: str, proc: subprocess.Popen[str], folder: Path) -> None:
+    def register_proc(self, key: str, proc: subprocess.Popen[str], folder: Path) -> StopMode | None:
         with self.lock:
             self.procs[key] = (proc, folder)
+            return self.stop_mode if self.stop_requested else None
 
     def unregister_proc(self, key: str) -> None:
         with self.lock:
@@ -322,6 +323,14 @@ def _send_soft_signal(proc: subprocess.Popen[str]) -> None:
         return
 
 
+def _apply_stop(mode: StopMode, proc: subprocess.Popen[str], folder: Path) -> None:
+    if mode == "graceful":
+        (folder / STOP_SENTINEL).touch()
+        _send_soft_signal(proc)
+    else:
+        kill_tree(proc)
+
+
 def stop(run_id: str, *, mode: StopMode) -> StopResult:
     if mode not in {"graceful", "hard"}:
         raise ValueError(f"unknown stop mode: {mode}")
@@ -331,11 +340,7 @@ def stop(run_id: str, *, mode: StopMode) -> StopResult:
         return NotRunning(run_id=run_id)
     snapshot = state.request_stop(mode)
     for _key, proc, folder in snapshot:
-        if mode == "graceful":
-            (folder / STOP_SENTINEL).touch()
-            _send_soft_signal(proc)
-        else:
-            kill_tree(proc)
+        _apply_stop(mode, proc, folder)
     return StopAccepted(run_id=run_id, mode=mode)
 
 
@@ -501,7 +506,9 @@ def _run_prepare(
         popen=popen,
         extra_args=["--entry", "prepare", "--result", str(result_path)],
     )
-    state.register_proc("prep", proc, shared_dir)
+    pending = state.register_proc("prep", proc, shared_dir)
+    if pending is not None:
+        _apply_stop(pending, proc, shared_dir)
     try:
         _consume_stdout(
             proc,
@@ -628,7 +635,9 @@ def _run_one_video(
             cwd=video_dir,
             popen=popen,
         )
-        state.register_proc(source, proc, video_dir)
+        pending = state.register_proc(source, proc, video_dir)
+        if pending is not None:
+            _apply_stop(pending, proc, video_dir)
         try:
             captured = _consume_stdout(
                 proc,
