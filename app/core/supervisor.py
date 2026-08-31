@@ -212,6 +212,7 @@ def run_request(
     ensure_env: EnsureEnv = default_ensure_env,
     popen: PopenFn = subprocess.Popen,
     silence_limit_default: float = DEFAULT_SILENCE_SECONDS,
+    on_started: Callable[[str], None] | None = None,
 ) -> RunRequestResult:
     workflow_dir = workflow_dir.resolve()
     manifest = parse_manifest_toml((workflow_dir / "workflow.toml").read_text(encoding="utf-8"))
@@ -232,6 +233,8 @@ def run_request(
         run_id, run_dir = allocate_run(workflow_id, runs_dir=runs_dir)
         with _lock:
             _active[workflow_id] = run_id
+        if on_started is not None:
+            on_started(run_id)
         create_run_skeleton(run_dir, video_count)
         state = _RunState(
             statuses=dict.fromkeys(range(1, video_count + 1), "pending"),
