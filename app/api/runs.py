@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 import subprocess
 import threading
 import time
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.api.workflows import RegistryHolder
@@ -40,7 +41,7 @@ from app.core.supervisor import (
     run_request,
     stop,
 )
-from app.paths import RUNS_DIR, is_safe_path_segment
+from app.paths import RUNS_DIR, is_safe_path_segment, safe_join
 from app.registry.validate import WorkflowEntry
 
 router = APIRouter(prefix="/api")
@@ -357,3 +358,23 @@ async def stream_run_events(workflow_id: str, run_id: str, request: Request) -> 
         _sse_event_stream(request, run_dir),
         media_type="text/event-stream",
     )
+
+
+@router.get("/workflows/{workflow_id}/runs/{run_id}/files/{path:path}")
+def get_run_file(workflow_id: str, run_id: str, path: str, request: Request) -> FileResponse:
+    _require_workflow(request, workflow_id)
+    if not is_safe_path_segment(run_id):
+        raise HTTPException(status_code=404)
+    run_dir = _runs_dir(request) / workflow_id / run_id
+    if not run_dir.is_dir():
+        raise HTTPException(status_code=404)
+    target = safe_join(run_dir, path)
+    if target is None:
+        raise HTTPException(status_code=404)
+    resolved = target.resolve()
+    if not resolved.is_relative_to(run_dir.resolve()):
+        raise HTTPException(status_code=404)
+    if not resolved.is_file():
+        raise HTTPException(status_code=404)
+    media_type, _encoding = mimetypes.guess_type(resolved.name)
+    return FileResponse(resolved, media_type=media_type or "application/octet-stream")
