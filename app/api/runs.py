@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import subprocess
 import threading
+import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.api.workflows import RegistryHolder
@@ -21,6 +25,7 @@ from app.core.records import (
     VideoRef,
     VideoStatus,
     WorkflowRef,
+    read_events,
     read_request,
     read_video,
 )
@@ -39,6 +44,11 @@ from app.paths import RUNS_DIR, is_safe_path_segment
 from app.registry.validate import WorkflowEntry
 
 router = APIRouter(prefix="/api")
+
+_TERMINAL_STATUSES = frozenset({"complete", "partial", "stopped", "stopped-budget", "failed"})
+_REQUEST_WAIT_SECONDS = 2.0
+_REQUEST_POLL_SECONDS = 0.05
+_LIVE_POLL_SECONDS = 0.25
 
 # Known limitation: POST /runs admission waits through ensure_env (venv setup).
 # An existing venv is fast; a first-time build makes the response slow. Env setup
@@ -303,3 +313,47 @@ def get_run(workflow_id: str, run_id: str, request: Request) -> RunDetailOut:
     if not (run_dir / "request.json").is_file():
         raise HTTPException(status_code=404)
     return _detail(run_dir, read_request(run_dir))
+
+
+def _sse_data_line(ts: str, source: str, event: dict[str, Any]) -> str:
+    envelope = {"ts": ts, "source": source, "event": event}
+    return f"data: {json.dumps(envelope, ensure_ascii=False)}\n\n"
+
+
+async def _sse_event_stream(request: Request, run_dir: Path) -> AsyncIterator[str]:
+    emitted = 0
+    while True:
+        if await request.is_disconnected():
+            return
+
+        events = list(read_events(run_dir))
+        for ts, source, event in events[emitted:]:
+            yield _sse_data_line(ts, source, event)
+            emitted += 1
+
+        if read_request(run_dir).status in _TERMINAL_STATUSES:
+            events = list(read_events(run_dir))
+            for ts, source, event in events[emitted:]:
+                yield _sse_data_line(ts, source, event)
+                emitted += 1
+            return
+
+        await asyncio.sleep(_LIVE_POLL_SECONDS)
+
+
+@router.get("/workflows/{workflow_id}/runs/{run_id}/events")
+async def stream_run_events(workflow_id: str, run_id: str, request: Request) -> StreamingResponse:
+    _require_workflow(request, workflow_id)
+    if not is_safe_path_segment(run_id):
+        raise HTTPException(status_code=404)
+    run_dir = _runs_dir(request) / workflow_id / run_id
+    request_path = run_dir / "request.json"
+    deadline = time.monotonic() + _REQUEST_WAIT_SECONDS
+    while not request_path.is_file():
+        if time.monotonic() >= deadline:
+            raise HTTPException(status_code=404)
+        await asyncio.sleep(_REQUEST_POLL_SECONDS)
+    return StreamingResponse(
+        _sse_event_stream(request, run_dir),
+        media_type="text/event-stream",
+    )
