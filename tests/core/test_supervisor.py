@@ -129,6 +129,88 @@ def test_env_blocked_creates_no_run_folder(tmp_path: Path) -> None:
     assert not runs_dir.exists() or not any(runs_dir.rglob("*"))
 
 
+def test_on_started_fires_once_with_run_id_only_when_allocated(tmp_path: Path) -> None:
+    import app.core.supervisor as supervisor_mod
+
+    with supervisor_mod._lock:
+        supervisor_mod._active.clear()
+        supervisor_mod._runs.clear()
+
+    seen: list[str] = []
+
+    def on_started(run_id: str) -> None:
+        seen.append(run_id)
+
+    result = run_request(
+        STUBS / "succeeds",
+        params={"topic": "test"},
+        video_count=1,
+        concurrency=1,
+        runs_dir=tmp_path / "runs",
+        ensure_env=_ready,
+        on_started=on_started,
+    )
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    assert seen == [result.run_id]
+
+    seen.clear()
+    blocked = run_request(
+        STUBS / "succeeds",
+        params={"topic": "test"},
+        video_count=1,
+        concurrency=1,
+        runs_dir=tmp_path / "runs-blocked",
+        ensure_env=lambda *_a, **_k: EnvBlocked(reason="nope"),
+        on_started=on_started,
+    )
+    assert isinstance(blocked, EnvBlocked)
+    assert seen == []
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def hold_env(*_args: object, **_kwargs: object) -> EnvReady:
+        started.set()
+        assert release.wait(timeout=5)
+        return EnvReady(python=Path(sys.executable))
+
+    first_box: list[object] = []
+
+    def first() -> None:
+        first_box.append(
+            run_request(
+                STUBS / "succeeds",
+                params={"topic": "test"},
+                video_count=1,
+                concurrency=1,
+                runs_dir=tmp_path / "runs-hold",
+                ensure_env=hold_env,
+                on_started=on_started,
+            )
+        )
+
+    thread = threading.Thread(target=first)
+    thread.start()
+    assert started.wait(timeout=5)
+    busy = run_request(
+        STUBS / "succeeds",
+        params={"topic": "test"},
+        video_count=1,
+        concurrency=1,
+        runs_dir=tmp_path / "runs-busy",
+        ensure_env=_ready,
+        on_started=on_started,
+    )
+    assert isinstance(busy, RunBusy)
+    assert seen == []
+    release.set()
+    thread.join(timeout=15)
+    assert not thread.is_alive()
+    assert first_box
+    assert not isinstance(first_box[0], EnvBlocked | RunBusy)
+    assert seen == [first_box[0].run_id]  # type: ignore[union-attr]
+
+
 def test_single_active_guard_refuses_second_run(tmp_path: Path) -> None:
     started = threading.Event()
     release = threading.Event()
