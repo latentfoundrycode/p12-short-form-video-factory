@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import tomllib
+import traceback
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -13,9 +14,15 @@ from typing import Any, Literal, cast
 from pydantic import ValidationError
 
 from .context import Context, ContextFile
-from .emit import log
+from .emit import emit
 
 type EntryField = Literal["entrypoint", "prepare"]
+
+
+class _EntryFailedError(RuntimeError):
+    def __init__(self, message: str, trace: str) -> None:
+        super().__init__(message)
+        self.trace = trace
 
 
 def _parse_file_function(spec: str) -> tuple[str, str] | None:
@@ -137,7 +144,7 @@ def _run(
     try:
         returned = func(Context(data))
     except Exception as exc:
-        raise RuntimeError(f"{entry} failed: {exc}") from exc
+        raise _EntryFailedError(f"{entry} failed: {exc}", traceback.format_exc()) from exc
     if result_path is not None:
         _write_result(result_path, _capture_return(returned))
 
@@ -156,7 +163,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         _run(args.workflow, args.context, entry=args.entry, result_path=args.result)
     except Exception as exc:
-        log(str(exc), level="error")
+        event: dict[str, Any] = {"t": "log", "level": "error", "msg": str(exc)}
+        if isinstance(exc, _EntryFailedError):
+            event["trace"] = exc.trace
+        emit(event)
         return 1
     return 0
 

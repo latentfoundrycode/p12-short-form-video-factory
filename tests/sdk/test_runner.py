@@ -189,3 +189,22 @@ def test_prepare_non_dict_return_is_error(tmp_path: Path) -> None:
     events = _events(result.stdout)
     assert events
     assert events[-1]["level"] == "error"
+
+
+def test_runtime_entry_failure_includes_traceback(tmp_path: Path) -> None:
+    result = _run_runner(STUBS / "fails", _write_context(tmp_path))
+    assert result.returncode != 0
+    events = _events(result.stdout)
+    assert events
+    last = events[-1]
+    assert last["t"] == "log"
+    assert last["level"] == "error"
+    assert "boom" in str(last["msg"])
+    trace = last["trace"]
+    assert isinstance(trace, str)
+    assert "Traceback (most recent call last)" in trace
+    assert "boom" in trace
+    assert "run" in trace or "main.py" in trace
+    raw_last = [line for line in result.stdout.splitlines() if line][-1]
+    parsed = json.loads(raw_last)
+    assert isinstance(parsed, dict)
