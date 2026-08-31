@@ -1,3 +1,4 @@
+import re
 import tomllib
 from typing import Annotated, Any, Literal, Self
 
@@ -9,6 +10,8 @@ type SafeZone = Literal["tiktok", "none"]
 type ParamType = Literal["text", "textarea", "number", "bool", "select", "multiselect", "file"]
 type FacetValues = Literal["open"] | list[str]
 
+_PYTHON_VERSION = re.compile(r"^\d+(\.\d+)?$")
+
 
 def _sdk_major(value: object) -> str:
     if isinstance(value, bool) or not isinstance(value, int | str):
@@ -17,6 +20,18 @@ def _sdk_major(value: object) -> str:
 
 
 SdkMajor = Annotated[str, BeforeValidator(_sdk_major)]
+
+
+def _python_version(value: object) -> str:
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        raise ValueError("python must be a major or major.minor version string like '3' or '3.12'")
+    text = str(value)
+    if _PYTHON_VERSION.fullmatch(text) is None:
+        raise ValueError("python must be a major or major.minor version string like '3' or '3.12'")
+    return text
+
+
+PythonVersion = Annotated[str, BeforeValidator(_python_version)]
 
 
 class _ManifestModel(BaseModel):
@@ -100,7 +115,7 @@ class WorkflowSection(_ManifestModel):
     thumbnail: str | None = None
     entrypoint: str
     prepare: str | None = None
-    python: str = "3.12"
+    python: PythonVersion = "3.12"
     sdk: SdkMajor
     video_semantics: VideoSemantics = "variants"
     max_videos: int | None = None

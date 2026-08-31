@@ -256,3 +256,32 @@ label = "OpenRouter"
     folder = write_plugin(tmp_path, "news-explainer", toml)
     entry = validate(folder)
     assert ProblemCode.REQUIRES_INVALID.value in problem_codes(entry)
+
+
+def test_python_patch_version_is_schema_invalid(tmp_path: Path) -> None:
+    toml = minimal_toml(extra='python = "3.12.4"')
+    folder = write_plugin(tmp_path, "news-explainer", toml)
+    entry = validate(folder)
+    assert entry.manifest is None
+    assert problem_codes(entry) == {ProblemCode.SCHEMA_INVALID.value}
+    assert len(entry.problems) == 1
+    assert "python" in entry.problems[0].message
+
+
+def test_python_toml_float_is_schema_invalid(tmp_path: Path) -> None:
+    toml = minimal_toml(extra="python = 3.10")
+    folder = write_plugin(tmp_path, "news-explainer", toml)
+    entry = validate(folder)
+    assert entry.manifest is None
+    assert problem_codes(entry) == {ProblemCode.SCHEMA_INVALID.value}
+    assert len(entry.problems) == 1
+    assert "python" in entry.problems[0].message
+
+
+def test_python_major_and_major_minor_validate_clean(tmp_path: Path) -> None:
+    for name, extra in (("major", 'python = "3"'), ("minor", 'python = "3.12"')):
+        folder = write_plugin(tmp_path / name, "news-explainer", minimal_toml(extra=extra))
+        entry = validate(folder)
+        assert entry.manifest is not None
+        assert entry.problems == ()
+        assert entry.manifest.workflow.python in {"3", "3.12"}
