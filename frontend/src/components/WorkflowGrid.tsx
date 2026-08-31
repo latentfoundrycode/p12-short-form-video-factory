@@ -5,13 +5,14 @@ import { WorkflowCard } from "./WorkflowCard";
 
 type WorkflowGridProps = {
   onCount: (count: number | null) => void;
+  onStarted: (workflowId: string, runId: string) => void;
 };
 
 function messageOf(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
 
-export function WorkflowGrid({ onCount }: WorkflowGridProps) {
+export function WorkflowGrid({ onCount, onStarted }: WorkflowGridProps) {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
@@ -157,7 +158,13 @@ export function WorkflowGrid({ onCount }: WorkflowGridProps) {
       {status === "ready" && workflows.length > 0 ? (
         <div className="grid">
           {workflows.map((workflow) => (
-            <WorkflowCard key={workflow.id} workflow={workflow} />
+            <WorkflowCard
+              key={workflow.id}
+              workflow={workflow}
+              onStarted={(runId) => {
+                onStarted(workflow.id, runId);
+              }}
+            />
           ))}
         </div>
       ) : null}

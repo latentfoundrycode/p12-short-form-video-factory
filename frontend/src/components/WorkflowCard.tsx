@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Workflow } from "../types";
+import { RunLaunchForm } from "./RunLaunchForm";
 
 function EmptyThumb() {
   return (
@@ -39,11 +40,33 @@ function Thumb({ url }: { url: string | null }) {
   );
 }
 
-export function WorkflowCard({ workflow }: { workflow: Workflow }) {
+type WorkflowCardProps = {
+  workflow: Workflow;
+  onStarted: (runId: string) => void;
+};
+
+export function WorkflowCard({ workflow, onStarted }: WorkflowCardProps) {
+  const [launching, setLaunching] = useState(false);
   const title = workflow.name ?? workflow.id;
   const broken = !workflow.valid;
   const warnings = workflow.problems.filter((problem) => problem.severity === "warning");
   const errors = workflow.problems.filter((problem) => problem.severity === "error");
+
+  if (launching) {
+    return (
+      <RunLaunchForm
+        workflowId={workflow.id}
+        workflowName={title}
+        onCancel={() => {
+          setLaunching(false);
+        }}
+        onStarted={(runId) => {
+          setLaunching(false);
+          onStarted(runId);
+        }}
+      />
+    );
+  }
 
   return (
     <article className={broken ? "card s-fail" : "card"}>
@@ -73,7 +96,13 @@ export function WorkflowCard({ workflow }: { workflow: Workflow }) {
         ) : null}
         {!broken ? (
           <div className="card-foot">
-            <button type="button" className="btn btn-primary btn-sm" disabled>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => {
+                setLaunching(true);
+              }}
+            >
               Run workflow
             </button>
           </div>
