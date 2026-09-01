@@ -23,7 +23,7 @@ class Outcome:
     """Result of one `ctx.map` item when `on_error="collect"`."""
 
     value: Any
-    error: BaseException | None
+    error: Exception | None
 
     @property
     def ok(self) -> bool:
@@ -252,7 +252,7 @@ class Context:
         def run_collect(item: _T) -> Outcome:
             try:
                 return Outcome(value=run_item(item), error=None)
-            except BaseException as exc:
+            except Exception as exc:
                 return Outcome(value=None, error=exc)
 
         with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
