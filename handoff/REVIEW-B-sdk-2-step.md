@@ -1,27 +1,23 @@
-# Review B — cross-family verification (SDK-2: ctx.step, the cached step boundary)
+# Review B — cross-family verification (SDK-2 ctx.step, REVISED: video-relative file paths)
 
 You are an independent, READ-ONLY reviewer (GPT-5.6 Sol, OpenAI family). Do NOT modify any file. Read
 the diff embedded below and answer.
 
-## Context
-New `ctx.step` in `sdk/sfvf/context.py` (SDK-only; uses the merged `sfvf.cache`). Workflow SDK §4.5,
-§5.1-§5.5. A step: on enter computes `step_key(workflow_version, family, inputs)` and does
-`StepCache(paths.cache).get(key, restore_into=paths.artifacts)` → hit sets `cached=True`/`value` (body
-skipped) / miss `cached=False`; `set(value)` records the result; on exit — if the body raised, store
-NOTHING; if hit, emit `step` event status="cached"; if miss+set, derive artifact-relative files named
-in `value`, `put(key, value, files=...)`, emit status="ok". `label` is display-only (not in key).
-Two new OPTIONAL context fields (`ContextPaths.cache`, `ContextFile.workflow_version`, both defaulted so
-existing `context.json` still validates). The reviewer test is `tests/sdk/test_step.py` (6 tests).
+## Context — re-review
+You previously raised (ESCALATE-INTENT) that returned file paths were treated as artifacts-relative,
+while SDK §5.5 says they are relative to the VIDEO folder. The spec settles it (video-relative), so it
+was corrected: `ctx.step` now derives files-to-store by walking `value` for paths relative to
+`self.paths.video` that exist, and restores with `StepCache.get(key, restore_into=self.paths.video)`.
+The reviewer test now writes `video/artifacts/final.mp4`, returns `"artifacts/final.mp4"`, and asserts
+the cache hit restores it under the video folder. All other `ctx.step` behavior (cache hit/miss, label
+not in key, version invalidation, raise-safety, step event, optional context fields) was already
+confirmed correct by both reviewers and is unchanged.
 
-Process note for your gate-integrity check: the reviewer test had two lint nits (authored by the
-supervisor); they were reflowed (import grouping + a combined `with`) with ALL ASSERTIONS UNCHANGED.
-Confirm from the test in the tree that no assertion was weakened, deleted, or skipped.
-
-## Implementation diff under review:
+## Full final implementation under review:
 
 ```diff
 diff --git a/sdk/sfvf/context.py b/sdk/sfvf/context.py
-index 18c5d0f..c285d79 100644
+index 18c5d0f..14a6c1a 100644
 --- a/sdk/sfvf/context.py
 +++ b/sdk/sfvf/context.py
 @@ -1,10 +1,16 @@
@@ -70,8 +66,8 @@ index 18c5d0f..c285d79 100644
      )
  
  
-+def _artifact_files(value: object, artifacts: Path) -> dict[str, Path]:
-+    """Collect artifact-relative file paths named by strings in `value`."""
++def _video_files(value: object, video: Path) -> dict[str, Path]:
++    """Collect video-relative file paths named by strings in `value`."""
 +    found: dict[str, Path] = {}
 +
 +    def walk(item: object) -> None:
@@ -84,7 +80,7 @@ index 18c5d0f..c285d79 100644
 +                walk(nested)
 +            return
 +        if isinstance(item, str):
-+            candidate = artifacts / item
++            candidate = video / item
 +            if candidate.is_file():
 +                found[item] = candidate
 +
@@ -121,7 +117,7 @@ index 18c5d0f..c285d79 100644
 +        if cache_root is None:
 +            raise RuntimeError("ctx.step requires paths.cache, the content-addressed cache root")
 +        self._key = step_key(self._ctx.workflow_version, self._family, self._inputs)
-+        found = StepCache(cache_root).get(self._key, restore_into=self._ctx.paths.artifacts)
++        found = StepCache(cache_root).get(self._key, restore_into=self._ctx.paths.video)
 +        if found is not None:
 +            self.cached = True
 +            self.value = found
@@ -146,7 +142,7 @@ index 18c5d0f..c285d79 100644
 +        cache_root = self._ctx.paths.cache
 +        if cache_root is None:
 +            raise RuntimeError("ctx.step requires paths.cache, the content-addressed cache root")
-+        files = _artifact_files(self.value, self._ctx.paths.artifacts)
++        files = _video_files(self.value, self._ctx.paths.video)
 +        StepCache(cache_root).put(self._key, self.value, files=files)
 +        self._emit("ok")
 +
@@ -190,11 +186,11 @@ index 18c5d0f..c285d79 100644
 ```
 
 ## Answer concisely
-1. Correctness: hit returns the cached value without running the body; miss runs the body and stores the result; `label` is NOT in the key (a differently-labelled call with identical inputs still hits); a version bump invalidates; files named in the returned value are stored/restored by content; a body that RAISES stores nothing.
-2. Any correctness bug or regression (e.g. exception handling in `__exit__`, file derivation walking, cache=None handling, step-event shape `{t,name,key,label,status}`).
-3. Scope confined to `sdk/sfvf/context.py`; the new context fields are optional (existing context.json still validates); nothing weakened. (Read `tests/sdk/test_step.py` in the tree to confirm assertions are intact.)
+1. Are returned file paths now correctly VIDEO-relative per §5.5 (derived relative to `paths.video`; restored into `paths.video`), and do all previously-confirmed behaviors still hold?
+2. Any remaining correctness bug or regression?
+3. Scope confined to `sdk/sfvf/context.py`; the reviewer test (`tests/sdk/test_step.py` in the tree) has intact assertions; nothing weakened.
 
-First, in one sentence, confirm you can see the diff (name the private handle class `ctx.step` returns).
+First, in one sentence, confirm you can see the diff (name the helper function that collects files to store).
 
 End with a single final line, exactly one of:
 VERDICT: APPROVE
