@@ -1,4 +1,8 @@
 ruff==0.12.11
+# Install mypy from source, not its mypyc-compiled wheel, so Windows Smart App Control
+# does not block the wheel's native extension DLL at import. Identical type-checking,
+# just a little slower to install — fine for a dev/gate tool.
+--no-binary mypy
 mypy==1.18.1
 pytest==9.1.1
 httpx2==2.10.0
