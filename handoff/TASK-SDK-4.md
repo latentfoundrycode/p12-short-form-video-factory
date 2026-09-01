@@ -119,11 +119,21 @@ CACHE_DIR = APP_ROOT / "cache"
 ## 4. `app/core/supervisor.py` — populate `context.json`
 
 The cache must persist **across runs** (SDK §5.9: "a later run on a different day costs nothing"),
-so it lives outside any single run folder, partitioned per workflow:
+so it lives outside any single run folder, partitioned per workflow **and by run mode**:
 
 ```
-cache_root = ((cache_dir or CACHE_DIR) / workflow_id).resolve()
+mode = "dry" if dry_run else "real"
+cache_root = ((cache_dir or CACHE_DIR) / workflow_id / mode).resolve()
 ```
+
+**Why the mode segment is mandatory (do not drop it):** `step_key` does not include `dry_run`, so
+without a mode-partitioned root a dry run (fake assets, SDK §4.2) and a real run of the same step with
+the same inputs would share one cache entry. A dry run would then poison the paid cache — a later real
+run would be served the placeholder asset and skip real generation. The `real` and `dry` subtrees keep
+the two fully isolated; a dry run may reuse earlier *dry* results, never real ones, and vice-versa. The
+contract test's third run exercises exactly this: after two dry runs it launches a real run with the
+same inputs and asserts every step re-executes (`status=="ok"`, body runs) rather than hitting the dry
+cache.
 
 `run_request` — add three keyword params (defaulted; the API layer does not pass them yet):
 
@@ -160,11 +170,14 @@ observable result in `context.json` is contract; the plumbing shape is yours.
    `shared_dir`, `workflow_dir` are the resolved paths.
 2. **`decision` event** — `{"t":"decision","kind":"model","chosen":"alpha","alternatives":["beta"],"reason":"unit test"}`.
 3. **`context.json` on disk** — carries `workflow_version`, `workflow_id`, `run_id`, `video_index`,
-   `video_count`, `dry_run`, `step_concurrency`, `paths.cache == <cache_dir>/caching`, and
-   `paths.workflow == <stub dir>`.
-4. **Cross-run caching** — two runs share one `cache_dir`. Run 1 (cold): each video's `step` event has
-   `status=="ok"` and the body log `"computing-body"` appears. Run 2 (warm): each `step` event has
-   `status=="cached"` and the body log is **absent** (body skipped, result + files restored from cache).
+   `video_count`, `dry_run`, `step_concurrency`, `paths.workflow == <stub dir>`, and the
+   mode-partitioned `paths.cache`: `<cache_dir>/caching/dry` for the dry runs,
+   `<cache_dir>/caching/real` for the real run.
+4. **Cross-run caching** — three runs share one `cache_dir`. Run 1 (dry, cold): each video's `step`
+   event has `status=="ok"` and the body log `"computing-body"` appears. Run 2 (dry, warm): each `step`
+   event has `status=="cached"` and the body log is **absent** (restored from the dry cache). Run 3
+   (real, `dry_run=False`, same inputs): each `step` event has `status=="ok"` and the body runs again —
+   the real partition never sees the dry entries (no cache poisoning).
 
 ## Full local gate (all six must pass — run from the worktree venv)
 
