@@ -285,7 +285,8 @@ def run_request(
         if not isinstance(env, EnvReady):
             raise TypeError("ensure_env must return EnvReady or EnvBlocked")
         run_id, run_dir = allocate_run(workflow_id, runs_dir=runs_dir)
-        cache_root = ((cache_dir or CACHE_DIR) / workflow_id).resolve()
+        mode = "dry" if dry_run else "real"
+        cache_root = ((cache_dir or CACHE_DIR) / workflow_id / mode).resolve()
         cache_root.mkdir(parents=True, exist_ok=True)
         wiring = _ContextWiring(
             workflow_id=workflow_id,
