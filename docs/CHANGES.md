@@ -2,6 +2,33 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-01 — SDK-1: content-addressed step cache
+
+First increment of the SDK/step-mechanism stage. Added `sdk/sfvf/cache.py`: `step_key(workflow_version,
+family, inputs)` and a `StepCache` content-addressed store, per Architecture §5.9 and Workflow SDK
+§5.2a/§5.3/§5.5. The key is a SHA-256 over the workflow version + family + inputs in a canonical form;
+any `Path` in inputs (values or keys, nested) is hashed by file CONTENT, not path text; `label` is never
+in the key. `StepCache` round-trips a JSON result plus files stored/restored by content, with atomic writes.
+
+**Supervisor technical decisions (recorded):**
+- **Scope.** A single content-addressed store. The paid/cheap partition and LRU eviction (§5.9) are
+  deliberately DEFERRED to the budget-engine stage — they need per-step cost info that does not exist yet.
+- **Canonicalization is unambiguous by construction.** Distinct input shapes get distinct markers so no
+  two can collide in the key: a `Path` → `{"__sfvf_file_sha256__": <hex>}`, a `dict` →
+  `{"__sfvf_dict__": [[k,v],… sorted]}`, a `list` stays a list. This closes a class of subtle
+  wrong-cache-hit bugs (a string equal to a file digest; a dict vs a pair-shaped list).
+- **Restore is path-confined to the project standard.** File restore refuses absolute/`..` names AND
+  resolves each destination to verify it stays inside `restore_into` (`Path.is_relative_to`), so a
+  pre-existing symlink cannot redirect a write outside it. This mirrors the file-server increment
+  (005-3) — a consistency fix to the existing path-confinement standard, not new policy.
+
+**Gate note.** This foundational primitive went through four cross-family review rounds: the decorrelated
+verifier (GPT-5.6 Sol) surfaced progressively finer canonicalization/confinement edges that the
+Anthropic reviewer approved past; each was fixed with a reviewer-authored test. The final round-3 finding
+(dict vs pair-list) was esoteric on an otherwise-verified core; per the owner's guidance I judged it not a
+stop and applied the terminal marker fix that closes the shape-ambiguity class by construction, rather
+than accept it as a documented wart — keeping the two-reviewer gate intact (both APPROVE on the final diff).
+
 ## 2026-09-01 — CI action majors bumped to the Node-24 runtime
 
 Bumped three GitHub Action majors in `.github/workflows/ci.yml` off the deprecated Node-20 action
