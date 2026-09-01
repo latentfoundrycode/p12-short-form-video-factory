@@ -233,8 +233,6 @@ def run_request(
         run_id, run_dir = allocate_run(workflow_id, runs_dir=runs_dir)
         with _lock:
             _active[workflow_id] = run_id
-        if on_started is not None:
-            on_started(run_id)
         create_run_skeleton(run_dir, video_count)
         state = _RunState(
             statuses=dict.fromkeys(range(1, video_count + 1), "pending"),
@@ -249,6 +247,8 @@ def run_request(
             videos=_video_refs(state.statuses),
             atomic=workflow.atomic,
         )
+        if on_started is not None:
+            on_started(run_id)
         shared: dict[str, Any] | None = None
         limits = {item.step: float(item.seconds) for item in manifest.limits}
         if workflow.prepare:

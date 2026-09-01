@@ -211,6 +211,41 @@ def test_on_started_fires_once_with_run_id_only_when_allocated(tmp_path: Path) -
     assert seen == [first_box[0].run_id]  # type: ignore[union-attr]
 
 
+def test_run_id_handed_out_only_after_request_json_is_written(tmp_path: Path) -> None:
+    """The run id must not be exposed (via on_started) before request.json exists.
+
+    on_started is how the run API learns the run id to return from POST /runs. If it
+    fires before request.json is written, a client that reads the run immediately after
+    the 202 races a not-yet-written file and gets a spurious 404. So at the moment the
+    id is handed out, the run's record must already be readable.
+    """
+    runs_dir = tmp_path / "runs"
+    observed: dict[str, object] = {}
+
+    def on_started(run_id: str) -> None:
+        observed["run_id"] = run_id
+        run_dir = runs_dir / "succeeds" / run_id
+        try:
+            observed["record_run_id"] = read_request(run_dir).run_id
+        except OSError as exc:  # request.json not yet written -> FileNotFoundError
+            observed["error"] = repr(exc)
+
+    result = run_request(
+        STUBS / "succeeds",
+        params={"topic": "test"},
+        video_count=1,
+        concurrency=1,
+        runs_dir=runs_dir,
+        ensure_env=_ready,
+        on_started=on_started,
+    )
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    assert "error" not in observed, (
+        f"request.json was not readable when the run id was handed out: {observed.get('error')}"
+    )
+    assert observed["record_run_id"] == observed["run_id"]
+
+
 def test_single_active_guard_refuses_second_run(tmp_path: Path) -> None:
     started = threading.Event()
     release = threading.Event()
