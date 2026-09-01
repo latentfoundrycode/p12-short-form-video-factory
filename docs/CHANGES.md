@@ -2,6 +2,38 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-01 — SDK-4: context identity/reporting + dry-run (supervisor wiring)
+
+Final increment of the SDK/step-mechanism stage (Workflow SDK §3.2, §4.1–§4.3, §5.9). The supervisor
+now writes runtime identity and the content-addressed cache root into `context.json`, so a real run can
+finally cache. `app/core/supervisor.py` gains a frozen `_ContextWiring` dataclass and a `_make_context`
+factory that populate both the prepare context (`video_index=0`) and each per-video context with
+`workflow_version`, `workflow_id`, `run_id`, `video_index`, `video_count`, `dry_run`, `step_concurrency`,
+`paths.cache`, and `paths.workflow`. `run_request` gains three defaulted params (`cache_dir`, `dry_run`,
+`step_concurrency`). `sdk/sfvf/context.py` exposes the §4.1 accessors (`ctx.workflow_id/run_id/
+video_index/video_count/video_dir/shared_dir/workflow_dir/step_concurrency`), `ctx.dry_run`, and
+`ctx.decision(...)`; `sdk/sfvf/emit.py` gains the `decision` emitter (`{"t":"decision","kind","chosen"
+[,"alternatives"][,"reason"]}`). This also delivers the supervisor wiring deferred from SDK-2 (SDK-2b).
+
+**Supervisor technical decisions (recorded):**
+- **Cache root persists across runs, partitioned by workflow AND run mode:**
+  `((cache_dir or CACHE_DIR)/workflow_id/{"dry"|"real"}).resolve()`. Per-workflow avoids family-name
+  collisions (`step_key` keys on version+family+inputs, not `workflow_id`). The **dry/real split prevents
+  a dry run's placeholder assets from poisoning the paid cache** — `step_key` omits `dry_run`, so without
+  the mode segment a dry run and a real run of the same step+inputs would share one entry and a later real
+  run would be served the fake asset and skip generation.
+- **`dry_run`/`step_concurrency` added as defaulted `run_request` params.** They have no API/frontend
+  source yet; defaulting them lets the supervisor write them now and wires cleanly when a caller opts in.
+  Every new `ContextFile`/`ContextPaths` field is defaulted so existing `context.json` and callers stay
+  valid.
+
+**Gate note.** Review A (Claude Opus 4-8, Anthropic) APPROVED; the cross-family verifier (GPT-5.6 Sol,
+OpenAI) REJECTED round 1 on the dry/real cache-sharing hazard — a legitimate correctness catch that
+Review A approved past. Judged in-scope (this is the increment that introduces both `dry_run` and usable
+cross-run caching) and fixed with the mode partition plus a third contract run that asserts a real run
+never reuses the dry cache; both families APPROVED the round-2 diff. Gate green (176 passed, 1 skipped).
+This was the only SDK-stage increment to use the one permitted re-delegation.
+
 ## 2026-09-01 — SDK-3: ctx.map, parallel steps of one family
 
 Third increment of the SDK/step-mechanism stage (Workflow SDK §4.7). `sdk/sfvf/context.py` gains
