@@ -2,6 +2,34 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-01 — SDK-2: ctx.step, the cached step boundary
+
+Second increment of the SDK/step-mechanism stage. `sdk/sfvf/context.py` gains `ctx.step(family, *,
+inputs, label=None)` — a context manager over the SDK-1 cache (Workflow SDK §4.5, §5.1-§5.5). On a
+hit it returns the stored result and restores its files without running the body; on a miss it runs
+the body, and `step.set(value)` stores the result plus any files the value names. It emits a `step`
+event (`{t, name, key, label, status}`), the `label` is display-only (never in the key), and a body
+that raises stores nothing. Two OPTIONAL context fields were added (`ContextPaths.cache`,
+`ContextFile.workflow_version`, both defaulted so existing `context.json` still validates); the
+supervisor does not populate them yet (SDK-2b wires that).
+
+**Supervisor technical decisions (recorded):**
+- **File paths are VIDEO-relative (SDK §5.5), not artifacts-relative.** The first attempt (and the
+  original reviewer test) treated returned paths as relative to `ctx.artifacts`; the cross-family
+  reviewer (GPT-5.6 Sol) caught that §5.5 makes them relative to the video folder. The spec settles
+  it, so I corrected the test and implementation to derive/restore relative to `paths.video` — no
+  escalation needed. (This is why files are written under `ctx.artifacts` but returned as e.g.
+  `"artifacts/final.mp4"`.)
+- **Known limitation (deferred, recorded):** a step whose result is literally `None` reads as a cache
+  MISS, because SDK-1's `StepCache.get` uses `None` as its miss sentinel and `ctx.step` treats
+  `found is not None` as the hit signal. The failure mode is a benign re-run (never a stale result),
+  and no realistic step returns `None`. Closing it would be a `StepCache` API change (a distinct
+  "exists" signal) — deferred; noted here so it is not rediscovered as a surprise.
+
+Both reviewers APPROVED the final diff; gate green. (Process note: the reviewer test had two lint-only
+reflows by the implementer — import grouping + a combined `with`, assertions unchanged — a consequence
+of lint nits in the authored test; lesson recorded to lint contract tests before delegating.)
+
 ## 2026-09-01 — SDK-1: content-addressed step cache
 
 First increment of the SDK/step-mechanism stage. Added `sdk/sfvf/cache.py`: `step_key(workflow_version,
