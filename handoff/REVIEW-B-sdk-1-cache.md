@@ -1,36 +1,30 @@
-# Review B — cross-family verification (SDK-1: content-addressed step cache)
+# Review B — cross-family verification (SDK-1 cache, REVISED after your REJECT)
 
-You are an independent, READ-ONLY reviewer (GPT-5.6 Sol, OpenAI family). Do NOT modify, create, or
-delete any file and do not run commands that change repository state. Read the diff embedded in THIS
-file and answer.
+You are an independent, READ-ONLY reviewer (GPT-5.6 Sol, OpenAI family). Do NOT modify any file. Read
+the diff embedded below and answer.
 
-## Context
-New SDK module `sdk/sfvf/cache.py` (runs inside the isolated workflow venv; must not import `app`).
-It implements a content-addressed step cache per Architecture §5.9 and Workflow SDK §5.2a/§5.3/§5.5:
+## Context — this is a RE-REVIEW
+You previously REJECTed this `sdk/sfvf/cache.py` for three real defects (now covered by added tests
+that failed on the first attempt and pass now). The implementer fixed them:
+1. A content-hashed `Path` is now a marked dict `{"__sfvf_file_sha256__": "<hex>"}`, structurally
+   distinct from a plain string of the same digest (no collision).
+2. Dicts are canonicalized as a sorted list of `[canonical_key, canonical_value]` pairs, so a `Path`
+   used as a dict KEY is content-hashed too (not converted to path text). Determinism preserved.
+3. `put` and `get` call `_reject_escaping_name`, raising `ValueError` for a file name that is absolute,
+   has a drive/root anchor, or contains `..` — so restore cannot escape `restore_into`.
 
-- `step_key(workflow_version, family, inputs) -> str`: a SHA-256 hex key over the workflow version,
-  the step family, and `inputs` in canonical order (input key ORDER must not matter). Any `pathlib.Path`
-  in inputs — including nested in lists/dicts — is hashed by the file's CONTENT, not its path text
-  (same content at different paths → same key; different content at same path → different key). `label`
-  is never part of the key.
-- `StepCache(root)`: `put(key, value, files=None)` stores the JSON value + files by content hash
-  (atomic writes); `get(key, restore_into=None)` returns the value or `None` on miss and restores stored
-  files under `restore_into` (nested dirs), byte-for-byte; a fresh instance on the same root sees prior
-  results (on-disk).
+Confirm these three fixes are correct and complete, and that nothing that already worked regressed.
+Paid/cheap partition + LRU remain intentionally deferred (not a gap).
 
-The reviewer test `tests/sdk/test_cache.py` (not shown, and not modified by the builder) is the contract.
-Paid/cheap cache partitioning and LRU eviction are intentionally DEFERRED to a later stage — their
-absence is correct, not a gap.
-
-## Diff under review (this is the entire change):
+## Full final module under review:
 
 ```diff
 diff --git a/sdk/sfvf/cache.py b/sdk/sfvf/cache.py
 new file mode 100644
-index 0000000..a9fada1
+index 0000000..53e066d
 --- /dev/null
 +++ b/sdk/sfvf/cache.py
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,140 @@
 +"""Content-addressed step cache keyed on workflow version, family, and inputs."""
 +
 +from __future__ import annotations
@@ -45,6 +39,7 @@ index 0000000..a9fada1
 +from typing import Any
 +
 +_CHUNK = 1024 * 1024
++_FILE_SHA256_MARK = "__sfvf_file_sha256__"
 +
 +
 +def _file_digest(path: Path) -> str:
@@ -58,20 +53,31 @@ index 0000000..a9fada1
 +    return hasher.hexdigest()
 +
 +
++def _canonical_json(value: object) -> str:
++    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
++
++
 +def _canonicalize(value: object) -> object:
 +    if isinstance(value, Path):
-+        return _file_digest(value)
++        return {_FILE_SHA256_MARK: _file_digest(value)}
 +    if isinstance(value, dict):
-+        return {str(key): _canonicalize(item) for key, item in value.items()}
++        pairs = [[_canonicalize(key), _canonicalize(item)] for key, item in value.items()]
++        pairs.sort(key=lambda pair: _canonical_json(pair[0]))
++        return pairs
 +    if isinstance(value, list):
 +        return [_canonicalize(item) for item in value]
 +    return value
 +
 +
++def _reject_escaping_name(name: str) -> None:
++    rel = Path(name)
++    if rel.is_absolute() or rel.anchor or ".." in rel.parts:
++        raise ValueError(f"cache file name is not a confined relative path: {name}")
++
++
 +def step_key(workflow_version: str, family: str, inputs: dict[str, Any]) -> str:
 +    payload: list[object] = [workflow_version, family, _canonicalize(inputs)]
-+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
++    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 +
 +
 +def _write_json_atomic(path: Path, payload: object) -> None:
@@ -129,9 +135,13 @@ index 0000000..a9fada1
 +        if restore_into is not None:
 +            stored = raw.get("files", {})
 +            if isinstance(stored, dict):
++                confined: list[tuple[str, str]] = []
 +                for relative, digest in stored.items():
 +                    if not isinstance(relative, str) or not isinstance(digest, str):
 +                        continue
++                    _reject_escaping_name(relative)
++                    confined.append((relative, digest))
++                for relative, digest in confined:
 +                    dest = restore_into / relative
 +                    dest.parent.mkdir(parents=True, exist_ok=True)
 +                    shutil.copyfile(self._blob_path(digest), dest)
@@ -146,6 +156,8 @@ index 0000000..a9fada1
 +    ) -> None:
 +        mapping: dict[str, str] = {}
 +        if files:
++            for relative in files:
++                _reject_escaping_name(relative)
 +            for relative, src in files.items():
 +                digest = _file_digest(src)
 +                dest = self._blob_path(digest)
@@ -156,11 +168,11 @@ index 0000000..a9fada1
 ```
 
 ## Answer concisely
-1. Correctness of `step_key`: canonical (order-independent) key over version+family+inputs; every `Path` (incl. nested) hashed by file content not text; label absent; version/family/value changes change the key?
-2. Correctness of `StepCache`: value round-trips; miss returns `None`; files stored by content and restored byte-for-byte into `restore_into` (nested dirs); on-disk so a fresh instance on the same root sees results; atomic writes; any correctness bug?
-3. Scope / gate-integrity: change confined to `sdk/sfvf/cache.py`; nothing weakened; nothing beyond the brief.
+1. Are the three fixes correct and complete (marked Path so no string collision; Path dict-keys content-hashed via sorted `[key,value]` pairs with preserved determinism; `..`/absolute/anchor names refused in both put and get)?
+2. Any remaining correctness bug: key stability/order-independence, on-disk round-trip, atomic writes, restore confinement, or a regression from the first version?
+3. Scope/gate-integrity: confined to `sdk/sfvf/cache.py`; nothing weakened.
 
-First, in one sentence, confirm you can see the diff (name the new file and one concrete detail from it) so it's clear you received it.
+First, in one sentence, confirm you can see the diff (name the marker constant used for a hashed Path) so it's clear you received it.
 
 End with a single final line, exactly one of:
 VERDICT: APPROVE
