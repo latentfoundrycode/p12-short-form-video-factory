@@ -1,18 +1,18 @@
-# Review B — cross-family verification (SDK-3: ctx.map + thread-safe emit)
+# Review B — cross-family verification (SDK-3 ctx.map, REVISED: collect catches Exception)
 
 You are an independent, READ-ONLY reviewer (GPT-5.6 Sol, OpenAI family). Do NOT modify any file. Read
 the diffs embedded below and answer.
 
-## Context
-SDK-3 adds `ctx.map` (Workflow SDK §4.7) — run many items of one step family concurrently, each a full
-`ctx.step` (so caching/file-handling/`step` event are inherited), results in INPUT order,
-`on_error="raise"` returns `list[value]` and propagates the first failure, `on_error="collect"` returns
-`list[Outcome]` (`value`/`error`/`ok`). Concurrency via `ThreadPoolExecutor`. Because concurrent steps
-emit `step` events from multiple threads, `emit()` now serializes write+flush under a module lock so
-lines cannot interleave. Cancellation-between-items is intentionally DEFERRED (ties to the stop
-sentinel). Contract test: `tests/sdk/test_map.py` (6 tests).
+## Context — re-review
+You previously REJECTed because `on_error="collect"` caught `BaseException`, swallowing process-control
+exceptions. Fixed: the collect path now catches `Exception` only (a `BaseException` propagates out of
+`ctx.map`), and `Outcome.error` is typed `Exception | None`. New test
+`test_map_collect_collects_exceptions_but_propagates_base_exceptions` covers it. Everything else about
+`ctx.map` (input-order results, per-item cached `ctx.step`, on_error modes, thread-safe `emit`) was
+confirmed correct by both reviewers and is unchanged. Cancellation-between-items remains intentionally
+deferred.
 
-## Diffs under review:
+## Diffs under review (final):
 
 ### sdk/sfvf/emit.py
 ```diff
@@ -45,7 +45,7 @@ index 6f3c0ef..2fe5c6a 100644
 ### sdk/sfvf/context.py
 ```diff
 diff --git a/sdk/sfvf/context.py b/sdk/sfvf/context.py
-index 14a6c1a..ad0dc4e 100644
+index 14a6c1a..a8e7b3f 100644
 --- a/sdk/sfvf/context.py
 +++ b/sdk/sfvf/context.py
 @@ -1,17 +1,35 @@
@@ -75,7 +75,7 @@ index 14a6c1a..ad0dc4e 100644
 +    """Result of one `ctx.map` item when `on_error="collect"`."""
 +
 +    value: Any
-+    error: BaseException | None
++    error: Exception | None
 +
 +    @property
 +    def ok(self) -> bool:
@@ -139,7 +139,7 @@ index 14a6c1a..ad0dc4e 100644
 +        def run_collect(item: _T) -> Outcome:
 +            try:
 +                return Outcome(value=run_item(item), error=None)
-+            except BaseException as exc:
++            except Exception as exc:
 +                return Outcome(value=None, error=exc)
 +
 +        with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
@@ -151,11 +151,11 @@ index 14a6c1a..ad0dc4e 100644
 ```
 
 ## Answer concisely
-1. Correctness: are results returned in INPUT order regardless of completion order; is each item a full cached `ctx.step` (cache hit skips fn); does `on_error="raise"` propagate a failure and `on_error="collect"` return an `Outcome` per item; is `emit()` now safe against interleaved concurrent writes (line built before the lock, write+flush inside)?
-2. Any correctness/concurrency bug (deadlock, lost results, races on the cache or on stdout, exception handling that swallows too much/little).
-3. Scope confined to `sdk/sfvf/context.py` + `sdk/sfvf/emit.py`; reviewer test assertions intact; nothing weakened. (The deferral of cancellation-between-items is intended, not a gap.)
+1. Is the collect path now correct (catches `Exception`, so ordinary failures become Outcomes but a `BaseException` propagates), with `Outcome.error: Exception | None`?
+2. Do all previously-confirmed behaviors still hold (input-order results, per-item caching, raise mode, thread-safe emit)? Any remaining correctness/concurrency bug?
+3. Scope confined to `sdk/sfvf/context.py` + `sdk/sfvf/emit.py`; reviewer test assertions intact; nothing weakened.
 
-First, in one sentence, confirm you can see the diffs (name the executor class used and the emit lock).
+First, in one sentence, confirm you can see the diffs (state which exception type the collect path now catches).
 
 End with a single final line, exactly one of:
 VERDICT: APPROVE
