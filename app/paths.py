@@ -4,6 +4,7 @@ APP_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS_DIR = APP_ROOT / "workflows"
 WEB_DIR = APP_ROOT / "app" / "web"
 RUNS_DIR = APP_ROOT / "runs"
+CACHE_DIR = APP_ROOT / "cache"
 VENVS_DIR = APP_ROOT / "venvs"
 SDK_DIR = APP_ROOT / "sdk"
 

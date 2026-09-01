@@ -1,0 +1,317 @@
+diff --git a/app/core/supervisor.py b/app/core/supervisor.py
+index cff5da3..add7dcf 100644
+--- a/app/core/supervisor.py
++++ b/app/core/supervisor.py
+@@ -32,6 +32,7 @@ from app.core.records import (
+     write_json_atomic,
+     write_video,
+ )
++from app.paths import CACHE_DIR
+ from app.registry.schema import parse_manifest_toml
+ 
+ type EnsureEnv = Callable[..., EnvResult]
+@@ -69,6 +70,20 @@ class StopAccepted:
+     mode: StopMode
+ 
+ 
++@dataclass(frozen=True)
++class _ContextWiring:
++    """Run-wide identity and cache values written into every context.json."""
++
++    workflow_id: str
++    run_id: str
++    workflow_version: str
++    video_count: int
++    cache_root: Path
++    workflow_dir: Path
++    dry_run: bool
++    step_concurrency: int
++
++
+ @dataclass
+ class _RunState:
+     """Per-run lock and live video statuses. Guards events.jsonl and request.json."""
+@@ -151,6 +166,42 @@ def _video_refs(statuses: dict[int, VideoStatus]) -> list[VideoRef]:
+     return [VideoRef(index=index, status=statuses[index]) for index in sorted(statuses)]
+ 
+ 
++def _make_context(
++    wiring: _ContextWiring,
++    *,
++    video: Path,
++    artifacts: Path,
++    steps: Path,
++    shared: Path,
++    video_index: int,
++    params: dict[str, Any],
++    previous: dict[str, Any] | None = None,
++    shared_payload: dict[str, Any] | None = None,
++) -> ContextFile:
++    return ContextFile(
++        workflow_version=wiring.workflow_version,
++        workflow_id=wiring.workflow_id,
++        run_id=wiring.run_id,
++        video_index=video_index,
++        video_count=wiring.video_count,
++        dry_run=wiring.dry_run,
++        step_concurrency=wiring.step_concurrency,
++        settings=params,
++        paths=ContextPaths(
++            video=video,
++            artifacts=artifacts,
++            steps=steps,
++            shared=shared,
++            cache=wiring.cache_root,
++            workflow=wiring.workflow_dir,
++        ),
++        instructions=[],
++        secrets={},
++        previous=previous,
++        shared=shared_payload,
++    )
++
++
+ def _aggregate_status(
+     statuses: Sequence[VideoStatus],
+     *,
+@@ -213,6 +264,9 @@ def run_request(
+     popen: PopenFn = subprocess.Popen,
+     silence_limit_default: float = DEFAULT_SILENCE_SECONDS,
+     on_started: Callable[[str], None] | None = None,
++    cache_dir: Path | None = None,
++    dry_run: bool = False,
++    step_concurrency: int = 1,
+ ) -> RunRequestResult:
+     workflow_dir = workflow_dir.resolve()
+     manifest = parse_manifest_toml((workflow_dir / "workflow.toml").read_text(encoding="utf-8"))
+@@ -231,6 +285,19 @@ def run_request(
+         if not isinstance(env, EnvReady):
+             raise TypeError("ensure_env must return EnvReady or EnvBlocked")
+         run_id, run_dir = allocate_run(workflow_id, runs_dir=runs_dir)
++        mode = "dry" if dry_run else "real"
++        cache_root = ((cache_dir or CACHE_DIR) / workflow_id / mode).resolve()
++        cache_root.mkdir(parents=True, exist_ok=True)
++        wiring = _ContextWiring(
++            workflow_id=workflow_id,
++            run_id=run_id,
++            workflow_version=workflow.version,
++            video_count=video_count,
++            cache_root=cache_root,
++            workflow_dir=workflow_dir,
++            dry_run=dry_run,
++            step_concurrency=step_concurrency,
++        )
+         with _lock:
+             _active[workflow_id] = run_id
+         create_run_skeleton(run_dir, video_count)
+@@ -261,6 +328,7 @@ def run_request(
+                 state=state,
+                 limits=limits,
+                 silence_limit_default=silence_limit_default,
++                wiring=wiring,
+             )
+             if not ok:
+                 if state.was_stopped():
+@@ -298,6 +366,7 @@ def run_request(
+             state=state,
+             limits=limits,
+             silence_limit_default=silence_limit_default,
++            wiring=wiring,
+         )
+     finally:
+         with _lock:
+@@ -479,6 +548,7 @@ def _run_prepare(
+     state: _RunState,
+     limits: dict[str, float],
+     silence_limit_default: float,
++    wiring: _ContextWiring,
+ ) -> tuple[bool, dict[str, Any] | None]:
+     shared_dir = (run_dir / "shared").resolve()
+     artifacts = shared_dir / "artifacts"
+@@ -487,18 +557,14 @@ def _run_prepare(
+     steps.mkdir(exist_ok=True)
+     context_path = shared_dir / "context.json"
+     result_path = shared_dir / "result.json"
+-    context = ContextFile(
+-        settings=params,
+-        paths=ContextPaths(
+-            video=shared_dir,
+-            artifacts=artifacts,
+-            steps=steps,
+-            shared=shared_dir,
+-        ),
+-        instructions=[],
+-        secrets={},
+-        previous=None,
+-        shared=None,
++    context = _make_context(
++        wiring,
++        video=shared_dir,
++        artifacts=artifacts,
++        steps=steps,
++        shared=shared_dir,
++        video_index=0,
++        params=params,
+     )
+     write_json_atomic(context_path, context.model_dump(mode="json"))
+     proc = _start_runner(
+@@ -548,6 +614,7 @@ def _run_videos(
+     state: _RunState,
+     limits: dict[str, float],
+     silence_limit_default: float,
++    wiring: _ContextWiring,
+ ) -> RequestRecord:
+     workers = max(1, concurrency)
+     with ThreadPoolExecutor(max_workers=workers) as pool:
+@@ -566,6 +633,7 @@ def _run_videos(
+                 state=state,
+                 limits=limits,
+                 silence_limit_default=silence_limit_default,
++                wiring=wiring,
+             )
+             for index in range(1, video_count + 1)
+         ]
+@@ -597,6 +665,7 @@ def _run_one_video(
+     state: _RunState,
+     limits: dict[str, float],
+     silence_limit_default: float,
++    wiring: _ContextWiring,
+ ) -> None:
+     source = format_video_dir(index, video_count)
+     video_dir = (run_dir / source).resolve()
+@@ -611,18 +680,15 @@ def _run_one_video(
+             return
+     started: str | None = None
+     try:
+-        context = ContextFile(
+-            settings=params,
+-            paths=ContextPaths(
+-                video=video_dir,
+-                artifacts=(video_dir / "artifacts").resolve(),
+-                steps=(video_dir / ".steps").resolve(),
+-                shared=(run_dir / "shared").resolve(),
+-            ),
+-            instructions=[],
+-            secrets={},
+-            previous=None,
+-            shared=shared,
++        context = _make_context(
++            wiring,
++            video=video_dir,
++            artifacts=(video_dir / "artifacts").resolve(),
++            steps=(video_dir / ".steps").resolve(),
++            shared=(run_dir / "shared").resolve(),
++            video_index=index,
++            params=params,
++            shared_payload=shared,
+         )
+         write_json_atomic(video_dir / "context.json", context.model_dump(mode="json"))
+         started = format_utc_z(utc_now())
+diff --git a/app/paths.py b/app/paths.py
+index 0c57b43..27bd987 100644
+--- a/app/paths.py
++++ b/app/paths.py
+@@ -4,6 +4,7 @@ APP_ROOT = Path(__file__).resolve().parent.parent
+ WORKFLOWS_DIR = APP_ROOT / "workflows"
+ WEB_DIR = APP_ROOT / "app" / "web"
+ RUNS_DIR = APP_ROOT / "runs"
++CACHE_DIR = APP_ROOT / "cache"
+ VENVS_DIR = APP_ROOT / "venvs"
+ SDK_DIR = APP_ROOT / "sdk"
+ 
+diff --git a/sdk/sfvf/context.py b/sdk/sfvf/context.py
+index a8e7b3f..ae10566 100644
+--- a/sdk/sfvf/context.py
++++ b/sdk/sfvf/context.py
+@@ -10,7 +10,7 @@ from typing import Any, Literal, TypeVar, cast, overload
+ from pydantic import BaseModel, ConfigDict, Field
+ 
+ from .cache import StepCache, step_key
+-from .emit import emit, heartbeat, log, stage
++from .emit import decision, emit, heartbeat, log, stage
+ 
+ _T = TypeVar("_T")
+ _R = TypeVar("_R")
+@@ -45,6 +45,10 @@ class ContextPaths(_ContextModel):
+         default=None,
+         description="The content-addressed cache root.",
+     )
++    workflow: Path | None = Field(
++        default=None,
++        description="The workflow's own folder (read-only).",
++    )
+ 
+ 
+ class ContextFile(_ContextModel):
+@@ -58,6 +62,15 @@ class ContextFile(_ContextModel):
+         default="0",
+         description="Workflow version used to key cached step results.",
+     )
++    workflow_id: str = Field(default="", description="The workflow's id.")
++    run_id: str = Field(default="", description="The run folder name.")
++    video_index: int = Field(default=0, description="1-based index of this video; 0 for prepare.")
++    video_count: int = Field(default=0, description="How many videos this request produces.")
++    dry_run: bool = Field(default=False, description="True when running with fake assets.")
++    step_concurrency: int = Field(
++        default=1,
++        description="User's parallel-steps setting for ctx.map.",
++    )
+     settings: dict[str, Any] = Field(description="Locked, validated parameters for this run.")
+     paths: ContextPaths = Field(description="Directories the workflow should read and write.")
+     instructions: list[Path] = Field(
+@@ -180,6 +193,15 @@ class Context:
+         self.previous = file.previous
+         self.shared = file.shared
+         self.workflow_version = file.workflow_version
++        self.workflow_id = file.workflow_id
++        self.run_id = file.run_id
++        self.video_index = file.video_index
++        self.video_count = file.video_count
++        self.dry_run = file.dry_run
++        self.step_concurrency = file.step_concurrency
++        self.video_dir = file.paths.video
++        self.shared_dir = file.paths.shared
++        self.workflow_dir = file.paths.workflow
+         self.artifacts = file.paths.artifacts
+ 
+     def emit(self, event: dict[str, Any]) -> None:
+@@ -194,6 +216,16 @@ class Context:
+     def heartbeat(self, name: str, *, waiting_on: str, key: str | None = None) -> None:
+         heartbeat(name, waiting_on=waiting_on, key=key)
+ 
++    def decision(
++        self,
++        *,
++        kind: str,
++        chosen: str,
++        alternatives: list[str] | None = None,
++        reason: str | None = None,
++    ) -> None:
++        decision(kind, chosen, alternatives=alternatives, reason=reason)
++
+     def step(
+         self,
+         family: str,
+diff --git a/sdk/sfvf/emit.py b/sdk/sfvf/emit.py
+index 2fe5c6a..9e347dc 100644
+--- a/sdk/sfvf/emit.py
++++ b/sdk/sfvf/emit.py
+@@ -27,3 +27,18 @@ def heartbeat(name: str, *, waiting_on: str, key: str | None = None) -> None:
+     if key is not None:
+         event["key"] = key
+     emit(event)
++
++
++def decision(
++    kind: str,
++    chosen: str,
++    *,
++    alternatives: list[str] | None = None,
++    reason: str | None = None,
++) -> None:
++    event: dict[str, Any] = {"t": "decision", "kind": kind, "chosen": chosen}
++    if alternatives is not None:
++        event["alternatives"] = alternatives
++    if reason is not None:
++        event["reason"] = reason
++    emit(event)
