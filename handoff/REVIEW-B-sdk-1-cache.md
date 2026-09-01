@@ -1,30 +1,34 @@
-# Review B — cross-family verification (SDK-1 cache, REVISED after your REJECT)
+# Review B — cross-family verification (SDK-1 cache, ROUND 3 / final)
 
 You are an independent, READ-ONLY reviewer (GPT-5.6 Sol, OpenAI family). Do NOT modify any file. Read
 the diff embedded below and answer.
 
-## Context — this is a RE-REVIEW
-You previously REJECTed this `sdk/sfvf/cache.py` for three real defects (now covered by added tests
-that failed on the first attempt and pass now). The implementer fixed them:
-1. A content-hashed `Path` is now a marked dict `{"__sfvf_file_sha256__": "<hex>"}`, structurally
-   distinct from a plain string of the same digest (no collision).
-2. Dicts are canonicalized as a sorted list of `[canonical_key, canonical_value]` pairs, so a `Path`
-   used as a dict KEY is content-hashed too (not converted to path text). Determinism preserved.
-3. `put` and `get` call `_reject_escaping_name`, raising `ValueError` for a file name that is absolute,
-   has a drive/root anchor, or contains `..` — so restore cannot escape `restore_into`.
+## Context — third review of this module
+Rounds 1 and 2 fixed: Path→marker-dict (no string collision); Path dict-keys content-hashed via
+sorted `[key,value]` pairs; lexical rejection of absolute/anchored/`..` file names. You then flagged
+two more edges, now fixed in this final version:
 
-Confirm these three fixes are correct and complete, and that nothing that already worked regressed.
-Paid/cheap partition + LRU remain intentionally deferred (not a gap).
+1. **Symlink restore escape** — `get` now resolves each destination and requires
+   `dest.resolve().is_relative_to(restore_into.resolve())` BEFORE writing anything, raising `ValueError`
+   otherwise. This mirrors the project's file-server increment (005-3) — a consistency fix to the
+   existing path-confinement standard, validated by `test_restore_refuses_to_follow_a_symlink_out_of_restore_into`
+   (skips only where the environment cannot create symlinks; runs in CI).
+2. **Canonical-key tie ordering** — dict pair-lists now sort on the WHOLE `[canonical_key,
+   canonical_value]` pair, so two distinct Path keys with identical file content stay order-independent.
+   Validated by `test_dict_keyed_by_content_identical_paths_is_order_independent`.
+
+Confirm these two fixes are correct and complete and nothing regressed. Paid/cheap partition + LRU
+remain intentionally deferred.
 
 ## Full final module under review:
 
 ```diff
 diff --git a/sdk/sfvf/cache.py b/sdk/sfvf/cache.py
 new file mode 100644
-index 0000000..53e066d
+index 0000000..a261e4e
 --- /dev/null
 +++ b/sdk/sfvf/cache.py
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,143 @@
 +"""Content-addressed step cache keyed on workflow version, family, and inputs."""
 +
 +from __future__ import annotations
@@ -62,7 +66,7 @@ index 0000000..53e066d
 +        return {_FILE_SHA256_MARK: _file_digest(value)}
 +    if isinstance(value, dict):
 +        pairs = [[_canonicalize(key), _canonicalize(item)] for key, item in value.items()]
-+        pairs.sort(key=lambda pair: _canonical_json(pair[0]))
++        pairs.sort(key=_canonical_json)
 +        return pairs
 +    if isinstance(value, list):
 +        return [_canonicalize(item) for item in value]
@@ -135,14 +139,17 @@ index 0000000..53e066d
 +        if restore_into is not None:
 +            stored = raw.get("files", {})
 +            if isinstance(stored, dict):
-+                confined: list[tuple[str, str]] = []
++                restore_root = restore_into.resolve()
++                confined: list[tuple[Path, str]] = []
 +                for relative, digest in stored.items():
 +                    if not isinstance(relative, str) or not isinstance(digest, str):
 +                        continue
 +                    _reject_escaping_name(relative)
-+                    confined.append((relative, digest))
-+                for relative, digest in confined:
 +                    dest = restore_into / relative
++                    if not dest.resolve().is_relative_to(restore_root):
++                        raise ValueError(f"cache restore path escapes restore_into: {relative}")
++                    confined.append((dest, digest))
++                for dest, digest in confined:
 +                    dest.parent.mkdir(parents=True, exist_ok=True)
 +                    shutil.copyfile(self._blob_path(digest), dest)
 +        return raw["value"]
@@ -168,11 +175,11 @@ index 0000000..53e066d
 ```
 
 ## Answer concisely
-1. Are the three fixes correct and complete (marked Path so no string collision; Path dict-keys content-hashed via sorted `[key,value]` pairs with preserved determinism; `..`/absolute/anchor names refused in both put and get)?
-2. Any remaining correctness bug: key stability/order-independence, on-disk round-trip, atomic writes, restore confinement, or a regression from the first version?
-3. Scope/gate-integrity: confined to `sdk/sfvf/cache.py`; nothing weakened.
+1. Symlink fix: does `get` resolve the destination and enforce containment within `restore_into` before any write, so a pre-existing symlink under `restore_into` cannot redirect a write outside it?
+2. Tie fix: is the dict canonicalization now fully order-independent, including the degenerate case of two content-identical Path keys?
+3. Any remaining correctness bug or regression (key stability, round-trip, atomicity, confinement)? Scope confined to `sdk/sfvf/cache.py`; nothing weakened?
 
-First, in one sentence, confirm you can see the diff (name the marker constant used for a hashed Path) so it's clear you received it.
+First, in one sentence, confirm you can see the diff (quote the containment check line) so it's clear you received it.
 
 End with a single final line, exactly one of:
 VERDICT: APPROVE
