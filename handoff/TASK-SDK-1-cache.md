@@ -1,5 +1,19 @@
 # TASK-SDK-1 — Content-addressed step cache (SDK side)
 
+## REVISION 3 — close the container-shape ambiguity (terminal canonicalization fix)
+Cross-family review found one more shape collision: a dict is canonicalized to a plain list of
+`[key, value]` pairs, so `{"x": {"a": 1}}` and `{"x": [["a", 1]]}` key identically. Test
+`test_a_dict_does_not_collide_with_a_pair_shaped_list` covers it (fails now). Fix `_canonicalize` so a
+dict's canonical form is **structurally distinct from a plain list** — the same marker technique
+already used for `Path`. E.g. wrap the sorted pair-list in a marker dict:
+`{"__sfvf_dict__": [[canonical_key, canonical_value], ... sorted ...]}`. A plain user list stays a
+list; a `Path` stays `{"__sfvf_file_sha256__": hex}`; a dict becomes `{"__sfvf_dict__": [...]}` — all
+three JSON-distinct, so no two input shapes can collide. Preserve all existing behaviour and
+properties (order-independence, Path-by-content, version/family/value sensitivity). This is the
+terminal fix for the canonicalization-shape class. Change only `sdk/sfvf/cache.py`; do not modify tests.
+
+---
+
 ## REVISION 2 — two more targeted fixes (approved extra re-delegation)
 Cross-family review surfaced two further edge cases on the corrected version; two new tests cover
 them (`test_dict_keyed_by_content_identical_paths_is_order_independent` fails now;

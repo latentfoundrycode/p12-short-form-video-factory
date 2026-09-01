@@ -170,3 +170,12 @@ def test_restore_refuses_to_follow_a_symlink_out_of_restore_into(tmp_path: Path)
     with pytest.raises(ValueError):
         cache.get(key, restore_into=restore)
     assert not (outside / "foo.bin").exists()  # nothing written through the symlink
+
+
+def test_a_dict_does_not_collide_with_a_pair_shaped_list(tmp_path: Path) -> None:
+    """A dict and a list that happens to be shaped like the dict's canonical pair-list
+    must key differently — the canonical form of a dict must be distinguishable from a
+    plain list, closing the container-shape ambiguity class."""
+    as_dict = step_key("1", "gen", {"x": {"a": 1}})
+    as_pairs = step_key("1", "gen", {"x": [["a", 1]]})
+    assert as_dict != as_pairs
