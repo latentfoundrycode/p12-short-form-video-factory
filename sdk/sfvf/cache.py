@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 _CHUNK = 1024 * 1024
+_FILE_SHA256_MARK = "__sfvf_file_sha256__"
 
 
 def _file_digest(path: Path) -> str:
@@ -25,20 +26,31 @@ def _file_digest(path: Path) -> str:
     return hasher.hexdigest()
 
 
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
 def _canonicalize(value: object) -> object:
     if isinstance(value, Path):
-        return _file_digest(value)
+        return {_FILE_SHA256_MARK: _file_digest(value)}
     if isinstance(value, dict):
-        return {str(key): _canonicalize(item) for key, item in value.items()}
+        pairs = [[_canonicalize(key), _canonicalize(item)] for key, item in value.items()]
+        pairs.sort(key=lambda pair: _canonical_json(pair[0]))
+        return pairs
     if isinstance(value, list):
         return [_canonicalize(item) for item in value]
     return value
 
 
+def _reject_escaping_name(name: str) -> None:
+    rel = Path(name)
+    if rel.is_absolute() or rel.anchor or ".." in rel.parts:
+        raise ValueError(f"cache file name is not a confined relative path: {name}")
+
+
 def step_key(workflow_version: str, family: str, inputs: dict[str, Any]) -> str:
     payload: list[object] = [workflow_version, family, _canonicalize(inputs)]
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 
 
 def _write_json_atomic(path: Path, payload: object) -> None:
@@ -96,9 +108,13 @@ class StepCache:
         if restore_into is not None:
             stored = raw.get("files", {})
             if isinstance(stored, dict):
+                confined: list[tuple[str, str]] = []
                 for relative, digest in stored.items():
                     if not isinstance(relative, str) or not isinstance(digest, str):
                         continue
+                    _reject_escaping_name(relative)
+                    confined.append((relative, digest))
+                for relative, digest in confined:
                     dest = restore_into / relative
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(self._blob_path(digest), dest)
@@ -113,6 +129,8 @@ class StepCache:
     ) -> None:
         mapping: dict[str, str] = {}
         if files:
+            for relative in files:
+                _reject_escaping_name(relative)
             for relative, src in files.items():
                 digest = _file_digest(src)
                 dest = self._blob_path(digest)
