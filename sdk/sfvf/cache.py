@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 _CHUNK = 1024 * 1024
+_DICT_MARK = "__sfvf_dict__"
 _FILE_SHA256_MARK = "__sfvf_file_sha256__"
 
 
@@ -36,7 +37,7 @@ def _canonicalize(value: object) -> object:
     if isinstance(value, dict):
         pairs = [[_canonicalize(key), _canonicalize(item)] for key, item in value.items()]
         pairs.sort(key=_canonical_json)
-        return pairs
+        return {_DICT_MARK: pairs}
     if isinstance(value, list):
         return [_canonicalize(item) for item in value]
     return value
