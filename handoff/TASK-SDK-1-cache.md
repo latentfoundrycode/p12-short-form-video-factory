@@ -1,5 +1,31 @@
 # TASK-SDK-1 — Content-addressed step cache (SDK side)
 
+## REVISION 1 — required fixes (cross-family Review B REJECTed the first attempt)
+The first implementation was correct on the happy path but had three real defects the reviewer test
+now covers (all three currently FAIL). Fix `sdk/sfvf/cache.py` so the whole test file passes, keeping
+everything that already worked. The three fixes:
+
+1. **A content-hashed `Path` must be structurally distinct from a plain string.** Replacing a `Path`
+   with its bare hex digest means an ordinary string input equal to that digest collides with the file.
+   Represent a canonicalized `Path` with a distinct marker — e.g. `{"__sfvf_file_sha256__": "<hex>"}`
+   (a shape a plain string/dict input cannot accidentally equal) — not the bare hex string.
+   (Test: `test_path_input_does_not_collide_with_a_string_of_its_digest`.)
+2. **A `Path` used as a dict KEY must be content-hashed too, not converted to its path text.** A `Path`
+   "anywhere in inputs" (§5.9) includes keys. Since JSON object keys must be strings, canonicalize each
+   dict as a **sorted list of `[canonical_key, canonical_value]` pairs** so a canonicalized (marked)
+   Path key is representable — rather than `str(key)` on a Path. Keep the result deterministic
+   (order-independent). (Test: `test_path_used_as_a_dict_key_is_content_hashed_not_texted`.)
+3. **Confine stored file names — refuse path traversal.** In `put` (and defensively in `get`), a `files`
+   relative name that is absolute or contains a `..` segment must raise `ValueError` and store nothing,
+   so restore can never write outside `restore_into`. Mirror the confinement rule in `app/paths.safe_join`
+   / `sdk/sfvf/runner._safe_join` (reject absolute, drive-anchor, and `..`). (Test:
+   `test_cache_rejects_file_names_that_escape_restore_into`.)
+
+Keep the change confined to `sdk/sfvf/cache.py`. Do not modify the tests. Original brief below.
+
+---
+
+
 ## One-line task and why
 Implement the content-addressed step cache the step mechanism will build on: a stable key from the
 workflow version + step family + inputs (canonical order, files hashed by content, label absent) and
