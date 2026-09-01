@@ -1,15 +1,33 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import Any
+from typing import Any, Literal, TypeVar, cast, overload
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .cache import StepCache, step_key
 from .emit import emit, heartbeat, log, stage
 
+_T = TypeVar("_T")
+_R = TypeVar("_R")
+
 _SHORT_KEY_LEN = 12
+
+
+@dataclass
+class Outcome:
+    """Result of one `ctx.map` item when `on_error="collect"`."""
+
+    value: Any
+    error: BaseException | None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
 
 
 class _ContextModel(BaseModel):
@@ -184,3 +202,62 @@ class Context:
         label: str | None = None,
     ) -> _Step:
         return _Step(self, family, inputs, label)
+
+    @overload
+    def map(
+        self,
+        family: str,
+        items: Iterable[_T],
+        *,
+        inputs: Callable[[_T], dict[str, Any]],
+        fn: Callable[[_T], _R],
+        label: Callable[[_T], str] | None = None,
+        concurrency: int = 1,
+        on_error: Literal["raise"] = "raise",
+    ) -> list[_R]: ...
+
+    @overload
+    def map(
+        self,
+        family: str,
+        items: Iterable[_T],
+        *,
+        inputs: Callable[[_T], dict[str, Any]],
+        fn: Callable[[_T], _R],
+        label: Callable[[_T], str] | None = None,
+        concurrency: int = 1,
+        on_error: Literal["collect"],
+    ) -> list[Outcome]: ...
+
+    def map(
+        self,
+        family: str,
+        items: Iterable[_T],
+        *,
+        inputs: Callable[[_T], dict[str, Any]],
+        fn: Callable[[_T], _R],
+        label: Callable[[_T], str] | None = None,
+        concurrency: int = 1,
+        on_error: Literal["raise", "collect"] = "raise",
+    ) -> list[_R] | list[Outcome]:
+        ordered = list(items)
+
+        def run_item(item: _T) -> _R:
+            step_label = family if label is None else label(item)
+            with self.step(family, inputs=inputs(item), label=step_label) as step:
+                if not step.cached:
+                    step.set(fn(item))
+                return cast(_R, step.value)
+
+        def run_collect(item: _T) -> Outcome:
+            try:
+                return Outcome(value=run_item(item), error=None)
+            except BaseException as exc:
+                return Outcome(value=None, error=exc)
+
+        with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+            if on_error == "collect":
+                collected = [pool.submit(run_collect, item) for item in ordered]
+                return [future.result() for future in collected]
+            submitted = [pool.submit(run_item, item) for item in ordered]
+            return [future.result() for future in submitted]

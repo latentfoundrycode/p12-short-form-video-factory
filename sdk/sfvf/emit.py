@@ -1,12 +1,17 @@
 import json
 import sys
+import threading
 from typing import Any
+
+_lock = threading.Lock()
 
 
 def emit(event: dict[str, Any]) -> None:
     """Write one compact JSON object to stdout and flush so a reader sees it immediately."""
-    sys.stdout.write(json.dumps(event, separators=(",", ":"), ensure_ascii=False) + "\n")
-    sys.stdout.flush()
+    line = json.dumps(event, separators=(",", ":"), ensure_ascii=False) + "\n"
+    with _lock:
+        sys.stdout.write(line)
+        sys.stdout.flush()
 
 
 def log(msg: str, *, level: str = "info") -> None:
