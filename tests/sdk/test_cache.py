@@ -10,7 +10,6 @@ import hashlib
 from pathlib import Path
 
 import pytest
-
 from sfvf.cache import StepCache, step_key
 
 
