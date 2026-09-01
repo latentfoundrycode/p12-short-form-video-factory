@@ -60,8 +60,8 @@ class ContextFile(_ContextModel):
     )
 
 
-def _artifact_files(value: object, artifacts: Path) -> dict[str, Path]:
-    """Collect artifact-relative file paths named by strings in `value`."""
+def _video_files(value: object, video: Path) -> dict[str, Path]:
+    """Collect video-relative file paths named by strings in `value`."""
     found: dict[str, Path] = {}
 
     def walk(item: object) -> None:
@@ -74,7 +74,7 @@ def _artifact_files(value: object, artifacts: Path) -> dict[str, Path]:
                 walk(nested)
             return
         if isinstance(item, str):
-            candidate = artifacts / item
+            candidate = video / item
             if candidate.is_file():
                 found[item] = candidate
 
@@ -111,7 +111,7 @@ class _Step:
         if cache_root is None:
             raise RuntimeError("ctx.step requires paths.cache, the content-addressed cache root")
         self._key = step_key(self._ctx.workflow_version, self._family, self._inputs)
-        found = StepCache(cache_root).get(self._key, restore_into=self._ctx.paths.artifacts)
+        found = StepCache(cache_root).get(self._key, restore_into=self._ctx.paths.video)
         if found is not None:
             self.cached = True
             self.value = found
@@ -136,7 +136,7 @@ class _Step:
         cache_root = self._ctx.paths.cache
         if cache_root is None:
             raise RuntimeError("ctx.step requires paths.cache, the content-addressed cache root")
-        files = _artifact_files(self.value, self._ctx.paths.artifacts)
+        files = _video_files(self.value, self._ctx.paths.video)
         StepCache(cache_root).put(self._key, self.value, files=files)
         self._emit("ok")
 
