@@ -102,6 +102,26 @@ def test_map_on_error_collect_returns_outcome_per_item(tmp_path: Path) -> None:
     assert "boom on 2" in str(outcomes[1].error)
 
 
+def test_map_collect_collects_exceptions_but_propagates_base_exceptions(tmp_path: Path) -> None:
+    """`on_error="collect"` collects ordinary Exceptions into Outcomes, but a process-control
+    BaseException (SystemExit/KeyboardInterrupt and the like) must propagate, not be swallowed."""
+
+    class Fatal(BaseException):
+        pass
+
+    ctx = _make_ctx(tmp_path)
+
+    def fn(n: int) -> dict:
+        if n == 2:
+            raise Fatal("fatal")
+        return {"n": n}
+
+    with pytest.raises(Fatal):
+        ctx.map(
+            "gen", [1, 2, 3], inputs=lambda n: {"n": n}, fn=fn, concurrency=1, on_error="collect"
+        )
+
+
 def test_map_runs_items_concurrently_up_to_concurrency(tmp_path: Path) -> None:
     ctx = _make_ctx(tmp_path)
     barrier = threading.Barrier(3, timeout=5)  # only clears if 3 items run at once

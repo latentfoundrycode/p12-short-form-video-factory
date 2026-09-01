@@ -1,5 +1,19 @@
 # TASK-SDK-3 — `ctx.map`, many steps of one family in parallel
 
+## REVISION 1 — `on_error="collect"` must catch `Exception`, not `BaseException`
+Cross-family review flagged that `collect` mode caught `BaseException`, which would swallow
+process-control exceptions (`SystemExit`, `KeyboardInterrupt`, `GeneratorExit`) into an `Outcome`
+instead of letting them propagate. Fix in `sdk/sfvf/context.py`:
+- In the collect path, catch **`Exception`** (not `BaseException`), so ordinary workflow failures are
+  collected into `Outcome`s while a `BaseException` propagates out of `ctx.map`.
+- Narrow the `Outcome.error` field type to `Exception | None` to match.
+The new test `test_map_collect_collects_exceptions_but_propagates_base_exceptions` covers this (it
+raises a `BaseException` subclass in one item and asserts `ctx.map(... on_error="collect")` propagates
+it rather than collecting it). Keep everything else unchanged. Change only `sdk/sfvf/context.py`.
+
+---
+
+
 ## One-line task and why
 Add `ctx.map(...)` — run many items of one step family concurrently, each a full cached step, results
 returned in input order. An episode of sixty independent shots should not take sixty times one shot's
