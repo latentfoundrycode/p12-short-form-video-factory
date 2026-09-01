@@ -10,7 +10,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from sfvf.context import Context, ContextFile, ContextPaths
 
 
@@ -127,10 +126,9 @@ def test_step_stores_and_restores_returned_files_by_content(tmp_path: Path) -> N
 
 def test_step_body_that_raises_is_not_cached(tmp_path: Path) -> None:
     ctx = _make_ctx(tmp_path)
-    with pytest.raises(RuntimeError, match="boom"):  # noqa: PT012
-        with ctx.step("gen", inputs={"n": 1}) as step:
-            assert step.cached is False
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError, match="boom"), ctx.step("gen", inputs={"n": 1}) as step:
+        assert step.cached is False
+        raise RuntimeError("boom")
     # The failed step must not have been cached.
     ctx2 = _make_ctx(tmp_path)
     with ctx2.step("gen", inputs={"n": 1}) as step:
