@@ -108,20 +108,22 @@ def test_step_version_bump_invalidates(tmp_path: Path) -> None:
         assert s.cached is False  # a version bump must not return the old result
 
 
-def test_step_stores_and_restores_returned_files_by_content(tmp_path: Path) -> None:
+def test_step_stores_and_restores_returned_files_video_relative(tmp_path: Path) -> None:
+    """SDK §5.5: returned paths are relative to the VIDEO folder (files are written under
+    ctx.artifacts, i.e. video/artifacts/…, and returned as e.g. "artifacts/final.mp4"); the
+    cache restores them at that video-relative location."""
     ctx = _make_ctx(tmp_path)
-    (ctx.artifacts / "final.mp4").write_bytes(b"FRAMES")
+    (ctx.artifacts / "final.mp4").write_bytes(b"FRAMES")  # lives at video/artifacts/final.mp4
     with ctx.step("render", inputs={"shot": 1}) as step:
-        step.set({"video": "final.mp4"})
+        step.set({"video": "artifacts/final.mp4"})  # video-relative, per §5.5
 
-    # Fresh run: artifacts empty, cache hit must restore the file into artifacts.
+    # Fresh run: remove the file, then a cache hit must restore it at the video-relative path.
     ctx2 = _make_ctx(tmp_path)
-    for leftover in ctx2.artifacts.iterdir():
-        leftover.unlink()
+    (ctx2.artifacts / "final.mp4").unlink()
     with ctx2.step("render", inputs={"shot": 1}) as step:
         assert step.cached is True
-        assert step.value == {"video": "final.mp4"}
-    assert (ctx2.artifacts / "final.mp4").read_bytes() == b"FRAMES"
+        assert step.value == {"video": "artifacts/final.mp4"}
+    assert (ctx2.paths.video / "artifacts" / "final.mp4").read_bytes() == b"FRAMES"
 
 
 def test_step_body_that_raises_is_not_cached(tmp_path: Path) -> None:

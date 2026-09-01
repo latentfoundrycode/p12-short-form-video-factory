@@ -1,5 +1,22 @@
 # TASK-SDK-2 — `ctx.step`, the cached step boundary
 
+## REVISION 1 — returned file paths are VIDEO-relative (SDK §5.5), not artifacts-relative
+Cross-family review caught that the first implementation (and the original test) treated returned
+file paths as relative to `ctx.artifacts`, but SDK §5.5 states they are **relative to the video
+folder**: files are written under `ctx.artifacts` (i.e. `video/artifacts/…`) and returned as e.g.
+`"artifacts/final.mp4"`. Fix the file handling in `ctx.step` accordingly:
+- Derive the files-to-store by walking `value` for strings that name a path **relative to
+  `self.paths.video`** (not `artifacts`) which exists as a file.
+- Restore with `StepCache.get(key, restore_into=self.paths.video)` (not `artifacts`), so a cached
+  result recreates files at their video-relative location.
+The updated test `test_step_stores_and_restores_returned_files_video_relative` covers this (it writes
+`video/artifacts/final.mp4`, returns `"artifacts/final.mp4"`, and asserts restore recreates it under
+the video folder). Everything else about `ctx.step` was correct and both reviewers verified it — keep it.
+Change only `sdk/sfvf/context.py`; do not modify the tests. Original brief below.
+
+---
+
+
 ## One-line task and why
 Add `ctx.step(...)` — the step boundary that consults the SDK-1 cache, returns a cached result
 instantly (body not run), otherwise runs the body and stores the result, and records a `step` event.
