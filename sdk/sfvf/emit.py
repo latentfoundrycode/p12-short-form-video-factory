@@ -27,3 +27,18 @@ def heartbeat(name: str, *, waiting_on: str, key: str | None = None) -> None:
     if key is not None:
         event["key"] = key
     emit(event)
+
+
+def decision(
+    kind: str,
+    chosen: str,
+    *,
+    alternatives: list[str] | None = None,
+    reason: str | None = None,
+) -> None:
+    event: dict[str, Any] = {"t": "decision", "kind": kind, "chosen": chosen}
+    if alternatives is not None:
+        event["alternatives"] = alternatives
+    if reason is not None:
+        event["reason"] = reason
+    emit(event)

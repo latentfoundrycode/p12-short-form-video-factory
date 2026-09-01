@@ -32,6 +32,7 @@ from app.core.records import (
     write_json_atomic,
     write_video,
 )
+from app.paths import CACHE_DIR
 from app.registry.schema import parse_manifest_toml
 
 type EnsureEnv = Callable[..., EnvResult]
@@ -67,6 +68,20 @@ class NotRunning:
 class StopAccepted:
     run_id: str
     mode: StopMode
+
+
+@dataclass(frozen=True)
+class _ContextWiring:
+    """Run-wide identity and cache values written into every context.json."""
+
+    workflow_id: str
+    run_id: str
+    workflow_version: str
+    video_count: int
+    cache_root: Path
+    workflow_dir: Path
+    dry_run: bool
+    step_concurrency: int
 
 
 @dataclass
@@ -151,6 +166,42 @@ def _video_refs(statuses: dict[int, VideoStatus]) -> list[VideoRef]:
     return [VideoRef(index=index, status=statuses[index]) for index in sorted(statuses)]
 
 
+def _make_context(
+    wiring: _ContextWiring,
+    *,
+    video: Path,
+    artifacts: Path,
+    steps: Path,
+    shared: Path,
+    video_index: int,
+    params: dict[str, Any],
+    previous: dict[str, Any] | None = None,
+    shared_payload: dict[str, Any] | None = None,
+) -> ContextFile:
+    return ContextFile(
+        workflow_version=wiring.workflow_version,
+        workflow_id=wiring.workflow_id,
+        run_id=wiring.run_id,
+        video_index=video_index,
+        video_count=wiring.video_count,
+        dry_run=wiring.dry_run,
+        step_concurrency=wiring.step_concurrency,
+        settings=params,
+        paths=ContextPaths(
+            video=video,
+            artifacts=artifacts,
+            steps=steps,
+            shared=shared,
+            cache=wiring.cache_root,
+            workflow=wiring.workflow_dir,
+        ),
+        instructions=[],
+        secrets={},
+        previous=previous,
+        shared=shared_payload,
+    )
+
+
 def _aggregate_status(
     statuses: Sequence[VideoStatus],
     *,
@@ -213,6 +264,9 @@ def run_request(
     popen: PopenFn = subprocess.Popen,
     silence_limit_default: float = DEFAULT_SILENCE_SECONDS,
     on_started: Callable[[str], None] | None = None,
+    cache_dir: Path | None = None,
+    dry_run: bool = False,
+    step_concurrency: int = 1,
 ) -> RunRequestResult:
     workflow_dir = workflow_dir.resolve()
     manifest = parse_manifest_toml((workflow_dir / "workflow.toml").read_text(encoding="utf-8"))
@@ -231,6 +285,18 @@ def run_request(
         if not isinstance(env, EnvReady):
             raise TypeError("ensure_env must return EnvReady or EnvBlocked")
         run_id, run_dir = allocate_run(workflow_id, runs_dir=runs_dir)
+        cache_root = ((cache_dir or CACHE_DIR) / workflow_id).resolve()
+        cache_root.mkdir(parents=True, exist_ok=True)
+        wiring = _ContextWiring(
+            workflow_id=workflow_id,
+            run_id=run_id,
+            workflow_version=workflow.version,
+            video_count=video_count,
+            cache_root=cache_root,
+            workflow_dir=workflow_dir,
+            dry_run=dry_run,
+            step_concurrency=step_concurrency,
+        )
         with _lock:
             _active[workflow_id] = run_id
         create_run_skeleton(run_dir, video_count)
@@ -261,6 +327,7 @@ def run_request(
                 state=state,
                 limits=limits,
                 silence_limit_default=silence_limit_default,
+                wiring=wiring,
             )
             if not ok:
                 if state.was_stopped():
@@ -298,6 +365,7 @@ def run_request(
             state=state,
             limits=limits,
             silence_limit_default=silence_limit_default,
+            wiring=wiring,
         )
     finally:
         with _lock:
@@ -479,6 +547,7 @@ def _run_prepare(
     state: _RunState,
     limits: dict[str, float],
     silence_limit_default: float,
+    wiring: _ContextWiring,
 ) -> tuple[bool, dict[str, Any] | None]:
     shared_dir = (run_dir / "shared").resolve()
     artifacts = shared_dir / "artifacts"
@@ -487,18 +556,14 @@ def _run_prepare(
     steps.mkdir(exist_ok=True)
     context_path = shared_dir / "context.json"
     result_path = shared_dir / "result.json"
-    context = ContextFile(
-        settings=params,
-        paths=ContextPaths(
-            video=shared_dir,
-            artifacts=artifacts,
-            steps=steps,
-            shared=shared_dir,
-        ),
-        instructions=[],
-        secrets={},
-        previous=None,
-        shared=None,
+    context = _make_context(
+        wiring,
+        video=shared_dir,
+        artifacts=artifacts,
+        steps=steps,
+        shared=shared_dir,
+        video_index=0,
+        params=params,
     )
     write_json_atomic(context_path, context.model_dump(mode="json"))
     proc = _start_runner(
@@ -548,6 +613,7 @@ def _run_videos(
     state: _RunState,
     limits: dict[str, float],
     silence_limit_default: float,
+    wiring: _ContextWiring,
 ) -> RequestRecord:
     workers = max(1, concurrency)
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -566,6 +632,7 @@ def _run_videos(
                 state=state,
                 limits=limits,
                 silence_limit_default=silence_limit_default,
+                wiring=wiring,
             )
             for index in range(1, video_count + 1)
         ]
@@ -597,6 +664,7 @@ def _run_one_video(
     state: _RunState,
     limits: dict[str, float],
     silence_limit_default: float,
+    wiring: _ContextWiring,
 ) -> None:
     source = format_video_dir(index, video_count)
     video_dir = (run_dir / source).resolve()
@@ -611,18 +679,15 @@ def _run_one_video(
             return
     started: str | None = None
     try:
-        context = ContextFile(
-            settings=params,
-            paths=ContextPaths(
-                video=video_dir,
-                artifacts=(video_dir / "artifacts").resolve(),
-                steps=(video_dir / ".steps").resolve(),
-                shared=(run_dir / "shared").resolve(),
-            ),
-            instructions=[],
-            secrets={},
-            previous=None,
-            shared=shared,
+        context = _make_context(
+            wiring,
+            video=video_dir,
+            artifacts=(video_dir / "artifacts").resolve(),
+            steps=(video_dir / ".steps").resolve(),
+            shared=(run_dir / "shared").resolve(),
+            video_index=index,
+            params=params,
+            shared_payload=shared,
         )
         write_json_atomic(video_dir / "context.json", context.model_dump(mode="json"))
         started = format_utc_z(utc_now())

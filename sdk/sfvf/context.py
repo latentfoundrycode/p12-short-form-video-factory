@@ -10,7 +10,7 @@ from typing import Any, Literal, TypeVar, cast, overload
 from pydantic import BaseModel, ConfigDict, Field
 
 from .cache import StepCache, step_key
-from .emit import emit, heartbeat, log, stage
+from .emit import decision, emit, heartbeat, log, stage
 
 _T = TypeVar("_T")
 _R = TypeVar("_R")
@@ -45,6 +45,10 @@ class ContextPaths(_ContextModel):
         default=None,
         description="The content-addressed cache root.",
     )
+    workflow: Path | None = Field(
+        default=None,
+        description="The workflow's own folder (read-only).",
+    )
 
 
 class ContextFile(_ContextModel):
@@ -57,6 +61,15 @@ class ContextFile(_ContextModel):
     workflow_version: str = Field(
         default="0",
         description="Workflow version used to key cached step results.",
+    )
+    workflow_id: str = Field(default="", description="The workflow's id.")
+    run_id: str = Field(default="", description="The run folder name.")
+    video_index: int = Field(default=0, description="1-based index of this video; 0 for prepare.")
+    video_count: int = Field(default=0, description="How many videos this request produces.")
+    dry_run: bool = Field(default=False, description="True when running with fake assets.")
+    step_concurrency: int = Field(
+        default=1,
+        description="User's parallel-steps setting for ctx.map.",
     )
     settings: dict[str, Any] = Field(description="Locked, validated parameters for this run.")
     paths: ContextPaths = Field(description="Directories the workflow should read and write.")
@@ -180,6 +193,15 @@ class Context:
         self.previous = file.previous
         self.shared = file.shared
         self.workflow_version = file.workflow_version
+        self.workflow_id = file.workflow_id
+        self.run_id = file.run_id
+        self.video_index = file.video_index
+        self.video_count = file.video_count
+        self.dry_run = file.dry_run
+        self.step_concurrency = file.step_concurrency
+        self.video_dir = file.paths.video
+        self.shared_dir = file.paths.shared
+        self.workflow_dir = file.paths.workflow
         self.artifacts = file.paths.artifacts
 
     def emit(self, event: dict[str, Any]) -> None:
@@ -193,6 +215,16 @@ class Context:
 
     def heartbeat(self, name: str, *, waiting_on: str, key: str | None = None) -> None:
         heartbeat(name, waiting_on=waiting_on, key=key)
+
+    def decision(
+        self,
+        *,
+        kind: str,
+        chosen: str,
+        alternatives: list[str] | None = None,
+        reason: str | None = None,
+    ) -> None:
+        decision(kind, chosen, alternatives=alternatives, reason=reason)
 
     def step(
         self,
