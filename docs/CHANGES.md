@@ -2,6 +2,29 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-01 — SDK-3: ctx.map, parallel steps of one family
+
+Third increment of the SDK/step-mechanism stage (Workflow SDK §4.7). `sdk/sfvf/context.py` gains
+`ctx.map(family, items, *, inputs, fn, label=None, concurrency=1, on_error="raise")`: each item runs
+as a full `ctx.step` (inheriting caching, file handling, and the `step` event), across a
+`ThreadPoolExecutor` bounded by `concurrency`, with results returned in INPUT order regardless of
+completion order. `on_error="raise"` returns `list[value]` and propagates the first failure;
+`on_error="collect"` returns `list[Outcome]` (`value`/`error`/`ok`). `sdk/sfvf/emit.py` now serializes
+write+flush under a module lock so the concurrent `step` events cannot tear a line in `events.jsonl`.
+
+**Supervisor technical decisions (recorded):**
+- **`on_error="collect"` catches `Exception`, not `BaseException`.** The first attempt caught
+  `BaseException`; the cross-family reviewer (GPT-5.6 Sol) flagged that this would swallow
+  process-control signals (`SystemExit`/`KeyboardInterrupt`/`GeneratorExit`). Corrected to `except
+  Exception` so those propagate; `Outcome.error` typed `Exception | None`. (The two reviewers split on
+  this — Opus judged the broad catch "defensible" for worker threads, Sol rejected it; the fix is
+  standard best practice and satisfies both.)
+- **Cancellation-between-items DEFERRED.** §4.7's "cancellation is honoured between item completions"
+  ties to the stop-sentinel mechanism, which is not wired at the SDK boundary yet. Deferred to a later
+  increment; recorded so it is not mistaken for missing.
+
+Both reviewers APPROVED the final diff; gate green (175 passed, 1 skipped).
+
 ## 2026-09-01 — SDK-2: ctx.step, the cached step boundary
 
 Second increment of the SDK/step-mechanism stage. `sdk/sfvf/context.py` gains `ctx.step(family, *,
