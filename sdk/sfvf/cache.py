@@ -35,7 +35,7 @@ def _canonicalize(value: object) -> object:
         return {_FILE_SHA256_MARK: _file_digest(value)}
     if isinstance(value, dict):
         pairs = [[_canonicalize(key), _canonicalize(item)] for key, item in value.items()]
-        pairs.sort(key=lambda pair: _canonical_json(pair[0]))
+        pairs.sort(key=_canonical_json)
         return pairs
     if isinstance(value, list):
         return [_canonicalize(item) for item in value]
@@ -108,14 +108,17 @@ class StepCache:
         if restore_into is not None:
             stored = raw.get("files", {})
             if isinstance(stored, dict):
-                confined: list[tuple[str, str]] = []
+                restore_root = restore_into.resolve()
+                confined: list[tuple[Path, str]] = []
                 for relative, digest in stored.items():
                     if not isinstance(relative, str) or not isinstance(digest, str):
                         continue
                     _reject_escaping_name(relative)
-                    confined.append((relative, digest))
-                for relative, digest in confined:
                     dest = restore_into / relative
+                    if not dest.resolve().is_relative_to(restore_root):
+                        raise ValueError(f"cache restore path escapes restore_into: {relative}")
+                    confined.append((dest, digest))
+                for dest, digest in confined:
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(self._blob_path(digest), dest)
         return raw["value"]
