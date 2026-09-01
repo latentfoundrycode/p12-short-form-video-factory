@@ -134,3 +134,39 @@ def test_cache_rejects_file_names_that_escape_restore_into(tmp_path: Path) -> No
     # Nothing escaped the cache root.
     assert not (tmp_path / "escape.bin").exists()
     assert not (tmp_path / "outside.bin").exists()
+
+
+def test_dict_keyed_by_content_identical_paths_is_order_independent(tmp_path: Path) -> None:
+    """Two distinct Path keys whose files have identical content canonicalize identically;
+    the step key must not depend on their insertion order (a lexical sort tie must not
+    fall back to insertion order)."""
+    a = tmp_path / "a" / "k.bin"
+    a.parent.mkdir()
+    a.write_bytes(b"IDENTICAL")
+    b = tmp_path / "b" / "k.bin"
+    b.parent.mkdir()
+    b.write_bytes(b"IDENTICAL")
+    assert step_key("1", "gen", {a: 1, b: 2}) == step_key("1", "gen", {b: 2, a: 1})
+
+
+def test_restore_refuses_to_follow_a_symlink_out_of_restore_into(tmp_path: Path) -> None:
+    """A lexically-clean file name must still not escape via a pre-existing symlink under
+    restore_into (resolve + containment check, mirroring the 005-3 file server)."""
+    cache = StepCache(tmp_path / "cache")
+    src = tmp_path / "src.bin"
+    src.write_bytes(b"SECRET-BYTES")
+    key = step_key("1", "f", {"x": 1})
+    cache.put(key, {"v": 1}, files={"link/foo.bin": src})  # name is lexically confined
+
+    restore = tmp_path / "restore"
+    restore.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    try:
+        (restore / "link").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("cannot create symlinks in this environment")
+
+    with pytest.raises(ValueError):
+        cache.get(key, restore_into=restore)
+    assert not (outside / "foo.bin").exists()  # nothing written through the symlink

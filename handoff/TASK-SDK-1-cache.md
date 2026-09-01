@@ -1,5 +1,29 @@
 # TASK-SDK-1 — Content-addressed step cache (SDK side)
 
+## REVISION 2 — two more targeted fixes (approved extra re-delegation)
+Cross-family review surfaced two further edge cases on the corrected version; two new tests cover
+them (`test_dict_keyed_by_content_identical_paths_is_order_independent` fails now;
+`test_restore_refuses_to_follow_a_symlink_out_of_restore_into` skips where symlinks are unavailable).
+Fix `sdk/sfvf/cache.py` so the whole test file passes, keeping everything already working:
+
+1. **Restore must not follow a symlink out of `restore_into`.** `_reject_escaping_name` is only a
+   LEXICAL check; a pre-existing symlink under `restore_into` (e.g. `restore_into/link` → elsewhere)
+   still lets a lexically-clean name like `link/foo.bin` escape when `shutil.copyfile` follows it. In
+   `get`, for each stored file compute the destination and verify it stays inside `restore_into` by
+   **resolving** it and checking containment — mirror increment 005-3's file server exactly:
+   `dest.resolve()` (or its parent) must be relative to `restore_into.resolve()` (`Path.is_relative_to`);
+   otherwise raise `ValueError` and write nothing. This is a **consistency fix that brings the cache
+   into line with the project's existing path-confinement standard, not new policy.**
+2. **Break canonical-key ties deterministically.** When two dict keys canonicalize identically (e.g.
+   two distinct `Path` keys whose files have identical content), sorting the pair-list by the key alone
+   ties and falls back to insertion order. Sort by the **whole `[canonical_key, canonical_value]` pair**
+   (i.e. by `_canonical_json(pair)`), so order-independence holds even for that degenerate case.
+
+Keep the change confined to `sdk/sfvf/cache.py`; do not modify the tests. REVISION 1 (already done) and
+the original brief follow.
+
+---
+
 ## REVISION 1 — required fixes (cross-family Review B REJECTed the first attempt)
 The first implementation was correct on the happy path but had three real defects the reviewer test
 now covers (all three currently FAIL). Fix `sdk/sfvf/cache.py` so the whole test file passes, keeping
