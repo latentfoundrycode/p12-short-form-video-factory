@@ -60,8 +60,12 @@ render(composition_html, *, duration_s) -> str
      diagnostics. On a non-zero exit raise a `RuntimeError` with the command + captured output. Keep only a
      **large safety timeout** (env `SFVF_HYPERFRAMES_TIMEOUT_S`, default e.g. 1800) — NOT a 300s cap that
      would fight the supervisor's silence limit and the workflow's manifest `[[limits]]` for the render
-     family; on timeout, kill the child and raise with whatever output was captured (decode bytes with
-     `errors="replace"` if needed). FFmpeg and the browser are already present.
+     family; on timeout, **kill the whole process tree** and raise with whatever output was captured. **`proc.kill()`
+     only kills Node — on Windows, HyperFrames' Chrome/FFmpeg descendants would be orphaned (ROUND-5 FIX).
+     Mirror `app/core/proc.py::kill_tree` SDK-native (the SDK must not import `app`):** on `win32`,
+     `subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, check=False,
+     timeout=15)`; otherwise `proc.kill()`; then `proc.wait(timeout=5)` (suppressing `TimeoutExpired`).
+     FFmpeg and the browser are already present.
   4. Return the video-relative POSIX path (`"artifacts/render-<sha>.mp4"`).
 - 1080×1920 @ 30fps is the house format (matches `finalize` and A-6). No cost event.
 

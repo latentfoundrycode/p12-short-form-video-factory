@@ -19,7 +19,9 @@ over HTTP, so a `file://` base cannot reach them. The readiness signal is regist
 clobbers a timeline the composition registers itself. The render streams the child's output and **emits
 heartbeats** so the supervisor's silence watchdog (§2.8) never kills a legitimately slow render (as the
 polling media adapters do, §6.3); its safety timeout is a large, env-configurable cap rather than one that
-fights the silence limit or the manifest render limit.
+fights the silence limit or the manifest render limit. On a timeout it kills the **whole process tree**
+(mirroring `kill_tree` — `taskkill /F /T` on Windows), so HyperFrames' Chrome/FFmpeg descendants aren't
+orphaned.
 
 **Recorded review calls (cross-family reviewer, split resolved by the supervisor):** (1) the observation
 that `render`'s filename hash keys only on `(html, duration_s)` is **not a cache defect** — that hash is the
