@@ -58,9 +58,13 @@ In `_run`, after the entry call (you already hold the constructed `ctx`), branch
   `Result` case is new.
 - `_result_event(result, ctx)` builds `{"t": "result", ...}` with:
   - `"video"`: the `result.video` path **relative to `ctx.paths.video`**, as a POSIX string (forward
-    slashes). If `result.video` is relative or already under the video folder, relativise it
-    (`Path.is_relative_to` / `Path.relative_to`) and emit `.as_posix()`; if it is not under the video
-    folder, fall back to `str(result.video)` rather than raising.
+    slashes) — but **normalise (`resolve()`) before the containment check**, so a `..` component cannot
+    slip a path out of the folder while still passing a *lexical* `is_relative_to`. Concretely: let
+    `root = ctx.paths.video.resolve()`; let `candidate = result.video if result.video.is_absolute() else
+    root / result.video`; `resolved = candidate.resolve()`. If `resolved.is_relative_to(root)`, emit
+    `resolved.relative_to(root).as_posix()`; otherwise fall back to `str(resolved)` (an absolute path)
+    rather than raising or emitting an escaping `"../…"` string. This mirrors the project's resolve-then-
+    confine path standard (SDK-1 cache restore; the file-server `safe_join`).
   - `"cover_frame_s"`: always included (it has a default).
   - `"caption"`, `"hashtags"`, `"notes"`, `"extra"`: included only when not `None` (omit a `None` field
     rather than emitting `null`).

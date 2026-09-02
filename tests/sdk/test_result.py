@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 from sfvf import Result
-from sfvf.context import ContextFile, ContextPaths
-from sfvf.runner import _run
+from sfvf.context import Context, ContextFile, ContextPaths
+from sfvf.runner import _result_event, _run
 
 STUBS = Path(__file__).resolve().parent.parent / "stubs"
 
@@ -83,3 +83,18 @@ def test_runner_emits_result_event_from_returned_result(
     assert event["notes"] == "n"
     assert event["extra"] == {"k": 1}
     assert event["cover_frame_s"] == 1.0
+
+
+def test_result_event_confines_escaping_video_path(tmp_path: Path) -> None:
+    # A video path that escapes the video folder via ".." must be normalised before
+    # the containment check, so it never emits as a relative "../…" path (which would
+    # both misrepresent the file and defeat path confinement). It falls back to an
+    # absolute path instead.
+    video_dir = tmp_path / "01"
+    video_dir.mkdir()
+    ctx = Context(_context_file(video_dir))
+    escaping = video_dir / ".." / "outside.mp4"
+    event = _result_event(Result(video=escaping), ctx)
+    assert Path(event["video"]).is_absolute()
+    assert not event["video"].startswith("..")
+    assert Path(event["video"]) == escaping.resolve()
