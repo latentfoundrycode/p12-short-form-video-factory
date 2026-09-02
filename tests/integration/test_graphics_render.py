@@ -7,6 +7,7 @@ workflow's HTML is wrapped into a minimal HyperFrames project and rendered to a 
 MP4. Skipped where the pinned toolchain (tools/hyperframes, B-1a) is not installed.
 """
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -150,6 +151,23 @@ def test_render_runs_in_non_dry_mode(tmp_path: Path) -> None:
     out = _render(video_dir, _RED_HTML, 1.0, dry_run=False)
     clip = video_dir / out
     assert probe(clip).duration_s > 0
+
+
+def test_render_emits_heartbeats(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # A blocking render must emit heartbeats so the supervisor's silence watchdog (§2.8,
+    # as the polling media adapters do per §6.3) doesn't kill a legitimately slow render.
+    video_dir = tmp_path / "01"
+    video_dir.mkdir()
+    _render(video_dir, _RED_HTML, 1.0)
+    events = []
+    for line in capsys.readouterr().out.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("{"):
+            try:
+                events.append(json.loads(stripped))
+            except ValueError:
+                continue
+    assert any(e.get("t") == "heartbeat" for e in events)
 
 
 def test_render_is_deterministic_across_video_folders(tmp_path: Path) -> None:

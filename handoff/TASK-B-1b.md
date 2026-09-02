@@ -51,13 +51,17 @@ render(composition_html, *, duration_s) -> str
        "bin" / "hyperframes.mjs"` (the SDK is editable-installed from `sdk/`, so `parents[3]` is the repo
        root). If neither exists, raise a clear `RuntimeError` naming the missing toolchain and the
        `npm ci` / `tools/hyperframes` install hint.
-  3. Run it: `node <entry> render <project_dir> -o <dest> -f 30 --quiet`, with env
-     `HYPERFRAMES_SKIP_SKILLS=1` merged into `os.environ`, `check=True`, `capture_output=True`, `text=True`,
-     a generous `timeout` (e.g. 300s). On failure raise a `RuntimeError` including the command and captured
-     stderr (mirror `sdk/sfvf/_ffmpeg.py`'s `_run` style). **On `TimeoutExpired`, decode `exc.stderr` if it
-     is `bytes` (`.decode(errors="replace")`) rather than dropping it (ROUND-2 FIX, P2)** — in text mode
-     `TimeoutExpired.stderr` can still be `bytes`, and discarding it loses the renderer's diagnostics.
-     FFmpeg and the browser are already present.
+  3. Run it: `node <entry> render <project_dir> -o <dest> -f 30 --quiet`, env `HYPERFRAMES_SKIP_SKILLS=1`
+     merged into `os.environ`. **Stream the child's output and emit a heartbeat as it renders (ROUND-4 FIX,
+     P1b).** Use `subprocess.Popen` (merge stderr into stdout, `text=True`), read stdout line by line, and
+     call `current_context().heartbeat("render", waiting_on="hyperframes")` on each line (a throttle of ~1
+     line/sec is fine) — so the supervisor's 300s silence watchdog (§2.8) does not kill a legitimately slow
+     render, exactly as the polling media adapters heartbeat (§6.3). Accumulate the streamed output for
+     diagnostics. On a non-zero exit raise a `RuntimeError` with the command + captured output. Keep only a
+     **large safety timeout** (env `SFVF_HYPERFRAMES_TIMEOUT_S`, default e.g. 1800) — NOT a 300s cap that
+     would fight the supervisor's silence limit and the workflow's manifest `[[limits]]` for the render
+     family; on timeout, kill the child and raise with whatever output was captured (decode bytes with
+     `errors="replace"` if needed). FFmpeg and the browser are already present.
   4. Return the video-relative POSIX path (`"artifacts/render-<sha>.mp4"`).
 - 1080×1920 @ 30fps is the house format (matches `finalize` and A-6). No cost event.
 

@@ -15,7 +15,19 @@ makes real composed video appear at zero cost with no live keys. The toolchain e
 `tools/hyperframes/`). Deterministic in `(html, duration_s)`; the filename hash is unchanged from A-5. The renderer copies the
 video's `artifacts/` into the temporary project so a composition's video-relative asset references (e.g. the
 safe-zone CSS it `@import`s) actually resolve during the headless render — HyperFrames serves the project
-over HTTP, so a `file://` base cannot reach them.
+over HTTP, so a `file://` base cannot reach them. The readiness signal is registered with `||` so it never
+clobbers a timeline the composition registers itself. The render streams the child's output and **emits
+heartbeats** so the supervisor's silence watchdog (§2.8) never kills a legitimately slow render (as the
+polling media adapters do, §6.3); its safety timeout is a large, env-configurable cap rather than one that
+fights the silence limit or the manifest render limit.
+
+**Recorded review calls (cross-family reviewer, split resolved by the supervisor):** (1) the observation
+that `render`'s filename hash keys only on `(html, duration_s)` is **not a cache defect** — that hash is the
+output *filename* for dedup, not the step cache key; caching is `ctx.step` on the workflow's inputs, and
+SFVF assets are content-addressed (a content change changes the asset's path, hence the html, hence the
+key), so stale hits don't arise under the convention. (2) GSAP is loaded from the jsDelivr CDN (matching
+HyperFrames' own template), so a render needs network egress; this works in every environment we run (CI +
+local) but is a **deferred hardening item** — serve/vendor GSAP locally so offline renders don't stall.
 `captions`/`safe_zone_css`/`check` are unchanged (still SFVF/stub; `check`→HyperFrames lands in B-1c). The
 render tests moved to `tests/integration/test_graphics_render.py` (skipped where the toolchain isn't
 installed; a sampled frame proves the supplied HTML actually rendered).
