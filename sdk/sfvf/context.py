@@ -188,6 +188,7 @@ class Context:
 
     def __init__(self, file: ContextFile) -> None:
         self.settings = file.settings
+        self.params = file.settings
         self.paths = file.paths
         self.instructions = file.instructions
         self.previous = file.previous
