@@ -2,6 +2,26 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-02 — A-6: `sfvf.finalize` — the mandatory last step
+
+`finalize(video, audio=None, captions=None)` (SDK §6.9) is the required final call of every workflow. It
+applies the house format with FFmpeg — H.264, the default vertical 1080×1920 @ 30fps, `-14` LUFS loudness —
+muxing the optional narration and captions, and returns the finished file's video-relative path
+(`"final.mp4"`). It is REAL in both dry and non-dry modes (FFmpeg is local/free), and reachable as both
+`sfvf.finalize` and `media.finalize`. Its self-review is **structural** for now: the output must be a valid
+file of the house resolution with the expected streams present (video always; audio iff narration given;
+subtitles iff captions given), and a failure raises so the video is marked failed (SDK §3.4/§5.8). Input
+paths are resolved-then-confined to the video folder (rejecting `..` escapes), matching the project's
+path-confinement standard.
+
+**Scoping decisions (recorded):**
+- **Content self-review checks are DEFERRED to Stage E.** SDK §5.8's silence/clipping, black-frame and
+  slideshow detection can't pass on dry-run stubs (silent audio, static colour-bars) and need real assets
+  and the composition DOM. A-6 does the structural checks; the full §5.8 suite lands with records/review.
+- **House format is fixed (not yet `[output]`-driven).** `[output]` (aspect/fps/safe_zone) is not in the
+  runtime Context yet, so finalize uses the PRD default (vertical 1080×1920 @ 30). Per-`[output]` sizing is
+  deferred, like `safe_zone_css`.
+
 ## 2026-09-02 — A-5: `sfvf.media.graphics` dry-run stubs (composition)
 
 `sfvf.media.graphics` (SDK §6.5) is stubbed with FFmpeg while the real HyperFrames provider is deferred to
