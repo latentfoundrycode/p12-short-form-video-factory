@@ -166,7 +166,8 @@ def _index_html(composition_html: str, duration_s: float) -> str:
         "    </div>\n"
         "    <script>\n"
         "      window.__timelines = window.__timelines || {};\n"
-        '      window.__timelines["main"] = gsap.timeline({ paused: true });\n'
+        '      window.__timelines["main"] =\n'
+        '        window.__timelines["main"] || gsap.timeline({ paused: true });\n'
         "    </script>\n"
         "  </body>\n"
         "</html>\n"
