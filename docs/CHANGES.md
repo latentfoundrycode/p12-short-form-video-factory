@@ -2,6 +2,21 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-02 — Docs: SDK spec aligned to the JSON-native return-type shipping decision
+
+`docs/SFVF_Workflow_SDK.md` (author-facing, no code) brought in line with what Stage A actually shipped
+(A-3/A-4/A-5). §5.5 is rewritten as the governing statement of what a workflow gets back: a **file comes
+back as a video-relative path string** (not an open `Path`), and a **structured result (`Source`, `Speech`,
+…) comes back as a JSON dict read by subscript** (`speech["duration"]`, not `speech.duration`) — because
+both must survive the JSON step cache. The one exception is the `Result` `run()` returns: it is
+*constructed* (`Result(video=…)`) and handed to the chassis directly, not cached, so `Result.video` is a
+real `Path`. The `-> Path` annotations in §6 are noted as shorthand for "a video-relative path string per
+§5.5". §6.1 notes each `Source` is a subscript dict; §6.4 rewrites `Speech` as a dict
+(`speech["audio"]`/`["timings"]`/`["duration"]`); the §11.1 worked example now uses subscript (its
+`Result(...)` construction left as-is). The unbuilt Stage-B media functions' `-> Path` signatures are left
+alone (their exact shape settles when built), and the `finalize`→`Result` string/`Path` seam remains a
+tracked SDK follow-up.
+
 ## 2026-09-02 — A-7: the example workflow — Stage A complete
 
 `workflows/explainer/` is the first real workflow: a composition explainer that exercises the whole
