@@ -2,6 +2,33 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-02 — A-3: `sfvf.agents` dry-run stubs (LLM + research)
+
+`sfvf.agents` (SDK §6.1) is now importable with `llm(prompt, *, agent, model, schema=None, attach=None)`
+and `research(query) -> list[Source]`, plus the `Source` type. In dry-run they return deterministic free
+stubs — placeholder text (or a shaped dict when a `schema` is asked for), and a canned list of `Source`s —
+so a workflow's structure can be exercised at zero cost (SDK §10). They read the ambient Context (A-1) to
+decide dry-run, so calling one outside a running workflow raises. The real OpenRouter adapter is Stage B,
+so the non-dry-run path raises `NotImplementedError` rather than silently returning nothing.
+
+**Scoping decision (recorded):** cost recording is DEFERRED to Stage C. SDK §10 says a dry run records what
+it *would* have cost, but that needs the budget engine's meters and estimation (Stage C), which own the
+cost/meter event schema. Inventing a cost event here would pre-commit a schema Stage C should define, so the
+A-stage stubs return free stubs without emitting cost — recorded so the omission is deliberate, not missed.
+
+**Design decision (recorded) — provided-function results are JSON-native.** SDK §5.5 requires step results
+to be JSON-serializable ("return their paths relative to the video folder"), and the documented pattern
+caches provided-function results via `ctx.step` (`step.set(agents.research(...))`). A rich attribute-access
+object (dataclass) cannot round-trip through the JSON step cache without a type-reconstruction protocol —
+a much larger SDK change. So provided-function return types are **JSON-native**: `Source` is a `TypedDict`
+(a plain dict at runtime; subscript access `source["title"]`), and `research()`/structured `llm()` return
+JSON-serializable data. This reconciles §5.5 with §6.1/§11.1's *illustrative* attribute-access pseudocode,
+and sets the pattern the later media stubs (e.g. `Speech`, A-4) follow — a `Speech` result will likewise be
+a TypedDict whose `audio` is a video-relative path string the cache stores by content. Flagged for the
+owner at the Stage A/B boundary in case attribute-access rich types (with a serializer) are preferred.
+(Found by the cross-family reviewer: raw dataclasses broke the documented `step.set(research(...))` cache
+path; and the structured stub ignored the requested schema.)
+
 ## 2026-09-02 — A-2: the `Result` a workflow returns
 
 `sfvf.Result` (SDK §3.3) is now a public type a workflow's `run()` returns to report its finished video:
