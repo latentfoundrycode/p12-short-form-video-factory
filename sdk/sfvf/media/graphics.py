@@ -16,10 +16,10 @@ _FPS = 30
 
 _SAFE_ZONE_CSS = """\
 .safe-zone {
-  padding-top: 12.5%;
-  padding-right: 5%;
-  padding-bottom: 18%;
-  padding-left: 5%;
+  padding-top: 10%;
+  padding-right: 15%;
+  padding-bottom: 15%;
+  padding-left: 0;
 }
 """
 
@@ -36,7 +36,7 @@ def render(composition_html: str, *, duration_s: float) -> str:
             "media.graphics.render: the HyperFrames adapter arrives in Stage B; "
             "run with dry_run=True"
         )
-    sha = _sha8(f"{composition_html}{duration_s}")
+    sha = _sha8([composition_html, duration_s])
     dest, rel = _artifact(ctx, f"render-{sha}.mp4")
     color_bars(dest, duration_s=duration_s, width=_WIDTH, height=_HEIGHT, fps=_FPS)
     return rel
@@ -49,7 +49,7 @@ def captions(audio: str, timings: list[WordTiming], style: str) -> str:
             "media.graphics.captions: the HyperFrames adapter arrives in Stage B; "
             "run with dry_run=True"
         )
-    sha = _sha8(f"{audio}{json.dumps(timings, sort_keys=True)}{style}")
+    sha = _sha8([audio, timings, style])
     dest, rel = _artifact(ctx, f"captions-{sha}.srt")
     dest.write_text(_srt_from_timings(timings), encoding="utf-8")
     return rel
@@ -74,8 +74,8 @@ def check(composition_html: str, *, safe_zone: bool = True) -> list[Violation]:
     return []
 
 
-def _sha8(material: str) -> str:
-    return hashlib.sha256(material.encode()).hexdigest()[:8]
+def _sha8(payload: object) -> str:
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:8]
 
 
 def _artifact(ctx: Context, filename: str) -> tuple[Path, str]:
