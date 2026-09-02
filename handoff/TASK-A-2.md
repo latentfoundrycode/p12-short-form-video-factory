@@ -1,0 +1,92 @@
+# TASK A-2 — `Result` + runner result-event emission
+
+**Builder:** Cursor. **Product code only.** Do NOT modify, add, or delete anything under `tests/`
+(including `tests/stubs/`), `docs/`, or `handoff/`. The reviewer contract (`tests/sdk/test_result.py`)
+and the stub `tests/stubs/returns_result/` are FROZEN — make them pass by changing product code.
+
+Second increment of **Stage A**. Introduces the `Result` a workflow's `run()` returns (SDK §3.3) and
+teaches the SDK runner to turn a returned `Result` into the `result` event the chassis already records —
+with the video path made relative to the video folder (SDK §5.5). Everything a workflow needs to report a
+finished video, without hand-emitting an event.
+
+Files you may touch: `sdk/sfvf/result.py` (new), `sdk/sfvf/__init__.py`, `sdk/sfvf/runner.py`. Do not add
+dependencies.
+
+## 1. `sdk/sfvf/result.py` (new) — the `Result` type
+
+A dataclass with the fields of SDK §3.3:
+
+```python
+from __future__ import annotations
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+@dataclass
+class Result:
+    video: Path
+    caption: str | None = None
+    hashtags: list[str] | None = None
+    cover_frame_s: float = 1.0
+    notes: str | None = None
+    extra: dict[str, Any] | None = None
+```
+
+(`video` is required and first; the rest are optional with the defaults shown — `cover_frame_s` defaults
+to `1.0`.)
+
+## 2. `sdk/sfvf/__init__.py` — export it
+
+Add `Result` to the imports and to `__all__`, alongside the existing `Context`/`ContextFile`/`ContextPaths`.
+
+## 3. `sdk/sfvf/runner.py` — emit a `result` event from a returned `Result`
+
+The video entrypoint runs without a `--result` file (the supervisor passes none): its finished video is
+reported through an emitted `result` event, which the supervisor already parses. So when the entry
+function returns a `Result`, emit one `result` event and do **not** also try to write it to a result file.
+
+In `_run`, after the entry call (you already hold the constructed `ctx`), branch on the return:
+
+```python
+    if isinstance(returned, Result):
+        emit(_result_event(returned, ctx))
+    elif result_path is not None:
+        _write_result(result_path, _capture_return(returned))
+```
+
+- Keep the existing `result_path` path for `prepare` (which returns a dict / None) exactly as-is; only the
+  `Result` case is new.
+- `_result_event(result, ctx)` builds `{"t": "result", ...}` with:
+  - `"video"`: the `result.video` path **relative to `ctx.paths.video`**, as a POSIX string (forward
+    slashes). If `result.video` is relative or already under the video folder, relativise it
+    (`Path.is_relative_to` / `Path.relative_to`) and emit `.as_posix()`; if it is not under the video
+    folder, fall back to `str(result.video)` rather than raising.
+  - `"cover_frame_s"`: always included (it has a default).
+  - `"caption"`, `"hashtags"`, `"notes"`, `"extra"`: included only when not `None` (omit a `None` field
+    rather than emitting `null`).
+- Use the existing `emit` (already imported in `runner.py`).
+
+Backward compatibility: a workflow that returns `None` (and emits its own `result` event, as the existing
+stubs do) must behave exactly as before — no `Result`, no new emission.
+
+## Acceptance (the frozen contract `tests/sdk/test_result.py`)
+
+- `Result` field defaults: `caption`/`hashtags`/`notes`/`extra` default `None`, `cover_frame_s` defaults
+  `1.0`; all fields carry through when set.
+- Running `tests/stubs/returns_result` through `runner._run` (entrypoint, `result_path=None`) emits exactly
+  one `result` event with `video == "artifacts/final.mp4"` (video-relative, POSIX), `caption == "hi"`,
+  `hashtags == ["a", "b"]`, `notes == "n"`, `extra == {"k": 1}`, `cover_frame_s == 1.0`.
+
+## Full local gate (all six must pass — run from the worktree venv)
+
+```
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m ruff format --check .
+.\.venv\Scripts\python.exe -m mypy
+npm --prefix frontend run lint
+npm --prefix frontend run typecheck
+.\.venv\Scripts\python.exe -m pytest
+```
+
+Do not weaken, skip, or edit any test to make the gate pass. Existing runner/supervisor tests (stubs that
+return `None` and emit their own result event) must still pass unchanged.
