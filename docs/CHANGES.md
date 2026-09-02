@@ -2,6 +2,18 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-02 — B-1a: HyperFrames render toolchain (Stage B begins)
+
+Stage B (the provider layer) starts with the local, zero-cost renderers. This lands the pinned HeyGen
+**HyperFrames** toolchain (`heygen-com/hyperframes`, npm `hyperframes` at an exact version under
+`tools/hyperframes/`) that the `media.graphics` adapter will render real HTML→video with. CI on
+windows-latest installs Node + the toolchain + its headless-Chrome browser and runs a lightweight smoke
+render (a 1s 1080×1920 composition → a valid MP4) to prove the least-CI-testable surface works; on machines
+without the toolchain installed the render test skips, keeping the suite green. Sourcing is Option A — the
+published package, pinned via `package-lock.json`; nothing is cloned or vendored. No auth is used (HeyGen
+cloud/auth is not touched; local rendering is free). This is infrastructure only; the adapter wires onto it
+next (B-1b).
+
 ## 2026-09-02 — Docs: SDK spec aligned to the JSON-native return-type shipping decision
 
 `docs/SFVF_Workflow_SDK.md` (author-facing, no code) brought in line with what Stage A actually shipped

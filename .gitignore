@@ -21,6 +21,7 @@ __pycache__/
 .pytest_cache/
 
 node_modules/
+tools/hyperframes/node_modules/
 frontend/dist/
 app/web/*
 !app/web/.gitkeep

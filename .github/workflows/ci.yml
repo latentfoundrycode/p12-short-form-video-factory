@@ -30,10 +30,10 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
-      - name: Set up Node 20
+      - name: Set up Node 22
         uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -51,6 +51,14 @@ jobs:
       - name: Install FFmpeg
         id: deps_ffmpeg
         run: choco install ffmpeg -y --no-progress
+
+      - name: Install HyperFrames toolchain
+        id: deps_hf
+        env:
+          HYPERFRAMES_SKIP_SKILLS: "1"
+        run: |
+          npm ci --prefix tools/hyperframes
+          node tools/hyperframes/node_modules/hyperframes/bin/hyperframes.mjs browser ensure
 
       # --- The six-command gate. Each check runs even if a prior CHECK failed, so
       # --- one CI run surfaces ALL failing checks at once; but every check is skipped
@@ -78,5 +86,7 @@ jobs:
         run: npm run typecheck
 
       - name: pytest
-        if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' && steps.deps_ffmpeg.conclusion == 'success' }}
+        if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' && steps.deps_ffmpeg.conclusion == 'success' && steps.deps_hf.conclusion == 'success' }}
+        env:
+          HYPERFRAMES_SKIP_SKILLS: "1"
         run: python -m pytest

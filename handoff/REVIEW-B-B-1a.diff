@@ -1,0 +1,68 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index c4a2559..e350e10 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -30,10 +30,10 @@ jobs:
+             requirements.txt
+             requirements-dev.txt
+ 
+-      - name: Set up Node 20
++      - name: Set up Node 22
+         uses: actions/setup-node@v7
+         with:
+-          node-version: "20"
++          node-version: "22"
+           cache: npm
+           cache-dependency-path: frontend/package-lock.json
+ 
+@@ -52,6 +52,14 @@ jobs:
+         id: deps_ffmpeg
+         run: choco install ffmpeg -y --no-progress
+ 
++      - name: Install HyperFrames toolchain
++        id: deps_hf
++        env:
++          HYPERFRAMES_SKIP_SKILLS: "1"
++        run: |
++          npm ci --prefix tools/hyperframes
++          node tools/hyperframes/node_modules/hyperframes/bin/hyperframes.mjs browser ensure
++
+       # --- The six-command gate. Each check runs even if a prior CHECK failed, so
+       # --- one CI run surfaces ALL failing checks at once; but every check is skipped
+       # --- if either install step failed, and any check failure fails the job. ---
+@@ -78,5 +86,7 @@ jobs:
+         run: npm run typecheck
+ 
+       - name: pytest
+-        if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' && steps.deps_ffmpeg.conclusion == 'success' }}
++        if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' && steps.deps_ffmpeg.conclusion == 'success' && steps.deps_hf.conclusion == 'success' }}
++        env:
++          HYPERFRAMES_SKIP_SKILLS: "1"
+         run: python -m pytest
+diff --git a/.gitignore b/.gitignore
+index 963cc1c..b18266b 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -21,6 +21,7 @@ __pycache__/
+ .pytest_cache/
+ 
+ node_modules/
++tools/hyperframes/node_modules/
+ frontend/dist/
+ app/web/*
+ !app/web/.gitkeep
+\ No newline at end of file
+diff --git a/tools/hyperframes/package.json b/tools/hyperframes/package.json
+new file mode 100644
+index 0000000..761681e
+--- /dev/null
++++ b/tools/hyperframes/package.json
+@@ -0,0 +1,8 @@
++{
++  "name": "sfvf-hyperframes-toolchain",
++  "private": true,
++  "description": "Pinned HyperFrames renderer toolchain used by the local media.graphics adapter.",
++  "dependencies": {
++    "hyperframes": "0.8.26"
++  }
++}
