@@ -9,8 +9,8 @@ teaches the SDK runner to turn a returned `Result` into the `result` event the c
 with the video path made relative to the video folder (SDK §5.5). Everything a workflow needs to report a
 finished video, without hand-emitting an event.
 
-Files you may touch: `sdk/sfvf/result.py` (new), `sdk/sfvf/__init__.py`, `sdk/sfvf/runner.py`. Do not add
-dependencies.
+Files you may touch: `sdk/sfvf/result.py` (new), `sdk/sfvf/__init__.py`, `sdk/sfvf/runner.py`, and
+`app/core/supervisor.py` (see §4). Do not add dependencies.
 
 ## 1. `sdk/sfvf/result.py` (new) — the `Result` type
 
@@ -69,7 +69,40 @@ In `_run`, after the entry call (you already hold the constructed `ctx`), branch
 Backward compatibility: a workflow that returns `None` (and emits its own `result` event, as the existing
 stubs do) must behave exactly as before — no `Result`, no new emission.
 
-## Acceptance (the frozen contract `tests/sdk/test_result.py`)
+## 4. `app/core/supervisor.py` — persist the whole Result, not just video/caption
+
+The runner emits every Result field in the `result` event, but the supervisor currently keeps only two of
+them when it records the video:
+
+```python
+            if event.get("t") == "result":
+                captured = {key: event[key] for key in ("video", "caption") if key in event}
+```
+
+This drops `hashtags`, `cover_frame_s`, `notes`, and `extra` from `video.json` — but SDK §3.3 records
+`extra` verbatim and displays `notes`, and sequence continuity (`ctx.previous`) reads a prior video's
+`Result.extra`, so the whole Result must survive. Widen the capture to retain every field of the result
+event except its type tag:
+
+```python
+            if event.get("t") == "result":
+                captured = {key: value for key, value in event.items() if key != "t"}
+```
+
+`VideoRecord.result` is already a free-form `dict[str, Any] | None`, so no record-schema change is needed.
+This stays backward compatible: a workflow (or existing stub) that emits only `video`/`caption` still yields
+exactly `{"video": ..., "caption": ...}`.
+
+## Acceptance (the frozen contract)
+
+Two frozen test files:
+- `tests/sdk/test_result.py` — the runner side (below).
+- `tests/core/test_result_persistence.py` — the supervisor side: running `tests/stubs/returns_result`
+  through `run_request` (dry-run) yields `video.json` whose `result` is the **whole** Result:
+  `{"video": "artifacts/final.mp4", "caption": "hi", "hashtags": ["a", "b"], "cover_frame_s": 1.0,
+  "notes": "n", "extra": {"k": 1}}`.
+
+### `tests/sdk/test_result.py`
 
 - `Result` field defaults: `caption`/`hashtags`/`notes`/`extra` default `None`, `cover_frame_s` defaults
   `1.0`; all fields carry through when set.
