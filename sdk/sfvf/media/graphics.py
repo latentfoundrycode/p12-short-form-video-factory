@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -254,7 +255,20 @@ def _hyperframes_timeout_s() -> float:
 def _kill_process(proc: subprocess.Popen[str]) -> None:
     if proc.poll() is not None:
         return
-    proc.kill()
+    if sys.platform == "win32":
+        taskkill = shutil.which("taskkill")
+        if taskkill is not None:
+            with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+                subprocess.run(  # noqa: S603
+                    [taskkill, "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True,
+                    check=False,
+                    timeout=15,
+                )
+        else:
+            proc.kill()
+    else:
+        proc.kill()
     with contextlib.suppress(subprocess.TimeoutExpired):
         proc.wait(timeout=5)
 
