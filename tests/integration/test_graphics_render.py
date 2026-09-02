@@ -100,6 +100,26 @@ def test_render_produces_real_composed_video(tmp_path: Path) -> None:
     assert b < 75
 
 
+def test_render_resolves_video_relative_assets(tmp_path: Path) -> None:
+    # A composition may reference video-relative assets the workflow wrote to
+    # ctx.artifacts (e.g. the safe-zone CSS). The renderer must make them resolvable,
+    # so the imported stylesheet actually applies to the rendered frame.
+    video_dir = tmp_path / "01"
+    artifacts = video_dir / "artifacts"
+    artifacts.mkdir(parents=True)
+    (artifacts / "redbg.css").write_text(
+        ".fill { position: absolute; inset: 0; background: #ff0000; }",
+        encoding="utf-8",
+    )
+    html = '<style>@import url("artifacts/redbg.css");</style><div class="fill"></div>'
+    out = _render(video_dir, html, 1.0)
+
+    r, g, b = _center_pixel(video_dir / out)
+    assert r > 180
+    assert g < 75
+    assert b < 75
+
+
 def test_render_runs_in_non_dry_mode(tmp_path: Path) -> None:
     # A-5's stub raised NotImplementedError outside dry_run; the real renderer runs in
     # both modes (it is free/local, not a paid service).

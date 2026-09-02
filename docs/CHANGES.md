@@ -12,7 +12,10 @@ data-height>` and the `window.__timelines["main"]` readiness signal — and runs
 **REAL in both dry and non-dry modes** (the A-5 `NotImplementedError` outside dry-run is gone) — this is what
 makes real composed video appear at zero cost with no live keys. The toolchain entry is resolved via
 `SFVF_HYPERFRAMES_ENTRY` (env) else repo-relative from the SDK's own location (editable install →
-`tools/hyperframes/`). Deterministic in `(html, duration_s)`; the filename hash is unchanged from A-5.
+`tools/hyperframes/`). Deterministic in `(html, duration_s)`; the filename hash is unchanged from A-5. The renderer copies the
+video's `artifacts/` into the temporary project so a composition's video-relative asset references (e.g. the
+safe-zone CSS it `@import`s) actually resolve during the headless render — HyperFrames serves the project
+over HTTP, so a `file://` base cannot reach them.
 `captions`/`safe_zone_css`/`check` are unchanged (still SFVF/stub; `check`→HyperFrames lands in B-1c). The
 render tests moved to `tests/integration/test_graphics_render.py` (skipped where the toolchain isn't
 installed; a sampled frame proves the supplied HTML actually rendered).

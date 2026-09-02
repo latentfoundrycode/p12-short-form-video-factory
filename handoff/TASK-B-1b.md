@@ -24,6 +24,13 @@ render(composition_html, *, duration_s) -> str
   `ctx.paths.artifacts`, and keep returning the path **relative to `ctx.paths.video`** (POSIX). The frozen
   determinism test relies on the same relative name for the same `(html, duration_s)` across video folders.
 - **Render via HyperFrames:**
+  0. **Copy the video's artifacts into the project so video-relative assets resolve (ROUND-2 FIX, P1).**
+     A composition may reference assets the workflow wrote to `ctx.paths.artifacts` (e.g. the safe-zone CSS,
+     via `@import url("artifacts/…")`). HyperFrames serves the project over its own HTTP server, so a
+     `file://` base does NOT work and the assets must live **inside the project**. Before rendering, copy
+     `ctx.paths.artifacts` into `<project>/artifacts/` (e.g. `shutil.copytree(ctx.paths.artifacts,
+     project/"artifacts")`), so the served composition's `artifacts/…` references resolve. (Verified: a
+     co-located `@import` applies; a `file://` base does not.)
   1. Build a minimal HyperFrames project in a fresh temp dir (`tempfile.mkdtemp()` — clean it up):
      - `hyperframes.json`:
        `{"$schema": "https://hyperframes.heygen.com/schema/hyperframes.json",
@@ -43,7 +50,10 @@ render(composition_html, *, duration_s) -> str
   3. Run it: `node <entry> render <project_dir> -o <dest> -f 30 --quiet`, with env
      `HYPERFRAMES_SKIP_SKILLS=1` merged into `os.environ`, `check=True`, `capture_output=True`, `text=True`,
      a generous `timeout` (e.g. 300s). On failure raise a `RuntimeError` including the command and captured
-     stderr (mirror `sdk/sfvf/_ffmpeg.py`'s `_run` style). FFmpeg and the browser are already present.
+     stderr (mirror `sdk/sfvf/_ffmpeg.py`'s `_run` style). **On `TimeoutExpired`, decode `exc.stderr` if it
+     is `bytes` (`.decode(errors="replace")`) rather than dropping it (ROUND-2 FIX, P2)** — in text mode
+     `TimeoutExpired.stderr` can still be `bytes`, and discarding it loses the renderer's diagnostics.
+     FFmpeg and the browser are already present.
   4. Return the video-relative POSIX path (`"artifacts/render-<sha>.mp4"`).
 - 1080×1920 @ 30fps is the house format (matches `finalize` and A-6). No cost event.
 
