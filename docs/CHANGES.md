@@ -2,6 +2,20 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-02 — A-3: `sfvf.agents` dry-run stubs (LLM + research)
+
+`sfvf.agents` (SDK §6.1) is now importable with `llm(prompt, *, agent, model, schema=None, attach=None)`
+and `research(query) -> list[Source]`, plus the `Source` type. In dry-run they return deterministic free
+stubs — placeholder text (or a shaped dict when a `schema` is asked for), and a canned list of `Source`s —
+so a workflow's structure can be exercised at zero cost (SDK §10). They read the ambient Context (A-1) to
+decide dry-run, so calling one outside a running workflow raises. The real OpenRouter adapter is Stage B,
+so the non-dry-run path raises `NotImplementedError` rather than silently returning nothing.
+
+**Scoping decision (recorded):** cost recording is DEFERRED to Stage C. SDK §10 says a dry run records what
+it *would* have cost, but that needs the budget engine's meters and estimation (Stage C), which own the
+cost/meter event schema. Inventing a cost event here would pre-commit a schema Stage C should define, so the
+A-stage stubs return free stubs without emitting cost — recorded so the omission is deliberate, not missed.
+
 ## 2026-09-02 — A-2: the `Result` a workflow returns
 
 `sfvf.Result` (SDK §3.3) is now a public type a workflow's `run()` returns to report its finished video:
