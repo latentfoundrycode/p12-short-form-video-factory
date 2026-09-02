@@ -1,0 +1,80 @@
+diff --git a/sdk/sfvf/__init__.py b/sdk/sfvf/__init__.py
+index 96113b0..aa6b57e 100644
+--- a/sdk/sfvf/__init__.py
++++ b/sdk/sfvf/__init__.py
+@@ -1,4 +1,4 @@
+-from . import agents
++from . import agents, media
+ from .agents import Source
+ from .context import Context, ContextFile, ContextPaths
+ from .emit import emit, heartbeat, log, stage
+@@ -14,5 +14,6 @@ __all__ = [
+     "emit",
+     "heartbeat",
+     "log",
++    "media",
+     "stage",
+ ]
+diff --git a/sdk/sfvf/media/__init__.py b/sdk/sfvf/media/__init__.py
+new file mode 100644
+index 0000000..f739078
+--- /dev/null
++++ b/sdk/sfvf/media/__init__.py
+@@ -0,0 +1,3 @@
++from . import speech
++
++__all__ = ["speech"]
+diff --git a/sdk/sfvf/media/speech.py b/sdk/sfvf/media/speech.py
+new file mode 100644
+index 0000000..ae54a44
+--- /dev/null
++++ b/sdk/sfvf/media/speech.py
+@@ -0,0 +1,48 @@
++from __future__ import annotations
++
++import hashlib
++from typing import TypedDict
++
++from .._ffmpeg import silent_audio
++from .._runtime import current_context
++
++_RATE = 2.5  # words per second; dry-run duration is deterministic.
++
++
++class WordTiming(TypedDict):
++    word: str
++    start: float
++    end: float
++
++
++class Speech(TypedDict):
++    audio: str
++    timings: list[WordTiming]
++    duration: float
++
++
++def speak(text: str, *, voice: str, model: str) -> Speech:
++    ctx = current_context()
++    if not ctx.dry_run:
++        raise NotImplementedError(
++            "media.speech.speak: the ElevenLabs adapter arrives in Stage B; run with dry_run=True"
++        )
++
++    words = text.split()
++    duration = max(len(words), 1) / _RATE
++    sha = hashlib.sha256(f"{voice}|{model}|{text}".encode()).hexdigest()[:8]
++    filename = f"narration-{sha}.m4a"
++    dest = ctx.paths.artifacts / filename
++    ctx.paths.artifacts.mkdir(parents=True, exist_ok=True)
++    silent_audio(dest, duration_s=duration)
++
++    n = len(words)
++    timings: list[WordTiming] = [
++        WordTiming(word=word, start=i * duration / n, end=(i + 1) * duration / n)
++        for i, word in enumerate(words)
++    ]
++    return Speech(
++        audio=dest.relative_to(ctx.paths.video).as_posix(),
++        timings=timings,
++        duration=duration,
++    )
