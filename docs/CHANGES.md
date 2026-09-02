@@ -2,6 +2,21 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-02 — B-1b: `media.graphics.render` renders real composed video (HyperFrames)
+
+`media.graphics.render(html, *, duration_s)` now renders the composition for real through the pinned
+HyperFrames toolchain (B-1a), replacing the A-5 colour-bar stub. It wraps the workflow's HTML into a minimal
+HyperFrames project — `hyperframes.json` + an `index.html` with `<div id="root" data-duration data-width
+data-height>` and the `window.__timelines["main"]` readiness signal — and runs `hyperframes render` to a
+1080×1920 MP4, returned as a video-relative path string. Per SDK §10 the renderer is free/local, so it runs
+**REAL in both dry and non-dry modes** (the A-5 `NotImplementedError` outside dry-run is gone) — this is what
+makes real composed video appear at zero cost with no live keys. The toolchain entry is resolved via
+`SFVF_HYPERFRAMES_ENTRY` (env) else repo-relative from the SDK's own location (editable install →
+`tools/hyperframes/`). Deterministic in `(html, duration_s)`; the filename hash is unchanged from A-5.
+`captions`/`safe_zone_css`/`check` are unchanged (still SFVF/stub; `check`→HyperFrames lands in B-1c). The
+render tests moved to `tests/integration/test_graphics_render.py` (skipped where the toolchain isn't
+installed; a sampled frame proves the supplied HTML actually rendered).
+
 ## 2026-09-02 — B-1a: HyperFrames render toolchain (Stage B begins)
 
 Stage B (the provider layer) starts with the local, zero-cost renderers. This lands the pinned HeyGen
