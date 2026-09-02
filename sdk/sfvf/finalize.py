@@ -1,0 +1,127 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from ._ffmpeg import _binary, _run, probe
+from ._runtime import current_context
+
+_HOUSE_WIDTH = 1080
+_HOUSE_HEIGHT = 1920
+_HOUSE_FPS = 30
+_HOUSE_LUFS = -14
+_FINAL_NAME = "final.mp4"
+_VIDEO_FILTER = (
+    f"scale={_HOUSE_WIDTH}:{_HOUSE_HEIGHT}:force_original_aspect_ratio=decrease,"
+    f"pad={_HOUSE_WIDTH}:{_HOUSE_HEIGHT}:(ow-iw)/2:(oh-ih)/2,"
+    f"fps={_HOUSE_FPS}"
+)
+
+
+def finalize(video: str, audio: str | None = None, captions: str | None = None) -> str:
+    ctx = current_context()
+    root = ctx.paths.video.resolve()
+    video_path = _confine(root, video)
+    audio_path = _confine(root, audio) if audio is not None else None
+    captions_path = _confine(root, captions) if captions is not None else None
+
+    dest = ctx.paths.video / _FINAL_NAME
+    _apply_house_format(video_path, audio_path, captions_path, dest)
+    _self_review(
+        dest,
+        expect_audio=audio is not None,
+        expect_captions=captions is not None,
+    )
+    return _FINAL_NAME
+
+
+def _confine(root: Path, rel: str) -> Path:
+    resolved = (root / rel).resolve()
+    if not resolved.is_relative_to(root):
+        raise ValueError(f"path escapes video folder: {rel}")
+    if not resolved.is_file():
+        raise FileNotFoundError(f"input does not exist: {rel}")
+    return resolved
+
+
+def _apply_house_format(
+    video: Path,
+    audio: Path | None,
+    captions: Path | None,
+    dest: Path,
+) -> None:
+    command = [_binary("ffmpeg"), "-y", "-fflags", "+bitexact", "-i", str(video)]
+    next_index = 1
+    audio_index: int | None = None
+    captions_index: int | None = None
+    if audio is not None:
+        command.extend(["-i", str(audio)])
+        audio_index = next_index
+        next_index += 1
+    if captions is not None:
+        command.extend(["-i", str(captions)])
+        captions_index = next_index
+
+    command.extend(["-map", "0:v:0"])
+    if audio_index is not None:
+        command.extend(["-map", f"{audio_index}:a:0"])
+    if captions_index is not None:
+        command.extend(["-map", f"{captions_index}:s:0"])
+
+    command.extend(["-vf", _VIDEO_FILTER, "-c:v", "libx264", "-pix_fmt", "yuv420p"])
+    if audio_index is not None:
+        # s16 after loudnorm: digital silence (dry-run stubs) makes loudnorm
+        # emit NaN/Inf, which AAC then refuses to encode.
+        command.extend(["-af", f"loudnorm=I={_HOUSE_LUFS},aformat=sample_fmts=s16", "-c:a", "aac"])
+    else:
+        command.append("-an")
+    if captions_index is not None:
+        command.extend(["-c:s", "mov_text"])
+    command.extend(["-map_metadata", "-1", str(dest)])
+    _run(command)
+
+
+def _self_review(dest: Path, *, expect_audio: bool, expect_captions: bool) -> None:
+    if not dest.is_file():
+        raise RuntimeError(f"finalize self-review failed: output missing: {dest}")
+    probed = probe(dest)
+    if probed.width is None or probed.height is None:
+        raise RuntimeError("finalize self-review failed: output has no video stream")
+    if (probed.width, probed.height) != (_HOUSE_WIDTH, _HOUSE_HEIGHT):
+        raise RuntimeError(
+            "finalize self-review failed: expected "
+            f"{_HOUSE_WIDTH}x{_HOUSE_HEIGHT}, got {probed.width}x{probed.height}"
+        )
+    if probed.duration_s <= 0:
+        raise RuntimeError("finalize self-review failed: duration is not > 0")
+    if probed.has_audio is not expect_audio:
+        present = "present unexpectedly" if probed.has_audio else "missing"
+        raise RuntimeError(f"finalize self-review failed: audio stream {present}")
+    if _has_subtitle(dest) is not expect_captions:
+        present = "missing" if expect_captions else "present unexpectedly"
+        raise RuntimeError(f"finalize self-review failed: subtitle stream {present}")
+
+
+def _has_subtitle(path: Path) -> bool:
+    command = [
+        _binary("ffprobe"),
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
+        "-show_streams",
+        "-select_streams",
+        "s",
+        str(path),
+    ]
+    payload: object = json.loads(_run(command))
+    if not isinstance(payload, dict):
+        return False
+    streams = payload.get("streams")
+    if not isinstance(streams, list):
+        return False
+    return any(_is_subtitle(item) for item in streams)
+
+
+def _is_subtitle(item: object) -> bool:
+    return isinstance(item, dict) and item.get("codec_type") == "subtitle"
