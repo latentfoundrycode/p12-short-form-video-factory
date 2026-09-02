@@ -1,3 +1,3 @@
-from . import speech
+from . import graphics, speech
 
-__all__ = ["speech"]
+__all__ = ["graphics", "speech"]
