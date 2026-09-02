@@ -1,0 +1,107 @@
+diff --git a/app/core/supervisor.py b/app/core/supervisor.py
+index add7dcf..7e4cc75 100644
+--- a/app/core/supervisor.py
++++ b/app/core/supervisor.py
+@@ -531,7 +531,7 @@ def _consume_stdout(
+             silence.note(event)
+             state.record_event(run_dir, event, source)
+             if event.get("t") == "result":
+-                captured = {key: event[key] for key in ("video", "caption") if key in event}
++                captured = {key: value for key, value in event.items() if key != "t"}
+     finally:
+         stop.set()
+         watcher.join(timeout=1)
+diff --git a/sdk/sfvf/__init__.py b/sdk/sfvf/__init__.py
+index 09a7fc4..31e9302 100644
+--- a/sdk/sfvf/__init__.py
++++ b/sdk/sfvf/__init__.py
+@@ -1,10 +1,12 @@
+ from .context import Context, ContextFile, ContextPaths
+ from .emit import emit, heartbeat, log, stage
++from .result import Result
+ 
+ __all__ = [
+     "Context",
+     "ContextFile",
+     "ContextPaths",
++    "Result",
+     "emit",
+     "heartbeat",
+     "log",
+diff --git a/sdk/sfvf/result.py b/sdk/sfvf/result.py
+new file mode 100644
+index 0000000..4d7cd5a
+--- /dev/null
++++ b/sdk/sfvf/result.py
+@@ -0,0 +1,15 @@
++from __future__ import annotations
++
++from dataclasses import dataclass
++from pathlib import Path
++from typing import Any
++
++
++@dataclass
++class Result:
++    video: Path
++    caption: str | None = None
++    hashtags: list[str] | None = None
++    cover_frame_s: float = 1.0
++    notes: str | None = None
++    extra: dict[str, Any] | None = None
+diff --git a/sdk/sfvf/runner.py b/sdk/sfvf/runner.py
+index 20929f7..0241374 100644
+--- a/sdk/sfvf/runner.py
++++ b/sdk/sfvf/runner.py
+@@ -16,6 +16,7 @@ from pydantic import ValidationError
+ from ._runtime import reset_active, set_active
+ from .context import Context, ContextFile
+ from .emit import emit
++from .result import Result
+ 
+ type EntryField = Literal["entrypoint", "prepare"]
+ 
+@@ -132,6 +133,32 @@ def _capture_return(returned: object) -> dict[str, Any] | None:
+     return cast(dict[str, Any], returned)
+ 
+ 
++def _result_event(result: Result, ctx: Context) -> dict[str, Any]:
++    # Resolve before the containment check, same as cache restore and the
++    # file-server: a lexical ".." can still pass is_relative_to and emit "../…".
++    root = ctx.paths.video.resolve()
++    candidate = result.video if result.video.is_absolute() else root / result.video
++    resolved = candidate.resolve()
++    if resolved.is_relative_to(root):
++        video_s = resolved.relative_to(root).as_posix()
++    else:
++        video_s = str(resolved)
++    event: dict[str, Any] = {
++        "t": "result",
++        "video": video_s,
++        "cover_frame_s": result.cover_frame_s,
++    }
++    if result.caption is not None:
++        event["caption"] = result.caption
++    if result.hashtags is not None:
++        event["hashtags"] = result.hashtags
++    if result.notes is not None:
++        event["notes"] = result.notes
++    if result.extra is not None:
++        event["extra"] = result.extra
++    return event
++
++
+ def _run(
+     workflow_dir: Path,
+     context_path: Path,
+@@ -150,7 +177,9 @@ def _run(
+         raise _EntryFailedError(f"{entry} failed: {exc}", traceback.format_exc()) from exc
+     finally:
+         reset_active(token)
+-    if result_path is not None:
++    if isinstance(returned, Result):
++        emit(_result_event(returned, ctx))
++    elif result_path is not None:
+         _write_result(result_path, _capture_return(returned))
+ 
+ 
