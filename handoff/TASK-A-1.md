@@ -122,6 +122,28 @@ steps). Then extend the `if:` guard on **all six** check steps to also require
 failed pip/npm install does (keeping the existing "a setup failure skips every check" invariant). Do not
 change anything else in the workflow (permissions, concurrency, caching, the checks themselves).
 
+## 6. `sdk/sfvf/context.py` — propagate the active context into `ctx.map` workers
+
+`ctx.map` (added in SDK-3) runs each item on a `ThreadPoolExecutor`. Python `contextvars` do **not**
+propagate to pool worker threads on their own, so a provided function called from a mapped callback would
+hit `current_context()` returning `None` and raise — defeating the whole bridge for the primary parallel
+path. Fix `ctx.map` so each submitted task runs under a **copy of the submitting thread's context**, which
+carries the active Context (and any future contextvars) into the worker:
+
+```python
+from contextvars import copy_context
+...
+# instead of pool.submit(run_item, item):
+pool.submit(copy_context().run, run_item, item)
+# and likewise for the run_collect path
+```
+
+`copy_context()` is evaluated on the submitting thread (where the active context is set), once per task, so
+each worker gets its own snapshot — no shared-context contention, and nested `ctx.map` calls still
+propagate. Do not change `ctx.map`'s ordering, error semantics, or return shape; only how tasks are
+submitted. (The frozen contract's `test_ambient_context_propagates_into_ctx_map` exercises this at
+concurrency 3.)
+
 ## Acceptance (the frozen contract)
 
 - `tests/sdk/test_runtime.py`: `current_context()` raises when unset; `set_active`/`reset_active`

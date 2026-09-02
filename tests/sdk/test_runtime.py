@@ -17,7 +17,9 @@ from sfvf.runner import _run
 STUBS = Path(__file__).resolve().parent.parent / "stubs"
 
 
-def _context_file(video_dir: Path, settings: dict[str, object]) -> ContextFile:
+def _context_file(
+    video_dir: Path, settings: dict[str, object], *, cache: Path | None = None
+) -> ContextFile:
     return ContextFile(
         settings=settings,
         paths=ContextPaths(
@@ -25,6 +27,7 @@ def _context_file(video_dir: Path, settings: dict[str, object]) -> ContextFile:
             artifacts=video_dir / "artifacts",
             steps=video_dir / ".steps",
             shared=video_dir,
+            cache=cache,
         ),
     )
 
@@ -84,3 +87,23 @@ def test_runner_publishes_active_context_during_entrypoint(tmp_path: Path) -> No
     # The bridge must be cleared once the entrypoint returns.
     with pytest.raises(RuntimeError):
         current_context()
+
+
+def test_ambient_context_propagates_into_ctx_map(tmp_path: Path) -> None:
+    # ctx.map runs each item on a ThreadPoolExecutor. A provided function called
+    # from a mapped callback still needs the ambient Context, so the active context
+    # must reach the pool workers — contextvars do not cross threads on their own.
+    # concurrency > 1 exercises real worker threads.
+    ctx = Context(_context_file(tmp_path / "01", {"x": 1}, cache=tmp_path / "cache"))
+    token = set_active(ctx)
+    try:
+        seen = ctx.map(
+            "probe",
+            [1, 2, 3],
+            inputs=lambda item: {"item": item},
+            fn=lambda item: current_context() is ctx,
+            concurrency=3,
+        )
+    finally:
+        reset_active(token)
+    assert seen == [True, True, True]
