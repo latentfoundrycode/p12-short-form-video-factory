@@ -2,6 +2,16 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-02 — A-4: `sfvf.media.speech` dry-run stub
+
+The `sfvf.media` package appears, with `media.speech.speak(text, *, voice, model) -> Speech` (SDK §6.4). In
+dry-run it writes silent audio of a plausible length (words ÷ speaking rate) into `ctx.artifacts` via the
+FFmpeg core (A-1) and returns a `Speech` — a JSON-native TypedDict: `audio` (a video-relative path string),
+`timings` (per-word `{word, start, end}` dicts spread across the clip), and `duration` (the real audio
+length). JSON-native so the documented `step.set(speak(...))` caches (following the A-3 pattern; the audio
+file is content-addressed by the step cache via its relative path). Deterministic in its inputs. The real
+ElevenLabs adapter is Stage B, so the non-dry-run path raises `NotImplementedError`.
+
 ## 2026-09-02 — A-3: `sfvf.agents` dry-run stubs (LLM + research)
 
 `sfvf.agents` (SDK §6.1) is now importable with `llm(prompt, *, agent, model, schema=None, attach=None)`
