@@ -13,6 +13,7 @@ from typing import Any, Literal, cast
 
 from pydantic import ValidationError
 
+from ._runtime import reset_active, set_active
 from .context import Context, ContextFile
 from .emit import emit
 
@@ -141,10 +142,14 @@ def _run(
     data = _load_context(context_path)
     spec = _function_spec(workflow_dir.resolve(), entry)
     func = _load_function(workflow_dir.resolve(), spec)
+    ctx = Context(data)
+    token = set_active(ctx)
     try:
-        returned = func(Context(data))
+        returned = func(ctx)
     except Exception as exc:
         raise _EntryFailedError(f"{entry} failed: {exc}", traceback.format_exc()) from exc
+    finally:
+        reset_active(token)
     if result_path is not None:
         _write_result(result_path, _capture_return(returned))
 

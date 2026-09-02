@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -188,6 +189,7 @@ class Context:
 
     def __init__(self, file: ContextFile) -> None:
         self.settings = file.settings
+        self.params = file.settings
         self.paths = file.paths
         self.instructions = file.instructions
         self.previous = file.previous
@@ -289,7 +291,7 @@ class Context:
 
         with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
             if on_error == "collect":
-                collected = [pool.submit(run_collect, item) for item in ordered]
+                collected = [pool.submit(copy_context().run, run_collect, item) for item in ordered]
                 return [future.result() for future in collected]
-            submitted = [pool.submit(run_item, item) for item in ordered]
+            submitted = [pool.submit(copy_context().run, run_item, item) for item in ordered]
             return [future.result() for future in submitted]

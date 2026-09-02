@@ -48,31 +48,35 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Install FFmpeg
+        id: deps_ffmpeg
+        run: choco install ffmpeg -y --no-progress
+
       # --- The six-command gate. Each check runs even if a prior CHECK failed, so
       # --- one CI run surfaces ALL failing checks at once; but every check is skipped
       # --- if either install step failed, and any check failure fails the job. ---
       - name: ruff check
-        if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' }}
+        if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' && steps.deps_ffmpeg.conclusion == 'success' }}
         run: python -m ruff check .
 
       - name: ruff format --check
-        if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' }}
+        if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' && steps.deps_ffmpeg.conclusion == 'success' }}
         run: python -m ruff format --check .
 
       - name: mypy
-        if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' }}
+        if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' && steps.deps_ffmpeg.conclusion == 'success' }}
         run: python -m mypy
 
       - name: eslint (npm run lint)
-        if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' }}
+        if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' && steps.deps_ffmpeg.conclusion == 'success' }}
         working-directory: frontend
         run: npm run lint
 
       - name: tsc (npm run typecheck)
-        if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' }}
+        if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' && steps.deps_ffmpeg.conclusion == 'success' }}
         working-directory: frontend
         run: npm run typecheck
 
       - name: pytest
-        if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' }}
+        if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' && steps.deps_ffmpeg.conclusion == 'success' }}
         run: python -m pytest

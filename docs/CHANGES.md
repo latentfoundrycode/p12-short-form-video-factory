@@ -2,6 +2,22 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-02 — Stage A begins; T1 (early HyperFrames/Kinocut) reversed
+
+The remaining build order is settled as A→B→C→D→E→F→G (arch §7): **A** the provided-functions dry-run
+stub layer + an example workflow + minimal finalize (zero cost); **B** real providers cheap→expensive;
+**C** the budget engine; then library, records/review, gates, learning. Stage A is starting.
+
+**Recorded decision — T1 reversed.** The accepted plan briefly pulled the HyperFrames and Kinocut
+composition providers forward into Stage A (proposal "T1") on the assumption they were cheap local
+drop-ins. They are not: they are existing **external** repositories integrated via an adapter, and
+HyperFrames drags in a headless Chromium browser plus installed fonts that windows-latest CI cannot
+easily exercise. The architecture's own build order (§7) homes them in the providers stage. So T1 is
+dropped — Stage A ships a real, validated, zero-cost `.mp4` using the FFmpeg-based dry-run stub engine
+(colour-bar visuals, silent audio of the right length), and HyperFrames/Kinocut move to Stage B where
+their repos are investigated at source and wired through adapters. (Arch §5.5 was patched to state this
+outright.)
+
 ## 2026-09-01 — SDK-4: context identity/reporting + dry-run (supervisor wiring)
 
 Final increment of the SDK/step-mechanism stage (Workflow SDK §3.2, §4.1–§4.3, §5.9). The supervisor
