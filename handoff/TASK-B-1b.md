@@ -64,8 +64,12 @@ render(composition_html, *, duration_s) -> str
      only kills Node — on Windows, HyperFrames' Chrome/FFmpeg descendants would be orphaned (ROUND-5 FIX).
      Mirror `app/core/proc.py::kill_tree` SDK-native (the SDK must not import `app`):** on `win32`,
      `subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, check=False,
-     timeout=15)`; otherwise `proc.kill()`; then `proc.wait(timeout=5)` (suppressing `TimeoutExpired`).
-     FFmpeg and the browser are already present.
+     timeout=15)`; otherwise `proc.kill()`; then `proc.wait(timeout=5)` and, **if that wait itself times out,
+     call `proc.kill()` as a final fallback (ROUND-6 FIX)** — exactly as `kill_tree` does, so Node is force-
+     killed even when `taskkill` failed to reap the tree. Also **validate the timeout env with
+     `math.isfinite` (ROUND-6 FIX): reject `nan`/`inf` (and non-positive) and fall back to the default**, so
+     a malformed `SFVF_HYPERFRAMES_TIMEOUT_S` can't disable the safety deadline. FFmpeg and the browser are
+     already present.
   4. Return the video-relative POSIX path (`"artifacts/render-<sha>.mp4"`).
 - 1080×1920 @ 30fps is the house format (matches `finalize` and A-6). No cost event.
 
