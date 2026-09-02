@@ -134,15 +134,15 @@ def _capture_return(returned: object) -> dict[str, Any] | None:
 
 
 def _result_event(result: Result, ctx: Context) -> dict[str, Any]:
-    video = result.video
-    root = ctx.paths.video
-    if not video.is_absolute() or video.is_relative_to(root):
-        try:
-            video_s = video.relative_to(root).as_posix()
-        except ValueError:
-            video_s = video.as_posix()
+    # Resolve before the containment check, same as cache restore and the
+    # file-server: a lexical ".." can still pass is_relative_to and emit "../…".
+    root = ctx.paths.video.resolve()
+    candidate = result.video if result.video.is_absolute() else root / result.video
+    resolved = candidate.resolve()
+    if resolved.is_relative_to(root):
+        video_s = resolved.relative_to(root).as_posix()
     else:
-        video_s = str(video)
+        video_s = str(resolved)
     event: dict[str, Any] = {
         "t": "result",
         "video": video_s,
