@@ -37,7 +37,7 @@ def render(composition_html: str, *, duration_s: float) -> str:
     ctx = current_context()
     sha = _sha8([composition_html, duration_s])
     dest, rel = _artifact(ctx, f"render-{sha}.mp4")
-    _render_with_hyperframes(dest, composition_html, duration_s)
+    _render_with_hyperframes(ctx, dest, composition_html, duration_s)
     return rel
 
 
@@ -73,7 +73,9 @@ def check(composition_html: str, *, safe_zone: bool = True) -> list[Violation]:
     return []
 
 
-def _render_with_hyperframes(dest: Path, composition_html: str, duration_s: float) -> None:
+def _render_with_hyperframes(
+    ctx: Context, dest: Path, composition_html: str, duration_s: float
+) -> None:
     entry = _hyperframes_entry()
     project = Path(tempfile.mkdtemp())
     try:
@@ -94,6 +96,10 @@ def _render_with_hyperframes(dest: Path, composition_html: str, duration_s: floa
             _index_html(composition_html, duration_s),
             encoding="utf-8",
         )
+        # HyperFrames serves the project over HTTP, so video-relative asset
+        # references (e.g. @import url("artifacts/…")) only resolve if those
+        # files live inside the project.
+        shutil.copytree(ctx.paths.artifacts, project / "artifacts")
         node = shutil.which("node")
         if node is None:
             raise RuntimeError("node is not on PATH")
@@ -183,11 +189,17 @@ def _run(command: list[str]) -> str:
         stderr = exc.stderr or ""
         raise RuntimeError(f"command failed: {command}\n{stderr}") from exc
     except subprocess.TimeoutExpired as exc:
-        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        stderr = _timeout_stderr(exc.stderr)
         raise RuntimeError(f"command failed: {command}\n{stderr}") from exc
     except OSError as exc:
         raise RuntimeError(f"command failed: {command}\n{exc}") from exc
     return completed.stdout
+
+
+def _timeout_stderr(stderr: str | bytes | None) -> str:
+    if isinstance(stderr, bytes):
+        return stderr.decode(errors="replace")
+    return stderr or ""
 
 
 def _sha8(payload: object) -> str:
