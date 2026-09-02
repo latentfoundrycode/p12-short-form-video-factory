@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from ._runtime import reset_active, set_active
 from .context import Context, ContextFile
 from .emit import emit
+from .result import Result
 
 type EntryField = Literal["entrypoint", "prepare"]
 
@@ -132,6 +133,32 @@ def _capture_return(returned: object) -> dict[str, Any] | None:
     return cast(dict[str, Any], returned)
 
 
+def _result_event(result: Result, ctx: Context) -> dict[str, Any]:
+    video = result.video
+    root = ctx.paths.video
+    if not video.is_absolute() or video.is_relative_to(root):
+        try:
+            video_s = video.relative_to(root).as_posix()
+        except ValueError:
+            video_s = video.as_posix()
+    else:
+        video_s = str(video)
+    event: dict[str, Any] = {
+        "t": "result",
+        "video": video_s,
+        "cover_frame_s": result.cover_frame_s,
+    }
+    if result.caption is not None:
+        event["caption"] = result.caption
+    if result.hashtags is not None:
+        event["hashtags"] = result.hashtags
+    if result.notes is not None:
+        event["notes"] = result.notes
+    if result.extra is not None:
+        event["extra"] = result.extra
+    return event
+
+
 def _run(
     workflow_dir: Path,
     context_path: Path,
@@ -150,7 +177,9 @@ def _run(
         raise _EntryFailedError(f"{entry} failed: {exc}", traceback.format_exc()) from exc
     finally:
         reset_active(token)
-    if result_path is not None:
+    if isinstance(returned, Result):
+        emit(_result_event(returned, ctx))
+    elif result_path is not None:
         _write_result(result_path, _capture_return(returned))
 
 
