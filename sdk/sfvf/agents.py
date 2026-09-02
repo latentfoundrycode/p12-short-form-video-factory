@@ -1,17 +1,41 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from ._runtime import current_context
 
 
-@dataclass
-class Source:
+class Source(TypedDict):
     title: str
     url: str
     snippet: str
+
+
+def _llm_stub(prompt: str, *, agent: str, model: str) -> str:
+    return f"[dry-run llm] {agent}/{model}: {prompt}"
+
+
+def _dict_for_schema(schema: dict[str, Any], stub: str) -> dict[str, Any]:
+    properties = schema.get("properties")
+    if not isinstance(properties, dict) or not properties:
+        return {"text": stub}
+    out: dict[str, Any] = {}
+    for name, spec in properties.items():
+        kind = spec.get("type") if isinstance(spec, dict) else None
+        if kind == "string":
+            out[name] = stub
+        elif kind in ("integer", "number"):
+            out[name] = 0
+        elif kind == "array":
+            out[name] = []
+        elif kind == "object":
+            out[name] = {}
+        elif kind == "boolean":
+            out[name] = False
+        else:
+            out[name] = stub
+    return out
 
 
 def llm(
@@ -29,9 +53,10 @@ def llm(
         )
     # attach is accepted and ignored; real vision attachment is Stage B.
     _ = attach
+    stub = _llm_stub(prompt, agent=agent, model=model)
     if schema is not None:
-        return {"text": f"[dry-run llm] {agent}/{model}: {prompt}"}
-    return f"[dry-run llm] {agent}/{model}: {prompt}"
+        return _dict_for_schema(schema, stub)
+    return stub
 
 
 def research(query: str) -> list[Source]:
