@@ -1,0 +1,8 @@
+{
+  "name": "sfvf-hyperframes-toolchain",
+  "private": true,
+  "description": "Pinned HyperFrames renderer toolchain used by the local media.graphics adapter.",
+  "dependencies": {
+    "hyperframes": "0.8.26"
+  }
+}
