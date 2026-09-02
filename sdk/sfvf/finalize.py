@@ -14,7 +14,8 @@ _FINAL_NAME = "final.mp4"
 _VIDEO_FILTER = (
     f"scale={_HOUSE_WIDTH}:{_HOUSE_HEIGHT}:force_original_aspect_ratio=decrease,"
     f"pad={_HOUSE_WIDTH}:{_HOUSE_HEIGHT}:(ow-iw)/2:(oh-ih)/2,"
-    f"fps={_HOUSE_FPS}"
+    f"fps={_HOUSE_FPS},"
+    "setsar=1"
 )
 
 
