@@ -655,9 +655,16 @@ Generating six shots should be six steps, not one. If all six live inside a sing
 
 The opposite error also exists: wrapping something trivial in a step adds bookkeeping for no benefit. The line is roughly whether the work costs money, takes noticeable time, or could fail on its own.
 
-### 5.5 Returning files
+### 5.5 What a provided function hands you back
 
-Step results must be JSON-serializable, so you cannot return a file object. Write files into `ctx.artifacts` and return their paths relative to the video folder. The cache stores those files by their contents and restores them into place when a cached result is used.
+Everything a step can return has to survive the step cache, which stores results as JSON. That one constraint governs the shape of every value the provided functions give you:
+
+- **A file comes back as a path string, relative to the video folder** — never an open file object or a `Path` you can call methods on. The function has already written the file into `ctx.artifacts`; what you receive is the string `"artifacts/narration.m4a"`. The cache stores that file by its contents and restores it into place when a cached result is used. So write files into `ctx.artifacts` and pass these relative strings onward; do not build a `Path` and return it.
+- **A structured result comes back as a JSON dict, read by subscript.** `Source`, `Speech`, and the like are dictionaries, not objects: `speech["duration"]`, `source["title"]` — **not** `speech.duration`. They cannot be attribute-access objects because an attribute-access object cannot round-trip through the JSON cache; on a cache hit you would get a plain dict back and the attribute access would fail. Reading by subscript works identically whether the value was just produced or just restored from cache.
+
+**The one exception is the `Result` your `run()` returns.** It is a value you *construct* — `Result(video=…, caption=…)` — and it is handed to the chassis directly, not stored as a step result, so it is a real object with fields, and `Result.video` is a genuine `Path`. Everything a *provided function* returns follows the two rules above; `Result` does not.
+
+Because of the first rule, the `-> Path` annotations in §6 are a readability shorthand: read them as "a video-relative path string, per §5.5", not as an open `Path` object.
 
 ---
 
@@ -673,6 +680,8 @@ research(query) -> list[Source]
 ```
 
 `agent` determines which rules are injected into the prompt. `schema` requests structured output, so you get back a dictionary of known shape rather than prose you have to parse.
+
+Each `Source` from `research()` is a JSON dict, read by subscript — `source["title"]`, `source["url"]`, `source["snippet"]` — for the reason in §5.5 (the result is cached as JSON). A `schema` result from `llm()` is a dict you read the same way.
 
 `attach` is a list of `Path`s — images, or video clips where the model supports them — shown to the model alongside the prompt. This is how a shot gets described from reference footage, and how a generated frame gets checked against the character sheet it was supposed to match. Requires the `agents.vision` capability; declare it in your manifest. Not every model accepts attachments, and one that does not will fail rather than silently ignoring them.
 
@@ -737,14 +746,15 @@ All four are deterministic and cache normally. The 20% figure is a starting poin
 ### 6.4 `sfvf.media.speech` — ElevenLabs
 
 ```python
-speak(text, *, voice, model) -> Speech
-# Speech.audio   -> Path
-# Speech.timings -> list of word timings
+speak(text, *, voice, model) -> Speech        # a JSON dict, read by subscript (§5.5)
+# speech["audio"]    -> a video-relative path string to the audio file
+# speech["timings"]  -> list of word timings, each {"word", "start", "end"}
+# speech["duration"] -> the real length of the audio, in seconds
 ```
 
 Always returns word-level timings alongside the audio. What ElevenLabs actually returns is *character*-level alignment, a start and end time for every character; the chassis groups those into words before handing them to you, so `timings` is a list of words either way. Caption synchronisation depends entirely on knowing when each word is spoken, so any backend that cannot supply alignment at all has it performed separately rather than returning without it. Your code never has to know which situation it is in.
 
-`Speech.duration` is the real length of the generated audio. **Do not cut narration to a target length.** A duration setting is guidance for the agent writing the script, not a cap on the speech; render and edit to `Speech.duration` rather than to the number the user typed, as the worked example in §11 does. A workflow that truncates its own narration to hit a target produces a video that stops mid-sentence and still passes every automatic check.
+`speech["duration"]` is the real length of the generated audio. **Do not cut narration to a target length.** A duration setting is guidance for the agent writing the script, not a cap on the speech; render and edit to `speech["duration"]` rather than to the number the user typed, as the worked example in §11 does. A workflow that truncates its own narration to hit a target produces a video that stops mid-sentence and still passes every automatic check.
 
 The voice and model identifiers are recorded automatically. Without that, changing a default voice would quietly make every earlier run unreproducible.
 
@@ -1092,17 +1102,17 @@ def run(ctx: Context) -> Result:
     # Building the HTML is cheap, so it happens outside a step. Rendering
     # it is not, so that goes inside one, keyed on the HTML itself —
     # identical HTML means an identical video, so the cache is exact.
-    html = build_composition(script, speech.timings, media.graphics.safe_zone_css())
+    html = build_composition(script, speech["timings"], media.graphics.safe_zone_css())
     with ctx.step("render", inputs={"html": html}) as step:
         visual = step.value if step.cached else step.set(
-            media.graphics.render(html, duration_s=speech.duration))
+            media.graphics.render(html, duration_s=speech["duration"]))
 
     ctx.stage(4, total, "Captions")
-    captions = media.graphics.captions(speech.audio, speech.timings, style="bold")
+    captions = media.graphics.captions(speech["audio"], speech["timings"], style="bold")
 
     ctx.stage(5, total, "Finalising")
     # Mandatory. Applies the house format and runs the automatic checks.
-    final = media.finalize(visual, audio=speech.audio, captions=captions)
+    final = media.finalize(visual, audio=speech["audio"], captions=captions)
 
     return Result(video=final, caption=make_caption(script))
 ```
