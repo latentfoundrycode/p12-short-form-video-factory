@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -247,9 +248,12 @@ def _run(command: list[str]) -> str:
 def _hyperframes_timeout_s() -> float:
     raw = os.environ.get("SFVF_HYPERFRAMES_TIMEOUT_S", str(_DEFAULT_RENDER_TIMEOUT_S))
     try:
-        return max(float(raw), 1.0)
+        value = float(raw)
     except ValueError:
         return float(_DEFAULT_RENDER_TIMEOUT_S)
+    if not math.isfinite(value) or value <= 0:
+        return float(_DEFAULT_RENDER_TIMEOUT_S)
+    return value
 
 
 def _kill_process(proc: subprocess.Popen[str]) -> None:
@@ -269,8 +273,10 @@ def _kill_process(proc: subprocess.Popen[str]) -> None:
             proc.kill()
     else:
         proc.kill()
-    with contextlib.suppress(subprocess.TimeoutExpired):
+    try:
         proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
 
 
 def _sha8(payload: object) -> str:
