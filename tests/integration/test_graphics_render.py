@@ -120,6 +120,28 @@ def test_render_resolves_video_relative_assets(tmp_path: Path) -> None:
     assert b < 75
 
 
+def test_render_preserves_a_composition_timeline(tmp_path: Path) -> None:
+    # A composition may register its own animation timeline under the composition id
+    # ("main"). The renderer supplies an empty timeline only as a readiness fallback; it
+    # must NOT clobber one the composition already registered, or animations are lost.
+    # Here the composition's own timeline paints the box red — if clobbered, it stays black.
+    video_dir = tmp_path / "01"
+    video_dir.mkdir()
+    html = (
+        '<div class="box" style="position:absolute;inset:0;background:#000000"></div>'
+        "<script>"
+        "window.__timelines = window.__timelines || {};"
+        'window.__timelines["main"] = gsap.timeline({ paused: true })'
+        '.set(".box", { backgroundColor: "#ff0000" });'
+        "</script>"
+    )
+    out = _render(video_dir, html, 1.0)
+    r, g, b = _center_pixel(video_dir / out)
+    assert r > 180
+    assert g < 75
+    assert b < 75
+
+
 def test_render_runs_in_non_dry_mode(tmp_path: Path) -> None:
     # A-5's stub raised NotImplementedError outside dry_run; the real renderer runs in
     # both modes (it is free/local, not a paid service).

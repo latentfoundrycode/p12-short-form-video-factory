@@ -37,10 +37,14 @@ render(composition_html, *, duration_s) -> str
          "paths": {"blocks": "compositions", "components": "compositions/components", "assets": "assets"}}`
      - `index.html` — the workflow's `composition_html` wrapped so HyperFrames renders it cleanly and fast:
        load GSAP, a `<div id="root" data-composition-id="main" data-start="0" data-duration="{duration_s}"
-       data-width="1080" data-height="1920">` containing `composition_html`, and a trailing script
-       `window.__timelines = window.__timelines || {}; window.__timelines["main"] =
-       gsap.timeline({ paused: true });`. **That timeline registration is HyperFrames' readiness signal —
-       without it the renderer stalls ~45s and warns.** Give `<html>`/`<body>` the 1080×1920 size.
+       data-width="1080" data-height="1920">` containing `composition_html`, and a trailing script that
+       provides the readiness signal **without clobbering one the composition registered itself**
+       (ROUND-3 FIX): `window.__timelines = window.__timelines || {}; window.__timelines["main"] =
+       window.__timelines["main"] || gsap.timeline({ paused: true });`. **That `__timelines["main"]`
+       registration is HyperFrames' readiness signal — without it the renderer stalls ~45s and warns; but a
+       composition may register its OWN animation timeline under "main", so use `||` to keep an existing one
+       and create the empty fallback only when absent.** An unconditional assignment discards the
+       composition's animations → static video. Give `<html>`/`<body>` the 1080×1920 size.
   2. Resolve the renderer entry point:
      - `os.environ.get("SFVF_HYPERFRAMES_ENTRY")` if set, else the repo-relative path
        `Path(__file__).resolve().parents[3] / "tools" / "hyperframes" / "node_modules" / "hyperframes" /
