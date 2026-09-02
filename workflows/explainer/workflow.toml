@@ -1,0 +1,33 @@
+[workflow]
+id = "explainer"
+name = "Explainer"
+version = "1.0.0"
+entrypoint = "main:run"
+prepare = "main:prepare"
+sdk = "1"
+video_semantics = "variants"
+
+[output]
+aspect = "9:16"
+fps = 30
+safe_zone = "tiktok"
+
+[[params]]
+key = "topic"
+type = "text"
+label = "Topic"
+required = false
+help = "Leave empty to let the agent choose one."
+
+[[params]]
+key = "duration_s"
+type = "number"
+label = "Duration (seconds)"
+default = 30
+affects_cost = true
+
+[[params]]
+key = "voice"
+type = "text"
+label = "Narrator voice"
+default = "narrator"
