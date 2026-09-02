@@ -531,7 +531,7 @@ def _consume_stdout(
             silence.note(event)
             state.record_event(run_dir, event, source)
             if event.get("t") == "result":
-                captured = {key: event[key] for key in ("video", "caption") if key in event}
+                captured = {key: value for key, value in event.items() if key != "t"}
     finally:
         stop.set()
         watcher.join(timeout=1)

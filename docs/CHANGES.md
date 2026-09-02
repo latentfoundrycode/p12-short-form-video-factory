@@ -2,6 +2,17 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-02 — A-2: the `Result` a workflow returns
+
+`sfvf.Result` (SDK §3.3) is now a public type a workflow's `run()` returns to report its finished video:
+`video` (Path, required) plus optional `caption`, `hashtags`, `cover_frame_s` (default 1.0), `notes`, and
+`extra`. The SDK runner turns a returned `Result` into the `result` event the chassis already records,
+with the video path made **relative to the video folder** (SDK §5.5), and the supervisor now persists the
+**whole** Result into `video.json` (previously only `video`/`caption` survived) — so `extra` is recorded
+verbatim (the basis for `ctx.previous` continuity) and `notes` reaches the detail view. An example
+workflow's finished file therefore reaches `video.json` by returning it, rather than hand-emitting a
+result event. Workflows that return `None` and emit their own event are unaffected (backward compatible).
+
 ## 2026-09-02 — Stage A begins; T1 (early HyperFrames/Kinocut) reversed
 
 The remaining build order is settled as A→B→C→D→E→F→G (arch §7): **A** the provided-functions dry-run
