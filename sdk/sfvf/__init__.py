@@ -1,4 +1,4 @@
-from . import agents
+from . import agents, media
 from .agents import Source
 from .context import Context, ContextFile, ContextPaths
 from .emit import emit, heartbeat, log, stage
@@ -14,5 +14,6 @@ __all__ = [
     "emit",
     "heartbeat",
     "log",
+    "media",
     "stage",
 ]
