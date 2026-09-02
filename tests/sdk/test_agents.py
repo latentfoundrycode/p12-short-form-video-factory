@@ -4,8 +4,13 @@
 Context (A-1) to decide dry-run. In dry-run they return deterministic free stubs so a
 workflow's structure can be exercised for nothing (SDK §10). The real OpenRouter adapter
 arrives in Stage B, so the non-dry path raises rather than silently doing nothing.
+
+Provided-function results must be JSON-serializable, because the documented pattern caches
+them via `ctx.step` and step results are JSON (SDK §5.5). So `Source` is a TypedDict (a
+plain dict at runtime) rather than a rich object, and `research()` returns JSON-native data.
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -51,16 +56,33 @@ def test_llm_dry_run_returns_deterministic_text(tmp_path: Path) -> None:
     assert first == second  # deterministic in the inputs
 
 
-def test_llm_dry_run_with_schema_returns_dict(tmp_path: Path) -> None:
+def test_llm_dry_run_with_schema_returns_matching_dict(tmp_path: Path) -> None:
+    # A structured-output stub must reflect the requested schema so a workflow that
+    # reads schema fields can be exercised in dry-run (not just get a generic blob).
+    schema = {
+        "type": "object",
+        "properties": {
+            "logline": {"type": "string"},
+            "beats": {"type": "array"},
+            "shots": {"type": "integer"},
+        },
+    }
     token = set_active(_ctx(tmp_path, dry_run=True))
     try:
-        out = agents.llm("give me json", agent="a", model="m", schema={"type": "object"})
+        out = agents.llm("give me json", agent="a", model="m", schema=schema)
+        again = agents.llm("give me json", agent="a", model="m", schema=schema)
     finally:
         reset_active(token)
     assert isinstance(out, dict)
+    assert set(out) == {"logline", "beats", "shots"}
+    assert isinstance(out["logline"], str)
+    assert isinstance(out["beats"], list)
+    assert isinstance(out["shots"], int)
+    assert out == again  # deterministic
+    json.dumps(out)  # JSON-serializable
 
 
-def test_research_dry_run_returns_sources(tmp_path: Path) -> None:
+def test_research_dry_run_returns_json_native_sources(tmp_path: Path) -> None:
     token = set_active(_ctx(tmp_path, dry_run=True))
     try:
         first = agents.research("krebs cycle")
@@ -69,12 +91,15 @@ def test_research_dry_run_returns_sources(tmp_path: Path) -> None:
         reset_active(token)
     assert isinstance(first, list)
     assert first  # non-empty
-    assert all(isinstance(s, Source) for s in first)
+    # Source is a TypedDict — plain dicts at runtime, so results cache via ctx.step.
+    assert set(Source.__annotations__) == {"title", "url", "snippet"}
     for s in first:
-        assert isinstance(s.title, str)
-        assert isinstance(s.url, str)
-        assert isinstance(s.snippet, str)
+        assert isinstance(s, dict)
+        assert isinstance(s["title"], str)
+        assert isinstance(s["url"], str)
+        assert isinstance(s["snippet"], str)
     assert first == second  # deterministic in the query
+    json.dumps(first)  # JSON-serializable (SDK §5.5) — must not raise
 
 
 def test_llm_non_dry_run_raises_not_implemented(tmp_path: Path) -> None:

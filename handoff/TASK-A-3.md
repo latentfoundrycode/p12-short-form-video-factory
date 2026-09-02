@@ -17,8 +17,10 @@ llm(prompt, *, agent, model, schema=None, attach=None) -> str | dict
 research(query) -> list[Source]
 ```
 
-- `Source` — a small dataclass for a research result. The spec does not pin its shape, so use the minimal
-  useful form: `@dataclass class Source: title: str; url: str; snippet: str`.
+- `Source` — a **`TypedDict`** (from `typing`), not a dataclass: `class Source(TypedDict): title: str;
+  url: str; snippet: str`. It must be JSON-serializable at runtime (a plain `dict`), because the documented
+  pattern caches research results via `ctx.step` and **step results must be JSON-serializable** (SDK §5.5).
+  A rich object (dataclass) would raise `TypeError` in the step cache's `json.dump`.
 - Both functions read the ambient Context via `from ._runtime import current_context` to decide dry-run —
   they are **not** passed `ctx`. `current_context()` already raises if called outside a running workflow,
   which is the required "requires an active context" behaviour (do not catch it).
@@ -26,10 +28,15 @@ research(query) -> list[Source]
   - `llm(...)` with `schema is None` → a **deterministic**, non-empty placeholder **string** (a pure
     function of its inputs — e.g. derived from `agent`/`model`/`prompt`; no RNG, clock, or `id()`). The
     same inputs must return the same string.
-  - `llm(...)` with `schema` given → a **deterministic** placeholder **dict** (structured-output stub). A
-    minimal shape is fine (real schema-shaped output is Stage B); it must be a `dict`.
-  - `research(query)` → a **deterministic**, non-empty `list[Source]` derived from `query` (e.g. two
-    canned sources whose text mentions the query). Same query → equal list.
+  - `llm(...)` with `schema` given → a **deterministic** `dict` that **reflects the schema** so a workflow
+    reading structured fields can be exercised in dry-run. Treat `schema` as JSON-schema: if it has a
+    `"properties"` mapping, return one key per property with a typed placeholder by the property's `"type"`
+    (`"string"`→a placeholder str, `"integer"`/`"number"`→`0`, `"array"`→`[]`, `"object"`→`{}`,
+    `"boolean"`→`False`, else a str). If there are no recognisable properties, return a generic
+    `{"text": <stub>}`. Must be JSON-serializable and deterministic.
+  - `research(query)` → a **deterministic**, non-empty `list[Source]` (i.e. a `list[dict]`) derived from
+    `query` — e.g. two canned sources whose text mentions the query. Same query → equal list. It must pass
+    `json.dumps(...)` (JSON-native, SDK §5.5).
   - `attach` is accepted and ignored in the stub (real vision attachment is Stage B).
 - **Not dry-run** (`current_context().dry_run` is false): raise `NotImplementedError` with a clear message,
   e.g. `"agents.llm: the OpenRouter adapter arrives in Stage B; run with dry_run=True"` (and likewise for
