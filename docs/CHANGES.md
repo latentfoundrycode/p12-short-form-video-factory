@@ -2,6 +2,27 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-02 — A-7: the example workflow — Stage A complete
+
+`workflows/explainer/` is the first real workflow: a composition explainer that exercises the whole
+provided-functions surface — `agents.research` + `agents.llm`, `media.speech.speak`,
+`media.graphics.render`/`captions`/`safe_zone_css`, and the mandatory `finalize` — each expensive call
+wrapped in a cached `ctx.step`. Driven through the real supervisor (subprocess-per-video, the SDK runner,
+the step cache) in dry-run, it produces a valid house-format `final.mp4` (1080×1920) at **zero cost**, and
+a second run against the same cache reuses every step. It is **gate-free** (`ctx.gate` is deferred to Stage
+F) so it runs unattended end to end.
+
+This is the earliest end-to-end observable output — the integration proof that the SDK boundary and the
+execution engine work together against a real workflow. **Stage A (the provided-functions dry-run stub
+layer) is complete.**
+
+**Known DX seam (recorded):** `finalize` returns a video-relative *string* (uniform with the other media
+functions, which must return strings to cache through `ctx.step`), whereas `Result.video` is a `Path`
+(§3.3). The example bridges with `Result(video=ctx.video_dir / final)`. A workflow following §11.1's
+`Result(video=final)` verbatim would pass a string into a `Path` field. Smoothing this — e.g. having the
+runner's result serialisation accept a string, so both forms work — is a small SDK-ergonomics follow-up,
+noted so it is not rediscovered as a surprise.
+
 ## 2026-09-02 — A-6: `sfvf.finalize` — the mandatory last step
 
 `finalize(video, audio=None, captions=None)` (SDK §6.9) is the required final call of every workflow. It
