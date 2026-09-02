@@ -94,7 +94,7 @@ def test_captions_dry_run_returns_video_relative_file(tmp_path: Path) -> None:
     _rel_file(video_dir, out)
 
 
-def test_safe_zone_css_returns_video_relative_file(tmp_path: Path) -> None:
+def test_safe_zone_css_uses_prd_margins(tmp_path: Path) -> None:
     video_dir = tmp_path / "01"
     video_dir.mkdir()
     token = set_active(_ctx(video_dir, dry_run=True))
@@ -103,7 +103,25 @@ def test_safe_zone_css_returns_video_relative_file(tmp_path: Path) -> None:
     finally:
         reset_active(token)
     assert isinstance(out, str)
-    _rel_file(video_dir, out)
+    css = _rel_file(video_dir, out).read_text(encoding="utf-8")
+    # PRD: the reserved regions are the top 10%, the right 15%, and the bottom 15%.
+    assert "padding-top: 10%" in css
+    assert "padding-right: 15%" in css
+    assert "padding-bottom: 15%" in css
+
+
+def test_render_hashing_has_no_ambiguous_collision(tmp_path: Path) -> None:
+    # Distinct (html, duration_s) inputs must not collide onto one artifact. Naive
+    # concatenation would make ("x1", 2.0) and ("x", 12.0) both key on "x12.0".
+    video_dir = tmp_path / "01"
+    video_dir.mkdir()
+    token = set_active(_ctx(video_dir, dry_run=True))
+    try:
+        first = media.graphics.render("x1", duration_s=2.0)
+        second = media.graphics.render("x", duration_s=12.0)
+    finally:
+        reset_active(token)
+    assert first != second
 
 
 def test_check_dry_run_reports_no_violations(tmp_path: Path) -> None:

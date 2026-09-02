@@ -23,9 +23,14 @@ check(composition_html, *, safe_zone=True) -> list[Violation]
 - `Violation` — a JSON-native `TypedDict` (e.g. `class Violation(TypedDict): kind: str; detail: str`).
 - Read the ambient Context with `from .._runtime import current_context`. Do not accept `ctx`.
 - All file-producing functions write into `ctx.paths.artifacts`, using **deterministic content-derived
-  filenames** (first 8 hex of a `sha256` over the relevant inputs), and return the file's path **relative to
-  `ctx.paths.video`** as a POSIX string (e.g. `"artifacts/render-<sha>.mp4"`). Create `ctx.paths.artifacts`
-  if needed. Same inputs → identical relative path (deterministic, even across video folders).
+  filenames** (first 8 hex of a `sha256`), and return the file's path **relative to `ctx.paths.video`** as a
+  POSIX string (e.g. `"artifacts/render-<sha>.mp4"`). Create `ctx.paths.artifacts` if needed. Same inputs →
+  identical relative path (deterministic, even across video folders).
+- **Hash inputs unambiguously.** Do NOT concatenate inputs into one string (`f"{html}{duration_s}"` makes
+  `("x1", 2.0)` and `("x", 12.0)` collide on `"x12.0"` — two distinct renders would overwrite one file).
+  Hash a JSON-serialised structured key instead, e.g. `sha256(json.dumps([composition_html, duration_s]))`
+  for `render` and `sha256(json.dumps([audio, timings, style]))` for `captions`. This mirrors the SDK-1
+  cache's canonicalisation invariant (distinct inputs never share a key).
 - **`render(composition_html, *, duration_s)`** — dry-run: a colour-bars clip of `duration_s` via
   `sfvf._ffmpeg.color_bars(dest, duration_s=duration_s, width=W, height=H, fps=FPS)`. A fixed default size
   is fine (e.g. 1080×1920 @ 30, the default vertical short); real per-`[output]` sizing is Stage B/later.
@@ -34,10 +39,13 @@ check(composition_html, *, safe_zone=True) -> list[Violation]
 - **`captions(audio, timings, style)`** — dry-run: write a minimal subtitle file (a `.srt` or `.vtt`) built
   from `timings` (each `{word,start,end}` → a cue) into artifacts; return its video-relative path. Filename
   from `sha256` over `audio` + the JSON of `timings` + `style`. **Not dry-run → `NotImplementedError`.**
-- **`safe_zone_css()`** — write a small CSS file (a fixed safe-zone: e.g. padding margins) into artifacts and
-  return its video-relative path. This is format logic, not a HyperFrames call, so it works in **both** dry
-  and non-dry modes (do not raise). (`[output]`-aware margins are deferred — `[output]` is not in the
-  runtime Context yet.)
+- **`safe_zone_css()`** — write a CSS file into artifacts and return its video-relative path. Use the
+  **PRD's authoritative reserved-region margins** (a `.safe-zone` class): `padding-top: 10%`,
+  `padding-right: 15%`, `padding-bottom: 15%`, `padding-left: 0` (PRD: "the reserved regions are the bottom
+  15%, the right 15%, and the top 10% of the frame"). Emit those exact property/value strings. This is
+  format logic, not a HyperFrames call, so it works in **both** dry and non-dry modes (do not raise).
+  (Per-`[output]` variation — e.g. `safe_zone="none"` → no margins — is deferred; `[output]` is not in the
+  runtime Context yet. Emit the tiktok/vertical margins for now.)
 - **`check(composition_html, *, safe_zone=True)`** — dry-run: return `[]` (no violations). **Not dry-run →
   `NotImplementedError`** (real DOM inspection is HyperFrames, Stage B).
 - Do not emit a cost event (deferred to Stage C).

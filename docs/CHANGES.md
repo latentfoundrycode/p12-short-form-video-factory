@@ -11,7 +11,11 @@ timings, style)` writes a subtitle file from the word timings; `safe_zone_css()`
 **video-relative path strings** (JSON-native), so a `render` result caches through `ctx.step` and the file
 is content-addressed by the step cache — extending the A-3/A-4 pattern. `render`/`captions`/`check` raise
 `NotImplementedError` outside dry-run (HyperFrames is Stage B); `safe_zone_css` is format logic and returns
-its CSS in both modes. No cost event (deferred to Stage C).
+its CSS in both modes, using the PRD's authoritative reserved-region margins (top 10%, right 15%, bottom
+15%). Filenames hash a JSON-serialised structured key (not naive concatenation) so distinct inputs never
+collide onto one artifact — matching the SDK-1 cache canonicalisation invariant. No cost event (deferred to
+Stage C). (Both refinements came from the cross-family reviewer: a 5% right margin would let content render
+under the platform's buttons, and concatenated hash material could alias two distinct renders.)
 
 ## 2026-09-02 — A-4: `sfvf.media.speech` dry-run stub
 
