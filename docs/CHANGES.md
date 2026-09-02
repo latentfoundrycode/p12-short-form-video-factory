@@ -5,7 +5,8 @@ A running log of notable changes outside the per-task build history.
 ## 2026-09-02 — A-6: `sfvf.finalize` — the mandatory last step
 
 `finalize(video, audio=None, captions=None)` (SDK §6.9) is the required final call of every workflow. It
-applies the house format with FFmpeg — H.264, the default vertical 1080×1920 @ 30fps, `-14` LUFS loudness —
+applies the house format with FFmpeg — H.264, the default vertical 1080×1920 @ 30fps (square pixels,
+`setsar=1`, so an anamorphic input still displays a true 9:16), `-14` LUFS loudness —
 muxing the optional narration and captions, and returns the finished file's video-relative path
 (`"final.mp4"`). It is REAL in both dry and non-dry modes (FFmpeg is local/free), and reachable as both
 `sfvf.finalize` and `media.finalize`. Its self-review is **structural** for now: the output must be a valid

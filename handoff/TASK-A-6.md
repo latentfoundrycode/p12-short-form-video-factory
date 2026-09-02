@@ -26,8 +26,11 @@ finalize(video, audio=None, captions=None) -> str
   file does not exist.
 - **Apply the house format** with one FFmpeg invocation producing `ctx.paths.video / "final.mp4"`:
   - Video: scale/pad to **1080×1920** (the PRD default vertical short), **30 fps**, `libx264`,
-    `-pix_fmt yuv420p`. (Per-`[output]` sizing is deferred — `[output]` is not in the Context yet; use these
-    fixed house values.)
+    `-pix_fmt yuv420p`, and **`setsar=1`** — reset the sample aspect ratio to square pixels so the display
+    aspect is a true 9:16. Without it, an anamorphic input (SAR≠1, which a real video provider can emit)
+    encodes at 1080×1920 storage but displays at the wrong ratio, and the structural self-review would not
+    catch it. Append `setsar=1` to the filter chain. (Per-`[output]` sizing is deferred — `[output]` is not
+    in the Context yet; use these fixed house values.)
   - Audio (only if `audio` given): include it, AAC, and normalise loudness toward **-14 LUFS**
     (`loudnorm`, single pass is fine). If no `audio`, the output has no audio track.
   - Captions (only if `captions` given): mux the subtitle file as a **soft** subtitle stream
