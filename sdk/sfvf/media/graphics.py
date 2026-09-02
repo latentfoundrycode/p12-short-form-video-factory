@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 from pathlib import Path
 from typing import TypedDict
 
@@ -16,7 +19,8 @@ from .speech import WordTiming
 _WIDTH = 1080
 _HEIGHT = 1920
 _FPS = 30
-_RENDER_TIMEOUT_S = 300
+_DEFAULT_RENDER_TIMEOUT_S = 1800
+_HEARTBEAT_PERIOD_S = 1.0
 
 _SAFE_ZONE_CSS = """\
 .safe-zone {
@@ -175,32 +179,84 @@ def _index_html(composition_html: str, duration_s: float) -> str:
 
 
 def _run(command: list[str]) -> str:
+    timeout_s = _hyperframes_timeout_s()
     try:
-        completed = subprocess.run(  # noqa: S603
+        proc = subprocess.Popen(  # noqa: S603
             command,
-            check=True,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
             encoding="utf-8",
             errors="replace",
             env={**os.environ, "HYPERFRAMES_SKIP_SKILLS": "1"},
-            timeout=_RENDER_TIMEOUT_S,
         )
-    except subprocess.CalledProcessError as exc:
-        stderr = exc.stderr or ""
-        raise RuntimeError(f"command failed: {command}\n{stderr}") from exc
-    except subprocess.TimeoutExpired as exc:
-        stderr = _timeout_stderr(exc.stderr)
-        raise RuntimeError(f"command failed: {command}\n{stderr}") from exc
     except OSError as exc:
         raise RuntimeError(f"command failed: {command}\n{exc}") from exc
-    return completed.stdout
+
+    chunks: list[str] = []
+    last_beat = 0.0
+    ctx = current_context()
+
+    def _beat() -> None:
+        nonlocal last_beat
+        now = time.monotonic()
+        if now - last_beat < _HEARTBEAT_PERIOD_S:
+            return
+        last_beat = now
+        ctx.heartbeat("render", waiting_on="hyperframes")
+
+    def _read_stdout() -> None:
+        stdout = proc.stdout
+        if stdout is None:
+            return
+        try:
+            for line in stdout:
+                chunks.append(line)
+                _beat()
+        except (ValueError, OSError):
+            return
+
+    reader = threading.Thread(target=_read_stdout, daemon=True)
+    reader.start()
+    _beat()
+    deadline = time.monotonic() + timeout_s
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _kill_process(proc)
+                reader.join(timeout=5)
+                raise RuntimeError(f"command failed: {command}\n{''.join(chunks)}")
+            try:
+                returncode = proc.wait(timeout=min(_HEARTBEAT_PERIOD_S, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                _beat()
+        reader.join()
+    finally:
+        if proc.stdout is not None:
+            proc.stdout.close()
+
+    output = "".join(chunks)
+    if returncode:
+        raise RuntimeError(f"command failed: {command}\n{output}")
+    return output
 
 
-def _timeout_stderr(stderr: str | bytes | None) -> str:
-    if isinstance(stderr, bytes):
-        return stderr.decode(errors="replace")
-    return stderr or ""
+def _hyperframes_timeout_s() -> float:
+    raw = os.environ.get("SFVF_HYPERFRAMES_TIMEOUT_S", str(_DEFAULT_RENDER_TIMEOUT_S))
+    try:
+        return max(float(raw), 1.0)
+    except ValueError:
+        return float(_DEFAULT_RENDER_TIMEOUT_S)
+
+
+def _kill_process(proc: subprocess.Popen[str]) -> None:
+    if proc.poll() is not None:
+        return
+    proc.kill()
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=5)
 
 
 def _sha8(payload: object) -> str:
