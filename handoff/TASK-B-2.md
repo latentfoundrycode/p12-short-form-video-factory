@@ -37,9 +37,11 @@ cut(clips, *, transitions=None) -> str
 
 Reuse the same patterns `graphics.py` established — read them there and mirror them:
 
-1. **Ambient context:** `ctx = current_context()` (from `sfvf._runtime`) at the top of each function, so a call
-   with no active context raises `LookupError` (the frozen `test_edit_requires_active_context` asserts this).
-   Do NOT gate on `ctx.dry_run` — edit runs real in both modes.
+1. **Ambient context:** `ctx = current_context()` (from `sfvf._runtime`) **directly** at the top of each
+   function — exactly as `graphics.render` does — so a call with no active context raises the SDK-standard
+   `RuntimeError` (the frozen `test_edit_requires_active_context` asserts `RuntimeError`, matching
+   graphics/agents/finalize). Do NOT wrap or convert that exception. Do NOT gate on `ctx.dry_run` — edit runs
+   real in both modes.
 2. **Resolve inputs:** the `video`/`clips` arguments are **video-relative** path strings. Resolve each against
    `ctx.paths.video` to an absolute path before handing it to Kinocut (`(ctx.paths.video / rel).resolve()`).
    You may assume they exist; if a resolved input is missing, a clear error is fine.

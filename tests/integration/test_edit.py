@@ -185,7 +185,8 @@ def test_trim_is_deterministic_across_video_folders(tmp_path: Path) -> None:
 
 
 def test_edit_requires_active_context() -> None:
-    # Like the rest of the SDK surface, edit reads the ambient context, so calling it
-    # with no active context raises rather than silently doing nothing.
-    with pytest.raises(LookupError):
+    # Like the rest of the SDK surface (graphics/agents/finalize), edit reads the ambient
+    # context, so calling it with no active context raises RuntimeError rather than
+    # silently doing nothing.
+    with pytest.raises(RuntimeError):
         media.edit.trim("artifacts/red.mp4", 0.0, 1.0)
