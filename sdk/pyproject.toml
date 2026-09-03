@@ -11,5 +11,14 @@ dependencies = [
     "pydantic>=2.13,<3",
 ]
 
+# `media.edit` (trim/cut) wraps Kinocut's local/free FFmpeg-backed Client. It drags a
+# heavy transitive stack (the MCP server: mcp/starlette/uvicorn/cryptography/pywin32),
+# so it is an OPTIONAL extra — the core SDK stays lean and only environments that edit
+# install it. The adapter lazy-imports it and raises a clear error if absent.
+[project.optional-dependencies]
+edit = [
+    "kinocut==1.15.1",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["sfvf"]

@@ -6,3 +6,8 @@ ruff==0.12.11
 mypy==1.18.1
 pytest==9.1.1
 httpx2==2.10.0
+# Kinocut backs media.edit (trim/cut) — the SDK `edit` optional extra. Pinned here so the
+# CI gate installs it (alongside ffmpeg) and the media.edit integration tests RUN rather
+# than skip. Its constraints are loose (pydantic>=2.13.2, mcp, rich) and resolve cleanly
+# against the app pins above (fastapi/uvicorn/pydantic all hold). Windows-first, Apache-2.0.
+kinocut==1.15.1
