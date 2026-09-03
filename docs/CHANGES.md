@@ -53,6 +53,11 @@ ceiling exists to stop). Rule from here: a finding **blocks the merge only if it
 render correctness, asset resolution, output validity, determinism, anything about what the rendered video
 actually is. A further edge in the **process-teardown / timeout / kill-path / threading family does not spin a
 new round**; it is logged to the *HyperFrames renderer hardening* backlog below and the increment merges.
+Applying that rule to the final review: a render-class finding was raised (that `#root` carries only
+`data-width`/`data-height` and no CSS size, so percentage-height content would collapse) and **investigated
+empirically before deciding** — a `width:100%;height:100%` child relative to `#root` renders full-bleed
+(centre pixel red), proving HyperFrames sizes the root stage from those data attributes at runtime, so the
+finding does not hold; it did not block. The concurrent teardown-family finding was logged to the backlog.
 
 **HyperFrames renderer hardening backlog** (tracked follow-up; none block B-1b): (1) **GSAP from CDN** —
 `render` reaches jsDelivr at render time (matching HyperFrames' own template); works in every environment we
@@ -61,7 +66,14 @@ offline renders don't stall. (2) **`ctx.map` shared-artifacts copy race** (Revie
 per-render `copytree` of `ctx.paths.artifacts` into the temp project is not concurrency-safe if renders under
 one video ever run in parallel via `ctx.map`; make the artifact staging isolation-safe before that path is
 used. (3) **Process-teardown family** — any future kill-path / timeout / reader-thread edge on the
-Node→Chrome→FFmpeg tree lands here rather than re-delegating. (4) **Cold-start render flake** — an occasional
+Node→Chrome→FFmpeg tree lands here rather than re-delegating. Concrete open items from the final review:
+`_kill_process` early-returns when Node has already exited (`proc.poll() is not None`), so in the
+reader-hang path it no-ops on still-alive Chrome/FFmpeg descendants — the reader still unblocks (`_run` closes
+the read end of the pipe), but the orphaned descendants are not reaped; and on POSIX `_kill_process` kills
+only Node, not the process group. Harden `_kill_process` to reap the descendant tree even when Node is already
+dead, and to use a process-group kill on POSIX. Also (Review A note) the kill-and-raise branch's
+`"".join(chunks)` can read the list while a still-alive reader appends — GIL-safe, at worst a slightly
+truncated error message. (4) **Cold-start render flake** — an occasional
 first-render frame can sample non-red (Chrome cold-start / paint timing) while re-runs and the full suite are
 green; add a warm-up or CI retry for the render integration test so the gate isn't intermittently flaky.
 
