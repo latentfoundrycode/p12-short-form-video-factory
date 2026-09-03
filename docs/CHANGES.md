@@ -2,6 +2,81 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-02 — B-1b: `media.graphics.render` renders real composed video (HyperFrames)
+
+`media.graphics.render(html, *, duration_s)` now renders the composition for real through the pinned
+HyperFrames toolchain (B-1a), replacing the A-5 colour-bar stub. It wraps the workflow's HTML into a minimal
+HyperFrames project — `hyperframes.json` + an `index.html` with `<div id="root" data-duration data-width
+data-height>` and the `window.__timelines["main"]` readiness signal — and runs `hyperframes render` to a
+1080×1920 MP4, returned as a video-relative path string. Per SDK §10 the renderer is free/local, so it runs
+**REAL in both dry and non-dry modes** (the A-5 `NotImplementedError` outside dry-run is gone) — this is what
+makes real composed video appear at zero cost with no live keys. The toolchain entry is resolved via
+`SFVF_HYPERFRAMES_ENTRY` (env) else repo-relative from the SDK's own location (editable install →
+`tools/hyperframes/`). Deterministic in `(html, duration_s)`; the filename hash is unchanged from A-5. The renderer copies the
+video's `artifacts/` into the temporary project so a composition's video-relative asset references (e.g. the
+safe-zone CSS it `@import`s) actually resolve during the headless render — HyperFrames serves the project
+over HTTP, so a `file://` base cannot reach them. The readiness signal is registered with `||` so it never
+clobbers a timeline the composition registers itself. The render streams the child's output and **emits
+heartbeats** so the supervisor's silence watchdog (§2.8) never kills a legitimately slow render (as the
+polling media adapters do, §6.3); its safety timeout is a large, env-configurable cap rather than one that
+fights the silence limit or the manifest render limit. On a timeout it kills the **whole process tree**
+(mirroring `kill_tree` — `taskkill /F /T` on Windows), so HyperFrames' Chrome/FFmpeg descendants aren't
+orphaned.
+
+**Recorded review calls (cross-family reviewer, split resolved by the supervisor):** (1) the observation
+that `render`'s filename hash keys only on `(html, duration_s)` is **not a cache defect** — that hash is the
+output *filename* for dedup, not the step cache key; caching is `ctx.step` on the workflow's inputs, and
+SFVF assets are content-addressed (a content change changes the asset's path, hence the html, hence the
+key), so stale hits don't arise under the convention. (2) GSAP is loaded from the jsDelivr CDN (matching
+HyperFrames' own template), so a render needs network egress; this works in every environment we run (CI +
+local) but is a **deferred hardening item** — serve/vendor GSAP locally so offline renders don't stall.
+`captions`/`safe_zone_css`/`check` are unchanged (still SFVF/stub; `check`→HyperFrames lands in B-1c). The
+render tests moved to `tests/integration/test_graphics_render.py` (skipped where the toolchain isn't
+installed; a sampled frame proves the supplied HTML actually rendered).
+
+**Later hardening rounds (process-teardown family) and the exit rule.** After the render core was
+pixel-verified and agreed by both reviewer families, the cross-family gate kept surfacing edges in one
+territory — process-kill / timeout / reader-thread teardown of a Node→Chrome→FFmpeg tree on Windows. Landed
+in this increment: streaming heartbeats; a large env-configurable safety timeout; whole-tree kill via
+`taskkill /F /T` mirroring `app/core/proc.py::kill_tree`; `SFVF_HYPERFRAMES_TIMEOUT_S` validated with
+`math.isfinite` (nan/inf/non-positive → default) so a malformed value can't disable the deadline; a final
+`proc.kill()` fallback when the post-kill `wait` times out; and a **deadline-bounded reader join** — because
+Node exiting is not stdout EOF while a descendant still holds the pipe, the reader is joined in
+heartbeat-sized slices up to the same safety deadline and, if still alive, the tree is killed and stdout
+closed to unblock it, converting a would-be hang into the normal `command failed` path.
+
+**Supervisor exit-rule decision (recorded).** The convergence read for B-1b was reset from round-count to
+defect *class*. The render — what the video actually is — has been correct and agreed for rounds; what keeps
+churning is the safety-net on a genuinely hard subsystem that will yield edges indefinitely under adversarial
+review (the long tail of a hard corner, exactly the endlessly-thorough-verifier case the re-delegation
+ceiling exists to stop). Rule from here: a finding **blocks the merge only if it is a new class of defect** —
+render correctness, asset resolution, output validity, determinism, anything about what the rendered video
+actually is. A further edge in the **process-teardown / timeout / kill-path / threading family does not spin a
+new round**; it is logged to the *HyperFrames renderer hardening* backlog below and the increment merges.
+Applying that rule to the final review: a render-class finding was raised (that `#root` carries only
+`data-width`/`data-height` and no CSS size, so percentage-height content would collapse) and **investigated
+empirically before deciding** — a `width:100%;height:100%` child relative to `#root` renders full-bleed
+(centre pixel red), proving HyperFrames sizes the root stage from those data attributes at runtime, so the
+finding does not hold; it did not block. The concurrent teardown-family finding was logged to the backlog.
+
+**HyperFrames renderer hardening backlog** (tracked follow-up; none block B-1b): (1) **GSAP from CDN** —
+`render` reaches jsDelivr at render time (matching HyperFrames' own template); works in every environment we
+run, but it is a live external call inside the zero-cost *local* renderer, so vendor/serve GSAP locally so
+offline renders don't stall. (2) **`ctx.map` shared-artifacts copy race** (Review A, non-blocking) — the
+per-render `copytree` of `ctx.paths.artifacts` into the temp project is not concurrency-safe if renders under
+one video ever run in parallel via `ctx.map`; make the artifact staging isolation-safe before that path is
+used. (3) **Process-teardown family** — any future kill-path / timeout / reader-thread edge on the
+Node→Chrome→FFmpeg tree lands here rather than re-delegating. Concrete open items from the final review:
+`_kill_process` early-returns when Node has already exited (`proc.poll() is not None`), so in the
+reader-hang path it no-ops on still-alive Chrome/FFmpeg descendants — the reader still unblocks (`_run` closes
+the read end of the pipe), but the orphaned descendants are not reaped; and on POSIX `_kill_process` kills
+only Node, not the process group. Harden `_kill_process` to reap the descendant tree even when Node is already
+dead, and to use a process-group kill on POSIX. Also (Review A note) the kill-and-raise branch's
+`"".join(chunks)` can read the list while a still-alive reader appends — GIL-safe, at worst a slightly
+truncated error message. (4) **Cold-start render flake** — an occasional
+first-render frame can sample non-red (Chrome cold-start / paint timing) while re-runs and the full suite are
+green; add a warm-up or CI retry for the render integration test so the gate isn't intermittently flaky.
+
 ## 2026-09-02 — B-1a: HyperFrames render toolchain (Stage B begins)
 
 Stage B (the provider layer) starts with the local, zero-cost renderers. This lands the pinned HeyGen
