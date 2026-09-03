@@ -222,19 +222,31 @@ def _run(command: list[str]) -> str:
     reader.start()
     _beat()
     deadline = time.monotonic() + timeout_s
+    returncode: int | None = None
     try:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                _kill_process(proc)
-                reader.join(timeout=5)
-                raise RuntimeError(f"command failed: {command}\n{''.join(chunks)}")
+                break
             try:
                 returncode = proc.wait(timeout=min(_HEARTBEAT_PERIOD_S, remaining))
                 break
             except subprocess.TimeoutExpired:
                 _beat()
-        reader.join()
+        # Node exiting is not EOF while Chrome/FFmpeg still hold stdout. Bound
+        # the join by the same safety deadline; a still-alive reader is a hang.
+        while reader.is_alive():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            reader.join(timeout=min(_HEARTBEAT_PERIOD_S, remaining))
+            _beat()
+        if returncode is None or reader.is_alive():
+            _kill_process(proc)
+            if proc.stdout is not None:
+                proc.stdout.close()
+            reader.join(timeout=5)
+            raise RuntimeError(f"command failed: {command}\n{''.join(chunks)}")
     finally:
         if proc.stdout is not None:
             proc.stdout.close()

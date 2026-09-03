@@ -34,6 +34,37 @@ local) but is a **deferred hardening item** — serve/vendor GSAP locally so off
 render tests moved to `tests/integration/test_graphics_render.py` (skipped where the toolchain isn't
 installed; a sampled frame proves the supplied HTML actually rendered).
 
+**Later hardening rounds (process-teardown family) and the exit rule.** After the render core was
+pixel-verified and agreed by both reviewer families, the cross-family gate kept surfacing edges in one
+territory — process-kill / timeout / reader-thread teardown of a Node→Chrome→FFmpeg tree on Windows. Landed
+in this increment: streaming heartbeats; a large env-configurable safety timeout; whole-tree kill via
+`taskkill /F /T` mirroring `app/core/proc.py::kill_tree`; `SFVF_HYPERFRAMES_TIMEOUT_S` validated with
+`math.isfinite` (nan/inf/non-positive → default) so a malformed value can't disable the deadline; a final
+`proc.kill()` fallback when the post-kill `wait` times out; and a **deadline-bounded reader join** — because
+Node exiting is not stdout EOF while a descendant still holds the pipe, the reader is joined in
+heartbeat-sized slices up to the same safety deadline and, if still alive, the tree is killed and stdout
+closed to unblock it, converting a would-be hang into the normal `command failed` path.
+
+**Supervisor exit-rule decision (recorded).** The convergence read for B-1b was reset from round-count to
+defect *class*. The render — what the video actually is — has been correct and agreed for rounds; what keeps
+churning is the safety-net on a genuinely hard subsystem that will yield edges indefinitely under adversarial
+review (the long tail of a hard corner, exactly the endlessly-thorough-verifier case the re-delegation
+ceiling exists to stop). Rule from here: a finding **blocks the merge only if it is a new class of defect** —
+render correctness, asset resolution, output validity, determinism, anything about what the rendered video
+actually is. A further edge in the **process-teardown / timeout / kill-path / threading family does not spin a
+new round**; it is logged to the *HyperFrames renderer hardening* backlog below and the increment merges.
+
+**HyperFrames renderer hardening backlog** (tracked follow-up; none block B-1b): (1) **GSAP from CDN** —
+`render` reaches jsDelivr at render time (matching HyperFrames' own template); works in every environment we
+run, but it is a live external call inside the zero-cost *local* renderer, so vendor/serve GSAP locally so
+offline renders don't stall. (2) **`ctx.map` shared-artifacts copy race** (Review A, non-blocking) — the
+per-render `copytree` of `ctx.paths.artifacts` into the temp project is not concurrency-safe if renders under
+one video ever run in parallel via `ctx.map`; make the artifact staging isolation-safe before that path is
+used. (3) **Process-teardown family** — any future kill-path / timeout / reader-thread edge on the
+Node→Chrome→FFmpeg tree lands here rather than re-delegating. (4) **Cold-start render flake** — an occasional
+first-render frame can sample non-red (Chrome cold-start / paint timing) while re-runs and the full suite are
+green; add a warm-up or CI retry for the render integration test so the gate isn't intermittently flaky.
+
 ## 2026-09-02 — B-1a: HyperFrames render toolchain (Stage B begins)
 
 Stage B (the provider layer) starts with the local, zero-cost renderers. This lands the pinned HeyGen
