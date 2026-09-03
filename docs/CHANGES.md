@@ -2,6 +2,56 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-03 — B-2: `media.edit` (trim + cut) on real Kinocut
+
+`sfvf.media.edit` lands as a real adapter over **Kinocut**'s local/free, FFmpeg-backed programmatic `Client`
+(`KyaniteLabs/kinocut`, PyPI `kinocut==1.15.1`, Apache-2.0, no account/key, nothing uploaded). Per SDK §10 it
+runs **REAL in both dry and non-dry modes** — `dry_run` means "no paid spend", not "no editing" — so like
+`graphics.render` and `finalize` it produces real output at zero cost with no live keys. Scope this increment:
+`trim(video, start, end)` → `Client.trim(start=, end=)` and `cut(clips, *, transitions=None)` →
+`Client.merge(transitions=)`. Both take **video-relative** path strings, resolve them against
+`ctx.paths.video`, run Kinocut writing a content-addressed `edit-trim-<sha>.mp4` / `edit-cut-<sha>.mp4` under
+`ctx.paths.artifacts`, and return the result **video-relative** (POSIX) so it survives the JSON step cache
+(§5.5) — mirroring the `graphics.render` conventions. `mix`/duck (§6.6) is intentionally **deferred** until a
+workflow needs audio mixing (Kinocut splits it into `audio_compose` vs. `audio_bed` sidechain ducking, the
+fiddliest mapping — not built ahead of need).
+
+**Sourcing (Option A):** Kinocut is a pinned PyPI dependency — nothing cloned or vendored. It is an
+**optional SDK extra** (`sfvf[edit] = ["kinocut==1.15.1"]`), lazy-imported by the adapter with a clear install
+error if absent, because its core drags a heavy transitive stack (the MCP server: `mcp`/`starlette`/`uvicorn`/
+`cryptography`/`pywin32`, ~28 packages) that has no place in lean core/production SDK installs — the same
+"heavy toolchain stays out of the base" stance as HyperFrames. The pins resolve cleanly against the app's
+locked set (verified: `fastapi==0.141.1`/`uvicorn==0.52.3`/`pydantic==2.13.4` all hold; Kinocut's constraints
+`pydantic>=2.13.2`/`mcp<2,>=1.27.0`/`rich>=15` are loose, and the ML extras (torch/whisper/opencv/onnxruntime)
+are not installed). The Kinocut Python `Client` API was pinned by introspecting the installed 1.15.1 package
+(methods return a pydantic `EditResult` with `.output_path`), not from hypothesised docs.
+
+**CI:** `kinocut==1.15.1` added to `requirements-dev.txt` (the gate/test env), so the gate installs it
+alongside the already-present FFmpeg and the `tests/integration/test_edit.py` contract RUNS on windows-latest
+rather than skipping. `mypy.ini` ignores missing imports for `kinocut.*` (it ships no `py.typed`).
+
+**Recorded review calls (both families; supervisor split-verdict resolution).** (1) A scaffolding defect the
+supervisor introduced and then corrected: the frozen `test_edit_requires_active_context` originally asserted
+`LookupError`, but `current_context()` raises `RuntimeError` and every other SDK adapter (graphics/agents/
+finalize) asserts `RuntimeError`. Both reviewers flagged the contract change; it is the **supervisor's**
+deliberate correction (a separate commit from the builder's product-code commit, which touches only
+`edit.py`/`__init__.py`), aligning the contract with the SDK convention — not a weakening. (2) The
+cross-family reviewer raised that `trim`/`cut` block synchronously while Kinocut runs FFmpeg and emit **no
+heartbeats**, so the supervisor's 300s silence watchdog (§2.8) could kill a legitimately long operation, as
+`graphics.render` heartbeats. Resolved as **deferred, not blocking**: the merged `finalize` (A-6) — the direct
+precedent, a blocking local FFmpeg encode of the whole video — also does not heartbeat, so this is not an
+invariant the gate enforces; `render` heartbeats specifically because HyperFrames is a browser subprocess with
+a known ~45s stall. Fixing `edit` alone would make it inconsistent with `finalize`, so the right fix is a
+**unified pass** over all blocking local FFmpeg ops. Logged to the backlog below. Non-blocking reviewer notes
+also logged: `edit` does not read `EditResult.output_path` (correctness relies on the passed `output=`, which
+is fine/robust), and inputs are `.resolve()`d against `ctx.paths.video` without a confinement check (matching
+`graphics.render`; inputs are workflow-authored/trusted).
+
+**Media FFmpeg-heartbeat backlog item (tracked follow-up, non-gating):** blocking local FFmpeg operations —
+`media.edit.trim`/`cut` AND `sfvf.finalize` — should emit periodic heartbeats (and/or honor a render-family
+`[[limits]]` cap) so the §2.8 silence watchdog cannot kill a legitimately long encode/concat. Do it as one
+consistent pass over both (thread the blocking call + beat `ctx.heartbeat`), not a one-off in `edit`.
+
 ## 2026-09-02 — B-1b: `media.graphics.render` renders real composed video (HyperFrames)
 
 `media.graphics.render(html, *, duration_s)` now renders the composition for real through the pinned
