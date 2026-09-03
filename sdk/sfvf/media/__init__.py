@@ -1,4 +1,4 @@
 from ..finalize import finalize
-from . import graphics, speech
+from . import edit, graphics, speech
 
-__all__ = ["finalize", "graphics", "speech"]
+__all__ = ["edit", "finalize", "graphics", "speech"]
