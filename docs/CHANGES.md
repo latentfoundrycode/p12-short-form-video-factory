@@ -2,6 +2,17 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-03 — B-4b: per-provider rate-limiter scaffolding (§5.5)
+
+New internal module `sdk/sfvf/_ratelimit.py`: a `RateLimiter` holding **one queue per provider** so a
+provider's own caps are respected however many steps run at once (§5.5, §3.1a). `slot(provider)` acquires a
+per-provider concurrency permit (`threading.Semaphore(max_concurrency)`) and paces successive requests by a
+configurable `min_interval_s`; `penalize(provider, retry_after_s)` records a server-sent `Retry-After` back-off
+as `not_before = max(not_before, now + retry_after_s)` (the **max**, never the sum). Providers are independent.
+A module-level `LIMITER` instance is what the provider adapters (OpenRouter next) route through. Timing goes
+through an injectable `monotonic`/`sleep` so it is deterministically testable. Scaffolding only — no adapter
+code, no network. This is the §5.5 primitive the OpenRouter and (later) Higgsfield adapters queue behind.
+
 ## 2026-09-03 — B-4a: `ctx.secret(name)` accessor (SDK-side secrets read, §5.6)
 
 First, smallest piece of the OpenRouter provider work: `Context.secret(name) -> str` reads a permitted secret

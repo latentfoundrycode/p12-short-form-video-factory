@@ -44,6 +44,20 @@ increments that logged them.
   run-admission / subprocess-spawn path — against the race. _Source: observed on B-2 CI (PR #26); previously
   recorded only in local `PROJECT_STATUS.md`, never shipped to origin until this ledger._ Open.
 
+- **H8 — `RateLimiter.configure` replaces a live semaphore.** `configure(provider, …)` rebuilds the
+  provider's `threading.Semaphore`, so reconfiguring **while slots are active** leaves old holders on the old
+  semaphore while new calls acquire the new one — the concurrency cap can be briefly bypassed. Not hit in
+  intended use (each provider is configured **once at adapter startup, before its first request**); the
+  contract is configure-before-use. Enforce that (reject/ignore reconfiguration once a provider is in use) or
+  adjust the live semaphore's capacity in place instead of replacing it. _Source: B-4b review B, P2 (PR #29)._
+  Open (low).
+- **H9 — `RateLimiter.slot` sleeps while holding the per-provider lock.** The paced/back-off `sleep` runs
+  under `state.lock`, so a concurrent `penalize()` (recording a `Retry-After`) blocks until the in-flight sleep
+  finishes — the deadline it then records is still correct, just a beat late. Refinement: compute the wait
+  under the lock, then release it before sleeping. Correct for every intended paced/concurrent/back-off
+  combination as-is (per review A analysis); this is a refinement, not a defect. _Source: B-4b review A, note
+  (PR #29)._ Open (low).
+
 ## Resolved
 
 _(none yet)_
