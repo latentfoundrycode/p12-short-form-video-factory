@@ -2,6 +2,16 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-03 — B-4a: `ctx.secret(name)` accessor (SDK-side secrets read, §5.6)
+
+First, smallest piece of the OpenRouter provider work: `Context.secret(name) -> str` reads a permitted secret
+from the ambient `context.json`'s `secrets` dict — the accessor the provider adapters pull their bearer token
+through (the SDK spec's `ctx.secret("OPENROUTER_API_KEY")`). A missing key raises `KeyError(name)`; the error
+names only the key and never leaks a value, and the accessor never logs or otherwise exposes the returned
+secret. **Deliberately only the read accessor** — the encrypted secret store, the passphrase prompt, and the
+injection of a real key into `context.json` (§5.6 app-layer) are the live-key boundary and are NOT built here.
+In tests the fake key lives only in an in-memory `ContextFile`; nothing is written to disk and no key is real.
+
 ## 2026-09-03 — B-2: `media.edit` (trim + cut) on real Kinocut
 
 `sfvf.media.edit` lands as a real adapter over **Kinocut**'s local/free, FFmpeg-backed programmatic `Client`
