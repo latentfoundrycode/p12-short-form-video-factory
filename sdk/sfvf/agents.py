@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -67,9 +68,12 @@ def _retry_after_s(header: str | None) -> float:
     if header is None:
         return _RETRY_AFTER_DEFAULT_S
     try:
-        return float(header)
+        value = float(header)
     except (TypeError, ValueError):
         return _RETRY_AFTER_DEFAULT_S
+    if not math.isfinite(value) or value < 0:
+        return _RETRY_AFTER_DEFAULT_S
+    return value
 
 
 def llm(
