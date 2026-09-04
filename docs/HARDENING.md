@@ -42,7 +42,13 @@ increments that logged them.
   concurrency transient under CI load, not tied to any provider code (B-2 lazy-imports kinocut; the run path
   never loads it; passes 4/4 locally). If it recurs, harden the two-run ordering test's launch/settle — or the
   run-admission / subprocess-spawn path — against the race. _Source: observed on B-2 CI (PR #26); previously
-  recorded only in local `PROJECT_STATUS.md`, never shipped to origin until this ledger._ Open.
+  recorded only in local `PROJECT_STATUS.md`, never shipped to origin until this ledger._ **RECURRED on B-4b CI
+  (PR #29): the same test hit a Windows `PermissionError` on `request.json`, AND `test_supervisor.py::
+  test_heartbeating_stub_survives_past_silence_limit` flaked the same way (stub run → terminal `failed`); both
+  passed on re-run.** So this is now a recurring, CI-blocking flake class across the app-layer subprocess-run
+  tests (`test_runs.py`, `test_supervisor.py`) under windows-latest load — not a one-off. Worth real hardening
+  of the run-admission / subprocess-spawn / temp-file handling (Windows file-lock + timing), or a scoped retry,
+  since it now costs a CI re-run most increments. Open (rising priority).
 
 - **H8 — `RateLimiter.configure` replaces a live semaphore.** `configure(provider, …)` rebuilds the
   provider's `threading.Semaphore`, so reconfiguring **while slots are active** leaves old holders on the old
@@ -57,6 +63,13 @@ increments that logged them.
   under the lock, then release it before sleeping. Correct for every intended paced/concurrent/back-off
   combination as-is (per review A analysis); this is a refinement, not a defect. _Source: B-4b review A, note
   (PR #29)._ Open (low).
+
+- **H10 — OpenRouter `usage.cost` is surfaced but not metered.** `agents.llm` parses the real per-call
+  `usage.cost` (and will estimate in dry_run) and surfaces it via a `ctx.log` line, but emits **no** cost/meter
+  event — deliberately, because the budget-engine cost/meter schema is Stage C's and a provisional event now
+  would only have to be migrated. Stage C must wire `usage.cost` (and the dry_run estimate) into the budget
+  engine so spend is actually recorded/metered, not just logged. Applies to every priced provider adapter as
+  they land. _Source: B-4c, deferred by design (PR #30)._ Open.
 
 ## Resolved
 
