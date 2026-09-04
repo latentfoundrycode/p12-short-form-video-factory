@@ -2,6 +2,21 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-03 — B-4c: real `agents.llm` over OpenRouter (mocked HTTP; no live call)
+
+The **non-dry** path of `agents.llm` now calls OpenRouter's chat-completions API (`httpx2`, added as the
+optional `sfvf[openrouter]` extra), exercised entirely against an `httpx2.MockTransport` — **no live network
+call is made anywhere**. `dry_run` is unchanged: a deterministic stub, no secret read, no HTTP. The real path
+reads the bearer token via `ctx.secret("OPENROUTER_API_KEY")` (a missing key fails before any request), sends
+`{model, messages}` (plus `response_format: json_schema` when a `schema` is requested — returning a parsed
+dict), and queues behind the §5.5 `RateLimiter` (`_LIMITER.slot("openrouter")`). Errors: **429** honors
+`Retry-After` via `_LIMITER.penalize` and retries (bounded); **402** is terminal (insufficient credits);
+others raise with status + body. Vision `attach` in non-dry raises rather than being silently ignored (§6.1);
+agent-rules injection is deferred to a later increment. `usage.cost` is parsed and surfaced in a `ctx.log`
+line, but **no cost event is emitted** — the budget-engine cost/meter schema is Stage C's (HARDENING H10).
+`research` keeps its dry-stub (its real OpenRouter path is the next increment). This is the last piece before
+the live-key boundary: a live call needs the encrypted secret store + a real key, neither built here.
+
 ## 2026-09-03 — B-4b: per-provider rate-limiter scaffolding (§5.5)
 
 New internal module `sdk/sfvf/_ratelimit.py`: a `RateLimiter` holding **one queue per provider** so a
