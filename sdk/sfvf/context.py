@@ -188,6 +188,7 @@ class Context:
     """Minimal runtime context passed to the workflow entrypoint as `func(ctx)`."""
 
     def __init__(self, file: ContextFile) -> None:
+        self._file = file
         self.settings = file.settings
         self.params = file.settings
         self.paths = file.paths
@@ -205,6 +206,13 @@ class Context:
         self.shared_dir = file.paths.shared
         self.workflow_dir = file.paths.workflow
         self.artifacts = file.paths.artifacts
+
+    def secret(self, name: str) -> str:
+        """Return a permitted secret from the ambient context.
+
+        The value is never logged. The encrypted store is out of scope.
+        """
+        return str(self._file.secrets[name])
 
     def emit(self, event: dict[str, Any]) -> None:
         emit(event)
