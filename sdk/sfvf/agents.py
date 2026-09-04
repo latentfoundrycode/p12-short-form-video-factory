@@ -11,11 +11,14 @@ from ._runtime import current_context
 if TYPE_CHECKING:
     import httpx2
 
+    from .context import Context
+
 _LIMITER.configure("openrouter", max_concurrency=2, min_interval_s=0.0)
 
 _HTTP_TIMEOUT_S = 60.0
 _RETRY_AFTER_DEFAULT_S = 1.0
 _MAX_ATTEMPTS = 3
+_RESEARCH_MODEL = "openai/gpt-4o-mini"
 
 
 class Source(TypedDict):
@@ -76,6 +79,38 @@ def _retry_after_s(header: str | None) -> float:
     return value
 
 
+def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
+    """POST /chat/completions with auth + rate limiting + retry; return the parsed 200 JSON.
+
+    Reads the key via ctx.secret, builds the client via _http_client(), queues each attempt behind
+    _LIMITER.slot("openrouter"); on 429 penalizes with the (validated) Retry-After and retries
+    (bounded); 402 raises (insufficient credits); other non-2xx raises with status + body; returns
+    resp.json() on 200. The bearer key is never logged or put in an error message.
+    """
+    key = ctx.secret("OPENROUTER_API_KEY")
+    with _http_client() as client:
+        for _attempt in range(_MAX_ATTEMPTS):
+            with _LIMITER.slot("openrouter"):
+                resp = client.post(
+                    "/chat/completions",
+                    headers={"Authorization": f"Bearer {key}"},
+                    json=body,
+                )
+            if resp.status_code == 200:
+                break
+            if resp.status_code == 429:
+                _LIMITER.penalize("openrouter", _retry_after_s(resp.headers.get("Retry-After")))
+                continue
+            if resp.status_code == 402:
+                raise RuntimeError("OpenRouter: insufficient credits (402)")
+            raise RuntimeError(f"OpenRouter error {resp.status_code}: {resp.text}")
+        else:
+            raise RuntimeError("OpenRouter: rate limited after retries (429)")
+
+        data: dict[str, Any] = resp.json()
+    return data
+
+
 def llm(
     prompt: str,
     *,
@@ -97,7 +132,6 @@ def llm(
         raise NotImplementedError(
             "agents.llm vision attachments are not yet supported by the OpenRouter adapter"
         )
-    key = ctx.secret("OPENROUTER_API_KEY")
     body: dict[str, Any] = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
@@ -112,26 +146,7 @@ def llm(
             },
         }
 
-    with _http_client() as client:
-        for _attempt in range(_MAX_ATTEMPTS):
-            with _LIMITER.slot("openrouter"):
-                resp = client.post(
-                    "/chat/completions",
-                    headers={"Authorization": f"Bearer {key}"},
-                    json=body,
-                )
-            if resp.status_code == 200:
-                break
-            if resp.status_code == 429:
-                _LIMITER.penalize("openrouter", _retry_after_s(resp.headers.get("Retry-After")))
-                continue
-            if resp.status_code == 402:
-                raise RuntimeError("OpenRouter: insufficient credits (402)")
-            raise RuntimeError(f"OpenRouter error {resp.status_code}: {resp.text}")
-        else:
-            raise RuntimeError("OpenRouter: rate limited after retries (429)")
-
-        data = resp.json()
+    data = _post_chat_completion(ctx, body)
 
     content = data["choices"][0]["message"]["content"]
     cost = data.get("usage", {}).get("cost")
@@ -146,19 +161,35 @@ def llm(
 
 def research(query: str) -> list[Source]:
     ctx = current_context()
-    if not ctx.dry_run:
-        raise NotImplementedError(
-            "agents.research: the OpenRouter adapter arrives in Stage B; run with dry_run=True"
-        )
-    return [
-        Source(
-            title=f"Overview of {query}",
-            url="https://example.invalid/overview",
-            snippet=f"A canned dry-run summary of {query}.",
-        ),
-        Source(
-            title=f"Further reading on {query}",
-            url="https://example.invalid/further",
-            snippet=f"A second canned source mentioning {query}.",
-        ),
-    ]
+    if ctx.dry_run:
+        return [
+            Source(
+                title=f"Overview of {query}",
+                url="https://example.invalid/overview",
+                snippet=f"A canned dry-run summary of {query}.",
+            ),
+            Source(
+                title=f"Further reading on {query}",
+                url="https://example.invalid/further",
+                snippet=f"A second canned source mentioning {query}.",
+            ),
+        ]
+
+    body: dict[str, Any] = {
+        "model": _RESEARCH_MODEL,
+        "messages": [{"role": "user", "content": query}],
+        "plugins": [{"id": "web"}],
+    }
+    data = _post_chat_completion(ctx, body)
+    cost = data.get("usage", {}).get("cost")
+    ctx.log(f"OpenRouter research model={_RESEARCH_MODEL} cost={cost}")
+
+    message = data["choices"][0]["message"]
+    sources: list[Source] = []
+    for ann in message.get("annotations", []) or []:
+        if ann.get("type") == "url_citation":
+            c = ann["url_citation"]
+            sources.append(
+                Source(title=c.get("title", ""), url=c["url"], snippet=c.get("content", ""))
+            )
+    return sources
