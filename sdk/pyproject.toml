@@ -19,6 +19,9 @@ dependencies = [
 edit = [
     "kinocut==1.15.1",
 ]
+openrouter = [
+    "httpx2==2.10.0",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["sfvf"]
