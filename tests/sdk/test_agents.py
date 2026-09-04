@@ -2,10 +2,11 @@
 
 `agents.llm` and `agents.research` are called without `ctx`; they read the ambient
 Context (A-1) to decide dry-run. In dry-run they return deterministic free stubs so a
-workflow's structure can be exercised for nothing (SDK §10). `agents.llm`'s real OpenRouter
-adapter landed in B-4c (its non-dry behaviour is covered by
-`tests/integration/test_agents_openrouter_llm.py`); `agents.research`'s real adapter has not
-landed yet, so research's non-dry path still raises rather than silently doing nothing.
+workflow's structure can be exercised for nothing (SDK §10). Both `agents.llm` (B-4c) and
+`agents.research` (B-4d) now have real OpenRouter adapters on the non-dry path; their non-dry
+behaviour is covered by `tests/integration/test_agents_openrouter_llm.py` and
+`tests/integration/test_agents_openrouter_research.py`. This file keeps the dry-run stub
+contract plus a light guard that each non-dry path now reaches the real adapter.
 
 Provided-function results must be JSON-serializable, because the documented pattern caches
 them via `ctx.step` and step results are JSON (SDK §5.5). So `Source` is a TypedDict (a
@@ -117,10 +118,14 @@ def test_llm_non_dry_run_uses_the_real_adapter(tmp_path: Path) -> None:
         reset_active(token)
 
 
-def test_research_non_dry_run_raises_not_implemented(tmp_path: Path) -> None:
+def test_research_non_dry_run_uses_the_real_adapter(tmp_path: Path) -> None:
+    # B-4d replaced the A-3 "raises NotImplementedError" placeholder with the real OpenRouter
+    # web-search adapter. With no permitted key in context, the real path now raises KeyError
+    # (from ctx.secret) BEFORE any network call — it no longer raises NotImplementedError. The
+    # full mocked-HTTP behaviour lives in tests/integration/test_agents_openrouter_research.py.
     token = set_active(_ctx(tmp_path, dry_run=False))
     try:
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(KeyError):
             agents.research("x")
     finally:
         reset_active(token)
