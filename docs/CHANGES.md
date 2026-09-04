@@ -2,6 +2,19 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-03 — B-4d: real `agents.research` over OpenRouter web search (mocked HTTP; no live call)
+
+The **non-dry** path of `agents.research` now uses OpenRouter's **web plugin** (`plugins:[{"id":"web"}]`) on a
+pinned default model (research takes no model argument; §6.1 wants a named model for reproducibility) and maps
+the web results — returned as `choices[0].message.annotations` `url_citation` objects (`url`/`title`/`content`)
+— to `Source{title, url, snippet}` (an empty list when there are none). It reuses B-4c's HTTP plumbing, now
+extracted into a shared `_post_chat_completion(ctx, body)` helper (auth, `_LIMITER` queue, bounded retry with
+validated Retry-After, 402/429/error handling) that both `llm` and `research` call — `llm`'s behaviour is
+unchanged. Exercised entirely against `httpx2.MockTransport`: **no live network call**. `dry_run` stays the
+deterministic canned-`Source` stub. Cost is surfaced via `ctx.log` (no cost event — Stage C owns the meter
+schema, HARDENING H10). This completes the OpenRouter agents surface (llm + research) in dry_run/mocked form;
+the live-key boundary (encrypted store + real key) is next and NOT built.
+
 ## 2026-09-03 — B-4c: real `agents.llm` over OpenRouter (mocked HTTP; no live call)
 
 The **non-dry** path of `agents.llm` now calls OpenRouter's chat-completions API (`httpx2`, added as the
