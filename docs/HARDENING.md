@@ -76,7 +76,16 @@ increments that logged them.
   likewise `data["choices"][0]["message"]["content"]` assumes a well-formed body. OpenRouter returns an object
   or omits the field, so this isn't hit in practice, but the adapter should defensively handle a malformed /
   null-usage 200 (treat missing/None usage as no-cost; raise a clear error on an unexpected body shape rather
-  than an opaque `KeyError`/`AttributeError`). _Source: B-4c review A, non-blocking note (PR #30)._ Open (low).
+  than an opaque `KeyError`/`AttributeError`). Extends to `agents.research`: a `url_citation` annotation whose
+  inner object is missing `url` raises `KeyError` mid-parse rather than being skipped (`title`/`content` are
+  already `.get`-defensive) — skip annotations without a `url`. _Source: B-4c review A + B-4d review A,
+  non-blocking notes (PR #30, #31)._ Open (low).
+- **H12 — OpenRouter web-search mechanism may be dated by the time research goes live.** `agents.research`
+  uses the `plugins:[{"id":"web"}]` form (verified current when built); OpenRouter appears to be moving to an
+  `openrouter:web_search` mechanism. No live call is made in dry_run/mocked builds, so this doesn't affect
+  correctness now — but **re-verify the web-search request shape against current OpenRouter docs before the
+  first live `research` call**, and update the pinned `_RESEARCH_MODEL` / plugin form if needed. _Source: B-4d
+  review B, non-blocking currency note (PR #31)._ Open (low).
 
 ## Resolved
 
