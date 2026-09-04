@@ -71,6 +71,13 @@ increments that logged them.
   engine so spend is actually recorded/metered, not just logged. Applies to every priced provider adapter as
   they land. _Source: B-4c, deferred by design (PR #30)._ Open.
 
+- **H11 — `agents.llm` trusts the OpenRouter 200 body shape.** `data.get("usage", {}).get("cost")` raises
+  `AttributeError` if a 200 response carries `"usage": null` (key present, value null) rather than omitting it;
+  likewise `data["choices"][0]["message"]["content"]` assumes a well-formed body. OpenRouter returns an object
+  or omits the field, so this isn't hit in practice, but the adapter should defensively handle a malformed /
+  null-usage 200 (treat missing/None usage as no-cost; raise a clear error on an unexpected body shape rather
+  than an opaque `KeyError`/`AttributeError`). _Source: B-4c review A, non-blocking note (PR #30)._ Open (low).
+
 ## Resolved
 
 _(none yet)_

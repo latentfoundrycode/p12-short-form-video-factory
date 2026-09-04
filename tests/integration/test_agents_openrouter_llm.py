@@ -167,6 +167,28 @@ def test_llm_real_429_honors_retry_after_then_succeeds(
     assert any(abs(s - 30.0) < 0.01 for s in clock.sleeps)
 
 
+def test_llm_real_nonfinite_retry_after_does_not_hang(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A hostile/buggy 'Retry-After: inf' must NOT become an unbounded sleep(inf) that hangs the
+    # bounded retry — the adapter rejects non-finite/negative values and uses the finite default.
+    def handler(_request: httpx2.Request, n: int) -> httpx2.Response:
+        if n == 1:
+            return httpx2.Response(
+                429, headers={"Retry-After": "inf"}, json={"error": {"code": 429}}
+            )
+        return httpx2.Response(200, json={"choices": [{"message": {"content": "ok"}}], "usage": {}})
+
+    clock = _FakeClock()
+    _install_mock(monkeypatch, handler, clock=clock)
+    ctx = _ctx(tmp_path, dry_run=False)
+    out = _run(ctx, lambda: agents.llm("q", agent="w", model="m"))
+    assert out == "ok"
+    # No infinite back-off was requested; the sleeps that happened are all finite.
+    assert all(s != float("inf") for s in clock.sleeps)
+    assert all(s < 1_000_000 for s in clock.sleeps)
+
+
 def test_llm_real_402_raises_without_retry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def handler(_request: httpx2.Request, _n: int) -> httpx2.Response:
         return httpx2.Response(402, json={"error": {"code": 402, "message": "Insufficient"}})
