@@ -105,7 +105,10 @@ def _wait_terminal(client: TestClient, run_id: str, timeout: float = 15) -> None
     raise AssertionError(f"run {run_id} did not reach a terminal status")
 
 
-def _budget_at_spawn(tmp_path: Path, *, popen: object) -> object:
+def _budget_at_spawn(tmp_path: Path) -> object:
+    # Capture the runner's context.json `budget` block at spawn. The env (set or not by the caller)
+    # decides whether that block is present; the capturing popen writes into the same `records` list
+    # this helper reads back.
     workflows_dir = tmp_path / "workflows"
     workflows_dir.mkdir(exist_ok=True)
     _install_stub(workflows_dir, "succeeds")
@@ -115,7 +118,7 @@ def _budget_at_spawn(tmp_path: Path, *, popen: object) -> object:
             workflows_dir=workflows_dir,
             runs_dir=tmp_path / "runs",
             ensure_env=_ready,  # type: ignore[arg-type]
-            popen=popen,  # type: ignore[arg-type]
+            popen=_capture_context_budget(records),  # type: ignore[arg-type]
         )
     )
     r = client.post(
@@ -196,8 +199,7 @@ def test_create_app_without_env_budget_is_none(tmp_path):
 def test_budget_is_injected_into_context_json(tmp_path, monkeypatch):
     monkeypatch.setenv("SFVF_BUDGET_CONFIG", str(_write_toml(tmp_path)))
     monkeypatch.setenv("SFVF_BUDGET_STATE", str(tmp_path / "state"))
-    records: list = []
-    budget = _budget_at_spawn(tmp_path, popen=_capture_context_budget(records))
+    budget = _budget_at_spawn(tmp_path)
     assert isinstance(budget, dict), "context.json carried no budget block"
     assert budget["per_run"]["openrouter"] == 0.50
     assert budget["per_day"]["openrouter"] == 2.00
@@ -209,5 +211,5 @@ def test_budget_is_injected_into_context_json(tmp_path, monkeypatch):
 def test_no_budget_config_leaves_context_budget_absent(tmp_path):
     # No SFVF_BUDGET_CONFIG (cleared by fixture) → the run's context.json carries no budget block,
     # so the SDK gate stays inert exactly as before T2b-2a.
-    budget = _budget_at_spawn(tmp_path, popen=None)
+    budget = _budget_at_spawn(tmp_path)
     assert budget is None
