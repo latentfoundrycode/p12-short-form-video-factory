@@ -2,6 +2,18 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-05 — S2b: stop exposing injected secrets (block context.json download + scrub post-run)
+
+Closes the two exposure vectors a decorrelated security review flagged after S2a began injecting allowlisted
+secrets into `context.json`: (1) the run-file download endpoint (`get_run_file`) now returns **404 for any
+`context.json`** at any depth, so provider keys can't be pulled over HTTP (ordinary run files still serve);
+(2) `_scrub_context_secrets` blanks the `secrets` in each on-disk `context.json` **after** its subprocess has
+consumed it (in the `finally` of `_run_prepare` and `_run_one_video`, so it also runs on stop/failure), so the
+keys don't persist in the run directory. Timing is post-`proc.wait()` — the workflow still reads its real
+secrets during the run. No new secret handling; nothing logged. With S1 + S2a + S2b, the §5.6 secret path is
+closed end-to-end (encrypted store → least-privilege injection → passphrase never in a child env → not
+downloadable → scrubbed after use). Next: S2c (redact secret values from records/logs/errors) then T2.
+
 ## 2026-09-05 — S2a: least-privilege secret injection + strip passphrase from all subprocesses
 
 Wires the §5.6 store (S1) into the run pipeline. `create_app(..., secrets=None)` loads the `SecretStore` at app
