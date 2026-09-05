@@ -15,10 +15,15 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from app.paths import APP_ROOT
 
 SALT_SIZE = 16
-_SCRYPT_N = 2**14
+_SCRYPT_N = 2**17
 _SCRYPT_R = 8
 _SCRYPT_P = 1
 _KEY_LENGTH = 32
+_FORMAT_VERSION = 1
+_KDF_BY_VERSION: dict[int, tuple[int, int, int]] = {
+    1: (_SCRYPT_N, _SCRYPT_R, _SCRYPT_P),
+}
+_CURRENT_KDF_N = _KDF_BY_VERSION[_FORMAT_VERSION][0]
 _DEFAULT_STORE = APP_ROOT / "secrets.enc"
 _DECRYPT_FAILED = "wrong passphrase or corrupt secret store"
 
@@ -29,6 +34,8 @@ class SecretsError(Exception):
 
 class SecretStore:
     def __init__(self, path: Path, passphrase: str) -> None:
+        if not passphrase:
+            raise ValueError("passphrase must not be empty")
         self._path = path
         self._passphrase = passphrase
 
@@ -56,13 +63,17 @@ class SecretStore:
         del secrets[name]
         self._save(secrets)
 
-    def _fernet(self, salt: bytes) -> Fernet:
+    def _fernet(self, salt: bytes, version: int) -> Fernet:
+        params = _KDF_BY_VERSION.get(version)
+        if params is None:
+            raise SecretsError(_DECRYPT_FAILED)
+        n, r, p = params
         kdf = Scrypt(
             salt=salt,
             length=_KEY_LENGTH,
-            n=_SCRYPT_N,
-            r=_SCRYPT_R,
-            p=_SCRYPT_P,
+            n=n,
+            r=r,
+            p=p,
         )
         key = kdf.derive(self._passphrase.encode("utf-8"))
         return Fernet(base64.urlsafe_b64encode(key))
@@ -72,11 +83,11 @@ class SecretStore:
         if not path.is_file() or path.stat().st_size == 0:
             return {}
         raw = path.read_bytes()
-        if len(raw) <= SALT_SIZE:
+        if len(raw) <= 1 + SALT_SIZE:
             raise SecretsError(_DECRYPT_FAILED)
-        salt, token = raw[:SALT_SIZE], raw[SALT_SIZE:]
+        version, salt, token = raw[0], raw[1 : 1 + SALT_SIZE], raw[1 + SALT_SIZE :]
         try:
-            plaintext = self._fernet(salt).decrypt(token)
+            plaintext = self._fernet(salt, version).decrypt(token)
         except InvalidToken as exc:
             raise SecretsError(_DECRYPT_FAILED) from exc
         try:
@@ -94,8 +105,8 @@ class SecretStore:
 
     def _save(self, secrets: dict[str, str]) -> None:
         salt = os.urandom(SALT_SIZE)
-        token = self._fernet(salt).encrypt(json.dumps(secrets).encode("utf-8"))
-        payload = salt + token
+        token = self._fernet(salt, _FORMAT_VERSION).encrypt(json.dumps(secrets).encode("utf-8"))
+        payload = bytes([_FORMAT_VERSION]) + salt + token
         path = self._path
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
@@ -144,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(name)
         elif args.command == "delete":
             store.delete(args.name)
-    except SecretsError as exc:
+    except (SecretsError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     except KeyError as exc:
