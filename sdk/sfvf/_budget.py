@@ -8,6 +8,8 @@ per-provider metering, cost events, and forecasts are Stage C and will extend th
 from __future__ import annotations
 
 import json
+import math
+import os
 import sys
 import threading
 import uuid
@@ -64,10 +66,22 @@ class _TokenState:
         return 0.0
 
 
-def _as_float(value: object) -> float:
+def _require_amount(value: object) -> float:
+    """Finite non-negative money. Booleans, NaN, Inf, and negatives are refusals."""
     if isinstance(value, bool) or not isinstance(value, int | float):
-        return 0.0
-    return float(value)
+        raise ValueError("budget amount must be a finite non-negative number")
+    amount = float(value)
+    if not math.isfinite(amount) or amount < 0.0:
+        raise ValueError("budget amount must be a finite non-negative number")
+    return amount
+
+
+def _ceiling_breached(projected: float, limit: object) -> bool:
+    """True when the projected spend is over the ceiling, or the ceiling itself is unusable."""
+    if isinstance(limit, bool) or not isinstance(limit, int | float):
+        return True
+    ceiling = float(limit)
+    return not math.isfinite(ceiling) or not math.isfinite(projected) or projected > ceiling
 
 
 def _as_str(value: object) -> str:
@@ -90,18 +104,29 @@ def _format_ts(moment: datetime) -> str:
 def _read_ledger(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise BudgetError("budget ledger is unreadable") from exc
+    if not text:
+        return []
+    lines = text.splitlines()
+    # A crash mid-append leaves a last line with no trailing newline; that write never completed
+    # and never returned a token, so drop only that tail. Any other bad line is fail-closed.
+    if not text.endswith("\n") and lines:
+        lines = lines[:-1]
     entries: list[dict[str, Any]] = []
-    with path.open(encoding="utf-8") as handle:
-        for raw in handle:
-            stripped = raw.strip()
-            if not stripped:
-                continue
-            try:
-                parsed: object = json.loads(stripped)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(parsed, dict):
-                entries.append(parsed)
+    for raw in lines:
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        try:
+            parsed: object = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise BudgetError("budget ledger is unreadable") from exc
+        if not isinstance(parsed, dict):
+            raise BudgetError("budget ledger is unreadable")
+        entries.append(parsed)
     return entries
 
 
@@ -114,7 +139,7 @@ def _token_states(entries: list[dict[str, Any]]) -> dict[str, _TokenState]:
         state = states.setdefault(token, _TokenState())
         kind = entry.get("kind")
         if kind == "reserved":
-            state.reserved_amount = _as_float(entry.get("amount"))
+            state.reserved_amount = _require_amount(entry.get("amount"))
             meter = _as_str(entry.get("meter"))
             if meter:
                 state.meter = meter
@@ -123,7 +148,7 @@ def _token_states(entries: list[dict[str, Any]]) -> dict[str, _TokenState]:
                 state.run_id = run_id
             state.day = _ts_date(entry.get("ts"))
         elif kind == "actual":
-            state.actual_amount = _as_float(entry.get("amount"))
+            state.actual_amount = _require_amount(entry.get("amount"))
             if not state.meter:
                 state.meter = _as_str(entry.get("meter"))
             if not state.run_id:
@@ -155,9 +180,24 @@ def _run_sum(states: Mapping[str, _TokenState], run_id: str, meter: str) -> floa
 
 def _append_line(path: Path, record: dict[str, str | float]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8", newline="\n") as handle:
-        handle.write(json.dumps(record) + "\n")
+    payload = (json.dumps(record, allow_nan=False) + "\n").encode("utf-8")
+    if not path.is_file():
+        path.touch()
+    # r+b: Windows append mode cannot seek-and-read the last byte.
+    with path.open("r+b") as handle:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() > 0:
+            handle.seek(-1, os.SEEK_END)
+            if handle.read(1) != b"\n":
+                # Crash mid-append: that write never completed or returned a token. Drop the tail
+                # so the new record is not glued onto it (which would hide both lines).
+                handle.seek(0)
+                data = handle.read()
+                handle.seek(data.rfind(b"\n") + 1)
+                handle.truncate()
+        handle.write(payload)
         handle.flush()
+        os.fsync(handle.fileno())
 
 
 def _lock_exclusive(handle: BinaryIO) -> None:
@@ -202,8 +242,8 @@ class BudgetGuard:
         kill_switch_path: Path | None = None,
         now: Callable[[], datetime] = _default_now,
     ) -> None:
-        self._ledger_path = ledger_path
-        self._lock_path = Path(str(ledger_path) + ".lock")
+        self._ledger_path = ledger_path.resolve()
+        self._lock_path = Path(str(self._ledger_path) + ".lock")
         self._ceilings = ceilings
         self._kill_switch_path = kill_switch_path
         self._now = now
@@ -245,13 +285,18 @@ class BudgetGuard:
         with self._held():
             if self._kill_switch_path is not None and self._kill_switch_path.exists():
                 raise KillSwitchEngagedError("operator kill-switch is engaged")
+            amount = _require_amount(estimate)
             states = self._snapshot()
             today = self._now().astimezone(UTC).date()
-            projected_day = _day_sum(states, meter, today) + estimate
-            projected_run = _run_sum(states, run_id, meter) + estimate
-            if meter in self._ceilings.per_day and projected_day > self._ceilings.per_day[meter]:
+            projected_day = _day_sum(states, meter, today) + amount
+            projected_run = _run_sum(states, run_id, meter) + amount
+            if meter in self._ceilings.per_day and _ceiling_breached(
+                projected_day, self._ceilings.per_day[meter]
+            ):
                 raise BudgetExceededError("per-day ceiling exceeded")
-            if meter in self._ceilings.per_run and projected_run > self._ceilings.per_run[meter]:
+            if meter in self._ceilings.per_run and _ceiling_breached(
+                projected_run, self._ceilings.per_run[meter]
+            ):
                 raise BudgetExceededError("per-run ceiling exceeded")
             token = uuid.uuid4().hex
             _append_line(
@@ -261,7 +306,7 @@ class BudgetGuard:
                     run_id=run_id,
                     meter=meter,
                     unit=unit,
-                    amount=estimate,
+                    amount=amount,
                     kind="reserved",
                     note=note,
                 ),
@@ -270,6 +315,7 @@ class BudgetGuard:
 
     def reconcile(self, token: str, *, actual: float, note: str = "") -> None:
         with self._held():
+            amount = _require_amount(actual)
             run_id = ""
             meter = ""
             unit = ""
@@ -286,7 +332,7 @@ class BudgetGuard:
                     run_id=run_id,
                     meter=meter,
                     unit=unit,
-                    amount=actual,
+                    amount=amount,
                     kind="actual",
                     note=note,
                 ),
