@@ -14,6 +14,11 @@ secrets during the run. No new secret handling; nothing logged. With S1 + S2a + 
 closed end-to-end (encrypted store → least-privilege injection → passphrase never in a child env → not
 downloadable → scrubbed after use). Next: S2c (redact secret values from records/logs/errors) then T2.
 
+Review resolution: the run-file endpoint's `context.json` block is airtight against NTFS alternate-data-stream
+paths (verified empirically — `Path.resolve()` normalizes `context.json::$DATA` so the name guard catches it,
+and `context.json:$DATA` is `is_file()==False` → 404; a flagged ADS bypass did not hold). The scrub was hardened
+to run in a `finally` wrapping the spawn, so a runner-spawn failure can't leave un-scrubbed secrets on disk.
+
 ## 2026-09-05 — S2a: least-privilege secret injection + strip passphrase from all subprocesses
 
 Wires the §5.6 store (S1) into the run pipeline. `create_app(..., secrets=None)` loads the `SecretStore` at app
