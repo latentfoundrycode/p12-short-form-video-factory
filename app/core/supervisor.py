@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import signal
 import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -82,6 +83,7 @@ class _ContextWiring:
     workflow_dir: Path
     dry_run: bool
     step_concurrency: int
+    secrets: dict[str, str]
 
 
 @dataclass
@@ -196,7 +198,7 @@ def _make_context(
             workflow=wiring.workflow_dir,
         ),
         instructions=[],
-        secrets={},
+        secrets=dict(wiring.secrets),
         previous=previous,
         shared=shared_payload,
     )
@@ -267,6 +269,7 @@ def run_request(
     cache_dir: Path | None = None,
     dry_run: bool = False,
     step_concurrency: int = 1,
+    secrets: Mapping[str, str] | None = None,
 ) -> RunRequestResult:
     workflow_dir = workflow_dir.resolve()
     manifest = parse_manifest_toml((workflow_dir / "workflow.toml").read_text(encoding="utf-8"))
@@ -297,6 +300,7 @@ def run_request(
             workflow_dir=workflow_dir,
             dry_run=dry_run,
             step_concurrency=step_concurrency,
+            secrets=dict(secrets or {}),
         )
         with _lock:
             _active[workflow_id] = run_id
@@ -416,6 +420,10 @@ def stop(run_id: str, *, mode: StopMode) -> StopResult:
     return StopAccepted(run_id=run_id, mode=mode)
 
 
+def _subprocess_env() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k != "SFVF_SECRETS_PASSPHRASE"}
+
+
 def _start_runner(
     python: Path,
     workflow_dir: Path,
@@ -447,6 +455,7 @@ def _start_runner(
         encoding="utf-8",
         errors="replace",
         bufsize=1,
+        env=_subprocess_env(),
         **_process_group_kwargs(),
     )
 

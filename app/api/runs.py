@@ -6,7 +6,7 @@ import mimetypes
 import subprocess
 import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -146,6 +146,11 @@ def _popen(request: Request) -> PopenFn:
     return cast(PopenFn, injected) if injected is not None else subprocess.Popen
 
 
+def _secrets(request: Request) -> Mapping[str, str]:
+    injected = getattr(request.app.state, "secrets", None)
+    return cast(Mapping[str, str], injected) if injected is not None else {}
+
+
 def admit_run(
     workflow_dir: Path,
     *,
@@ -155,6 +160,7 @@ def admit_run(
     runs_dir: Path,
     ensure_env: EnsureEnv = default_ensure_env,
     popen: PopenFn = subprocess.Popen,
+    secrets: Mapping[str, str] | None = None,
 ) -> AdmissionResult:
     """Launch run_request on a daemon thread; return as soon as admission resolves."""
     started = threading.Event()
@@ -178,6 +184,7 @@ def admit_run(
                     ensure_env=ensure_env,
                     popen=popen,
                     on_started=on_started,
+                    secrets=secrets,
                 )
             )
         except BaseException as exc:
@@ -258,6 +265,7 @@ def launch_run(workflow_id: str, body: LaunchBody, request: Request) -> JSONResp
         runs_dir=_runs_dir(request),
         ensure_env=_ensure_env(request),
         popen=_popen(request),
+        secrets=_secrets(request),
     )
     if isinstance(outcome, AdmissionAccepted):
         return JSONResponse(
