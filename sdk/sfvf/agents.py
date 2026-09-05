@@ -79,6 +79,25 @@ def _retry_after_s(header: str | None) -> float:
     return value
 
 
+def _usage_cost(data: dict[str, Any]) -> float | None:
+    """Return usage.cost when it is a finite non-negative number; otherwise None.
+
+    A 200 may omit usage, set it to null, or put a non-number in cost. Treat those as
+    unusable so a paid success is not followed by AttributeError/ValueError; the
+    reservation then stands at the estimate.
+    """
+    usage = data.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    cost = usage.get("cost")
+    if isinstance(cost, bool) or not isinstance(cost, int | float):
+        return None
+    amount = float(cost)
+    if not math.isfinite(amount) or amount < 0.0:
+        return None
+    return amount
+
+
 def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
     """POST /chat/completions with auth + rate limiting + retry; return the parsed 200 JSON.
 
@@ -88,6 +107,7 @@ def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
     resp.json() on 200. The bearer key is never logged or put in an error message.
     """
     key = ctx.secret("OPENROUTER_API_KEY")
+    token = ctx._budget_reserve("openrouter", "usd")
     with _http_client() as client:
         for _attempt in range(_MAX_ATTEMPTS):
             with _LIMITER.slot("openrouter"):
@@ -108,6 +128,9 @@ def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
             raise RuntimeError("OpenRouter: rate limited after retries (429)")
 
         data: dict[str, Any] = resp.json()
+    cost = _usage_cost(data)
+    if cost is not None:
+        ctx._budget_reconcile(token, actual=cost)
     return data
 
 
@@ -149,7 +172,7 @@ def llm(
     data = _post_chat_completion(ctx, body)
 
     content = data["choices"][0]["message"]["content"]
-    cost = data.get("usage", {}).get("cost")
+    cost = _usage_cost(data)
     ctx.log(f"OpenRouter llm agent={agent} model={model} cost={cost}")
     if schema is not None:
         parsed: dict[str, Any] = json.loads(content)
@@ -181,7 +204,7 @@ def research(query: str) -> list[Source]:
         "plugins": [{"id": "web"}],
     }
     data = _post_chat_completion(ctx, body)
-    cost = data.get("usage", {}).get("cost")
+    cost = _usage_cost(data)
     ctx.log(f"OpenRouter research model={_RESEARCH_MODEL} cost={cost}")
 
     message = data["choices"][0]["message"]

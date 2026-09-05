@@ -10,6 +10,7 @@ from typing import Any, Literal, TypeVar, cast, overload
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ._budget import BudgetError, BudgetGuard, Ceilings
 from .cache import StepCache, step_key
 from .emit import decision, emit, heartbeat, log, stage
 
@@ -33,6 +34,29 @@ class Outcome:
 
 class _ContextModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class BudgetConfig(_ContextModel):
+    """Budget-guard configuration carried into the run (T2b). Absent → the gate is inert.
+
+    Ceilings and per-meter reserve estimates are keyed by meter (a provider id, e.g. "openrouter").
+    The supervisor populates this from app config (T2b-2); the SDK enforces it before each call.
+    """
+
+    ledger_path: Path = Field(description="JSONL spend ledger shared across this machine's runs.")
+    kill_switch_path: Path | None = Field(
+        default=None, description="If this file exists, all paid calls are refused."
+    )
+    per_run: dict[str, float] = Field(
+        default_factory=dict, description="Per-meter ceiling for one run; meter absent = unlimited."
+    )
+    per_day: dict[str, float] = Field(
+        default_factory=dict, description="Per-meter ceiling per UTC day; meter absent = unlimited."
+    )
+    estimates: dict[str, float] = Field(
+        default_factory=dict,
+        description="Per-meter conservative amount reserved before a call (must be > 0 to gate).",
+    )
 
 
 class ContextPaths(_ContextModel):
@@ -89,6 +113,10 @@ class ContextFile(_ContextModel):
     shared: dict[str, Any] | None = Field(
         default=None,
         description="Output of the shared preparation phase, if any.",
+    )
+    budget: BudgetConfig | None = Field(
+        default=None,
+        description="Budget-guard config; when set, paid calls are gated before spending.",
     )
 
 
@@ -213,6 +241,38 @@ class Context:
         The value is never logged. The encrypted store is out of scope.
         """
         return str(self._file.secrets[name])
+
+    def _budget_reserve(self, meter: str, unit: str) -> str | None:
+        """Reserve the configured estimate for `meter` before a paid call (T2b-1).
+
+        No budget config → return None (gate inert). Otherwise reserve via a BudgetGuard built from
+        the config; a refusal (ceiling/kill-switch) or a missing/non-positive estimate raises so the
+        caller must not proceed. Returns the reservation token to pass to `_budget_reconcile`.
+        """
+        cfg = self._file.budget
+        if cfg is None:
+            return None
+        estimate = cfg.estimates.get(meter)
+        if estimate is None or not (estimate > 0):
+            # Configured budget but no positive estimate for this meter → fail closed
+            # (never reserve 0 as "unknown"): reserving nothing would let the call through ungated.
+            raise BudgetError(f"no positive budget estimate configured for meter {meter!r}")
+        guard = self._budget_guard(cfg)
+        return guard.reserve(run_id=self.run_id, meter=meter, unit=unit, estimate=estimate)
+
+    def _budget_reconcile(self, token: str | None, *, actual: float) -> None:
+        """Reconcile a reservation with the real amount. No-op when token is None."""
+        cfg = self._file.budget
+        if token is None or cfg is None:
+            return
+        self._budget_guard(cfg).reconcile(token, actual=actual)
+
+    def _budget_guard(self, cfg: BudgetConfig) -> BudgetGuard:
+        return BudgetGuard(
+            cfg.ledger_path,
+            ceilings=Ceilings(per_run=cfg.per_run, per_day=cfg.per_day),
+            kill_switch_path=cfg.kill_switch_path,
+        )
 
     def emit(self, event: dict[str, Any]) -> None:
         emit(event)
