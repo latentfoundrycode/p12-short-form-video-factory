@@ -55,6 +55,18 @@ def test_missing_file_is_empty(tmp_path):
         store.get("X")
 
 
+def test_empty_passphrase_is_rejected(tmp_path):
+    # An empty passphrase would encrypt the store with a trivially-guessable key — reject it.
+    with pytest.raises(ValueError):
+        SecretStore(tmp_path / "secrets.enc", passphrase="")
+
+
+def test_cli_empty_passphrase_returns_nonzero(tmp_path, monkeypatch):
+    monkeypatch.setenv("SFVF_SECRETS_PASSPHRASE", "")
+    monkeypatch.setenv("SFVF_SECRETS_PATH", str(tmp_path / "secrets.enc"))
+    assert main(["list"]) != 0
+
+
 def test_cli_set_then_list_hides_value(tmp_path, monkeypatch, capsys):
     path = tmp_path / "secrets.enc"
     monkeypatch.setenv("SFVF_SECRETS_PASSPHRASE", "pw")
