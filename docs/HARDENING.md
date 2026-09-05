@@ -123,6 +123,15 @@ increments that logged them.
   full inherited env — NOT a real vector (taskkill is a fixed trusted OS binary executing no workflow code),
   but routing it through `subprocess_env()` too would make "no spawn inherits the passphrase" universal.
   _Source: S1 review B (fixed S2a); S2a review A note (PR #35)._ Open (low, residual).
+- **H18 — failed-prepare `result.json` not redacted (residual).** S2c redacts the `prepare()` return payload and
+  rewrites `shared/result.json` on the SUCCESS path, and redacts the per-video `result`→`video.json` path, so no
+  injected secret VALUE persists into any consumed record. Residual (low): if a `prepare()` writes `result.json`
+  and then exits non-zero, `_run_prepare` returns `False, None` before the redact/rewrite, leaving that
+  failed-run `result.json` unredacted on disk — and (unlike `context.json`) it is downloadable via
+  `get_run_file`. Same defect class as the closed success-path leak; narrow trigger (prepare must both leak its
+  key into `result.json` AND fail after writing it). Fix: redact `result.json` best-effort in the `_run_prepare`
+  `finally` (covering both paths uniformly), or block `result.json` download alongside `context.json`.
+  _Source: S2c review B residual note (PR #37)._ Open (low, residual).
 
 ## Resolved
 

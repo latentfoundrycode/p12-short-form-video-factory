@@ -10,7 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from sfvf.context import ContextFile, ContextPaths
 
@@ -86,6 +86,30 @@ class _ContextWiring:
     secrets: dict[str, str]
 
 
+def _redact_secrets[T](obj: T, values: frozenset[str]) -> T:
+    """Return obj with every occurrence of each secret value replaced by '[REDACTED]', walking
+    nested dicts/lists/strings. Non-strings are returned unchanged. Empty values are ignored."""
+    # Longest first so a shorter value that is a prefix of a longer one cannot
+    # run first and leave a dangling suffix of the longer secret.
+    real = sorted((v for v in values if v), key=len, reverse=True)
+    if not real:
+        return obj
+
+    def scrub(node: Any) -> Any:
+        if isinstance(node, str):
+            out = node
+            for v in real:
+                out = out.replace(v, "[REDACTED]")
+            return out
+        if isinstance(node, dict):
+            return {scrub(k): scrub(x) for k, x in node.items()}
+        if isinstance(node, list):
+            return [scrub(x) for x in node]
+        return node
+
+    return cast(T, scrub(obj))
+
+
 @dataclass
 class _RunState:
     """Per-run lock and live video statuses. Guards events.jsonl and request.json."""
@@ -95,10 +119,11 @@ class _RunState:
     stop_requested: bool = False
     stop_mode: StopMode | None = None
     procs: dict[str, tuple[subprocess.Popen[str], Path]] = field(default_factory=dict)
+    secret_values: frozenset[str] = frozenset()
 
     def record_event(self, run_dir: Path, event: dict[str, Any], source: str) -> None:
         with self.lock:
-            append_event(run_dir, event, source=source)
+            append_event(run_dir, _redact_secrets(event, self.secret_values), source=source)
 
     def set_video(
         self,
@@ -323,6 +348,7 @@ def run_request(
         create_run_skeleton(run_dir, video_count)
         state = _RunState(
             statuses=dict.fromkeys(range(1, video_count + 1), "pending"),
+            secret_values=frozenset(v for v in injected.values() if v),
         )
         with _lock:
             _runs[run_id] = state
@@ -552,7 +578,8 @@ def _consume_stdout(
             silence.note(event)
             state.record_event(run_dir, event, source)
             if event.get("t") == "result":
-                captured = {key: value for key, value in event.items() if key != "t"}
+                redacted = _redact_secrets(event, state.secret_values)
+                captured = {key: value for key, value in redacted.items() if key != "t"}
     finally:
         stop.set()
         watcher.join(timeout=1)
@@ -619,7 +646,9 @@ def _run_prepare(
         return True, None
     if not isinstance(payload, dict):
         return False, None
-    return True, payload
+    redacted = _redact_secrets(payload, state.secret_values)
+    write_json_atomic(result_path, redacted)
+    return True, redacted
 
 
 def _run_videos(
