@@ -2,6 +2,21 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-05 — T2b-2a: activate the budget gate (load config + inject into context.json)
+
+The T2b-1 SDK gate was inert until fed config; this activates it on real runs. New
+`app.core.budget_config.load_budget_config()` reads a TOML budget file when `SFVF_BUDGET_CONFIG` is set
+(env-gated exactly like the secret store's `SFVF_SECRETS_PASSPHRASE`), parses per-meter `per_run`/`per_day`
+ceilings and per-meter reserve `estimates`, and derives the ledger + kill-switch paths from the state dir
+(`SFVF_BUDGET_STATE` or a default). No env → `None` (gate stays inert, behaviour unchanged); a
+configured-but-missing/malformed file fails **closed** (`BudgetConfigError`). `create_app` stores the
+result on `application.state.budget`; the run path threads it through `run_request` → `_ContextWiring` →
+`_make_context`, so every run's `context.json` now carries the `budget` block and the child enforces the
+ceilings before any paid call. A committed `budget.toml` holds the attended-first-run floors (OpenRouter
+$0.50/run, $2.00/day; Higgsfield credit placeholders). Still no live call: enforcing that a *real* run
+must have budget config (fail-closed when unset), mapping a denial to the `stopped-budget` status, and
+surfacing `RequestRecord.budget` are T2b-2b (tracked in H20).
+
 ## 2026-09-05 — T2b-1: gate the paid-call paths with the budget guard (SDK side)
 
 Wires the T2a `BudgetGuard` into the two paid providers so a run cannot spend past its ceilings or an
