@@ -216,6 +216,46 @@ def test_generate_frame_conditioning_not_supported(
         )
 
 
+def test_generate_real_download_failure_raises_and_saves_no_corrupt_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A non-2xx on the DOWNLOAD must raise — never save the error body as the "video"
+    # (a silent corrupt success would also poison the step cache).
+    def handler(request: httpx2.Request, seen: list[httpx2.Request]) -> httpx2.Response:
+        path = request.url.path
+        if request.method == "POST":
+            return httpx2.Response(200, json=_status("queued"))
+        if "/requests/" in path:
+            return httpx2.Response(
+                200,
+                json=_status(
+                    "completed", video={"url": f"https://api.higgsfield.ai{_DOWNLOAD_PATH}"}
+                ),
+            )
+        return httpx2.Response(500, content=b"error page")  # download fails
+
+    _install_mock(monkeypatch, handler)
+    ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(RuntimeError):
+        _run(ctx, lambda: media.video.generate("x", model=_MODEL, duration_s=5.0))
+    artifacts = tmp_path / "artifacts"
+    if artifacts.exists():
+        assert all(p.read_bytes() != b"error page" for p in artifacts.glob("video-*.mp4"))
+
+
+def test_generate_real_poll_failure_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A non-2xx on a POLL must raise a clear error, not be parsed as a successful status body.
+    def handler(request: httpx2.Request, seen: list[httpx2.Request]) -> httpx2.Response:
+        if request.method == "POST":
+            return httpx2.Response(200, json=_status("queued"))
+        return httpx2.Response(500, json={"error": "server error"})  # poll fails
+
+    _install_mock(monkeypatch, handler)
+    ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(RuntimeError):
+        _run(ctx, lambda: media.video.generate("x", model=_MODEL, duration_s=5.0))
+
+
 def test_generate_requires_active_context() -> None:
     with pytest.raises(RuntimeError):
         media.video.generate("x", model=_MODEL, duration_s=5.0)
