@@ -13,9 +13,12 @@ configured-but-missing/malformed file fails **closed** (`BudgetConfigError`). `c
 result on `application.state.budget`; the run path threads it through `run_request` → `_ContextWiring` →
 `_make_context`, so every run's `context.json` now carries the `budget` block and the child enforces the
 ceilings before any paid call. A committed `budget.toml` holds the attended-first-run floors (OpenRouter
-$0.50/run, $2.00/day; Higgsfield credit placeholders). Still no live call: enforcing that a *real* run
-must have budget config (fail-closed when unset), mapping a denial to the `stopped-budget` status, and
-surfacing `RequestRecord.budget` are T2b-2b (tracked in H20).
+$0.50/run, $2.00/day; Higgsfield credit placeholders). Review hardening: a ceiling/estimate that is valid
+TOML but not a real number (a string, an array, or a bool that would silently coerce to `1.0`) now fails
+**closed** with `BudgetConfigError` rather than a raw `ValueError`/wrong ceiling; the runtime state dir is
+gitignored so the ledger can't be committed. Still no live call: enforcing that a *real* run must have
+budget config (fail-closed when unset), mapping a denial to the `stopped-budget` status, and surfacing
+`RequestRecord.budget` are T2b-2b (tracked in H20).
 
 ## 2026-09-05 — T2b-1: gate the paid-call paths with the budget guard (SDK side)
 
