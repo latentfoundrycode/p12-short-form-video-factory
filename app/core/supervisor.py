@@ -6,7 +6,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,6 +32,7 @@ from app.core.records import (
     write_json_atomic,
     write_video,
 )
+from app.core.secrets import subprocess_env
 from app.paths import CACHE_DIR
 from app.registry.schema import parse_manifest_toml
 
@@ -82,6 +83,7 @@ class _ContextWiring:
     workflow_dir: Path
     dry_run: bool
     step_concurrency: int
+    secrets: dict[str, str]
 
 
 @dataclass
@@ -196,7 +198,7 @@ def _make_context(
             workflow=wiring.workflow_dir,
         ),
         instructions=[],
-        secrets={},
+        secrets=dict(wiring.secrets),
         previous=previous,
         shared=shared_payload,
     )
@@ -267,6 +269,7 @@ def run_request(
     cache_dir: Path | None = None,
     dry_run: bool = False,
     step_concurrency: int = 1,
+    secrets: Mapping[str, str] | None = None,
 ) -> RunRequestResult:
     workflow_dir = workflow_dir.resolve()
     manifest = parse_manifest_toml((workflow_dir / "workflow.toml").read_text(encoding="utf-8"))
@@ -288,6 +291,8 @@ def run_request(
         mode = "dry" if dry_run else "real"
         cache_root = ((cache_dir or CACHE_DIR) / workflow_id / mode).resolve()
         cache_root.mkdir(parents=True, exist_ok=True)
+        allowed = {rk.name for rk in manifest.requires_keys}
+        injected = {k: v for k, v in (secrets or {}).items() if k in allowed}
         wiring = _ContextWiring(
             workflow_id=workflow_id,
             run_id=run_id,
@@ -297,6 +302,7 @@ def run_request(
             workflow_dir=workflow_dir,
             dry_run=dry_run,
             step_concurrency=step_concurrency,
+            secrets=injected,
         )
         with _lock:
             _active[workflow_id] = run_id
@@ -447,6 +453,7 @@ def _start_runner(
         encoding="utf-8",
         errors="replace",
         bufsize=1,
+        env=subprocess_env(),
         **_process_group_kwargs(),
     )
 

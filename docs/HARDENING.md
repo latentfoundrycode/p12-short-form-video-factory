@@ -115,11 +115,14 @@ increments that logged them.
   fsync'd after `os.replace` (the store can't be *truncated* — atomic replace — but the rename may not survive
   an immediate power loss). The `chmod 0o600` note was invalid (mkstemp creates owner-only files on POSIX and
   `os.replace` preserves the mode). _Source: S1 review A/B (PR #34)._ Open (low, residual).
-- **H17 — S2 must not leak the master passphrase to workflow subprocesses.** `SFVF_SECRETS_PASSPHRASE` is read
-  from the environment; when S2 loads the store at app start and spawns workflow subprocesses, it must **strip
-  `SFVF_SECRETS_PASSPHRASE` (and the passphrase generally) from the child env** — only the specific permitted
-  secrets go to the workflow via `context.json`, never the master passphrase. Address in S2. _Source: S1
-  review B, low (PR #34)._ Open (address in S2).
+- **H17 — passphrase must not leak to subprocesses.** RESOLVED in S2a: a shared `app.core.secrets.subprocess_env()`
+  (os.environ minus `SFVF_SECRETS_PASSPHRASE`) is applied to every real spawn — the workflow runner
+  (`_start_runner`) AND the env-setup / `pip install` / interpreter-probe spawns in `env.py` (`_run_timed`,
+  `default_find_python`), closing the HIGH finding that workflow-declared dependency builds could read the
+  master passphrase. Residual (low, defense-in-depth): `app/core/proc.py::kill_tree` runs `taskkill` with the
+  full inherited env — NOT a real vector (taskkill is a fixed trusted OS binary executing no workflow code),
+  but routing it through `subprocess_env()` too would make "no spawn inherits the passphrase" universal.
+  _Source: S1 review B (fixed S2a); S2a review A note (PR #35)._ Open (low, residual).
 
 ## Resolved
 
