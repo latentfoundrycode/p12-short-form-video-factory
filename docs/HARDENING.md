@@ -144,9 +144,17 @@ increments that logged them.
   Stage-C forecasts and per-provider estimators. (c) **POSIX same-process lock (low):** the cross-process
   lock is validated on Windows (the deployment target); on POSIX, `fcntl.flock` semantics across two
   `BudgetGuard` instances in one process are not exercised — revisit if CI or deployment adds Linux.
-  **T2b acceptance requirement (not a defect):** a lock-acquire `OSError`/timeout (Windows `LK_LOCK`
-  blocks ~10s then raises) MUST be treated by the caller as a hard **denial** (fail-closed → refuse the
-  paid call / `stopped-budget`), never as "proceed". _Source: T2a review A/B (PR #38)._ Open.
+  **T2b acceptance requirements (caller contract, not engine defects):** (i) treat **ANY** exception
+  raised by `reserve` as a hard **denial** (fail-closed → refuse the paid call / `stopped-budget`), not
+  only `BudgetExceededError`/`KillSwitchEngagedError` — a lock-acquire `OSError`/timeout (Windows
+  `LK_LOCK` blocks ~10s then raises), a `ValueError` from a poisoned amount, or an `OverflowError` from an
+  absurd estimate must all stop the call. (ii) Never pass `estimate=0` as an "unknown/placeholder" cost —
+  a zero estimate reserves nothing and never accumulates, so use a conservative positive floor before a
+  live call. (iii) Call `reconcile` exactly once per token (the engine is last-write-wins and cannot tell
+  a rewrite from a refund). Also noted (engine, low): a complete-but-valid ledger line with a malformed
+  `ts` is excluded from `day_total` (still counted in `run_total`) — cannot arise from engine-written
+  entries; and a `per_day`/`per_run` ceiling set to `inf` refuses everything (the "unlimited" convention
+  is meter **absence**, not `inf`). _Source: T2a review A/B (PR #38)._ Open.
 
 ## Resolved
 
