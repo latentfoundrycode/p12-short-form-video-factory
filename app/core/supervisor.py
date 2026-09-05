@@ -89,7 +89,9 @@ class _ContextWiring:
 def _redact_secrets[T](obj: T, values: frozenset[str]) -> T:
     """Return obj with every occurrence of each secret value replaced by '[REDACTED]', walking
     nested dicts/lists/strings. Non-strings are returned unchanged. Empty values are ignored."""
-    real = [v for v in values if v]
+    # Longest first so a shorter value that is a prefix of a longer one cannot
+    # run first and leave a dangling suffix of the longer secret.
+    real = sorted((v for v in values if v), key=len, reverse=True)
     if not real:
         return obj
 
@@ -644,7 +646,9 @@ def _run_prepare(
         return True, None
     if not isinstance(payload, dict):
         return False, None
-    return True, payload
+    redacted = _redact_secrets(payload, state.secret_values)
+    write_json_atomic(result_path, redacted)
+    return True, redacted
 
 
 def _run_videos(
