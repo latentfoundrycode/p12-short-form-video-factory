@@ -109,6 +109,13 @@ increments that logged them.
 - **H15 — Higgsfield frame/ref-conditioned generation not built.** `first_frame`/`last_frame`/`refs` raise
   `NotImplementedError`; image-to-video and first-last-frame endpoints (plus the image-upload mechanics and the
   `media.analyze.frame` clip-chaining path, §6.3/§6.3a) are a follow-up increment. _Source: B-5 (PR #33)._ Open.
+- **H16 — secret-store durability / KDF hardening (non-blocking).** `app/core/secrets.py` is correct and
+  leak-safe, but three optional hardenings are deferred: (a) the scrypt params (`n=2**14`) are **not stored in
+  the file**, so raising them later needs a re-encrypt/migration path — consider versioning the on-disk format
+  (a small header) before the store holds long-lived keys; (b) the parent directory is not fsync'd after
+  `os.replace` (the store can't be *truncated* — atomic replace — but the rename may not survive an immediate
+  power loss); (c) no POSIX `chmod 0o600` on `secrets.enc` (irrelevant on the Windows target, matters if the
+  store ever runs on Linux/CI with a shared home). _Source: S1 review A, non-blocking notes (PR #34)._ Open (low).
 
 ## Resolved
 
