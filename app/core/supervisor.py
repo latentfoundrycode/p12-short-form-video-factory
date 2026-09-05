@@ -100,7 +100,7 @@ def _redact_secrets[T](obj: T, values: frozenset[str]) -> T:
                 out = out.replace(v, "[REDACTED]")
             return out
         if isinstance(node, dict):
-            return {k: scrub(x) for k, x in node.items()}
+            return {scrub(k): scrub(x) for k, x in node.items()}
         if isinstance(node, list):
             return [scrub(x) for x in node]
         return node
@@ -576,7 +576,8 @@ def _consume_stdout(
             silence.note(event)
             state.record_event(run_dir, event, source)
             if event.get("t") == "result":
-                captured = {key: value for key, value in event.items() if key != "t"}
+                redacted = _redact_secrets(event, state.secret_values)
+                captured = {key: value for key, value in redacted.items() if key != "t"}
     finally:
         stop.set()
         watcher.join(timeout=1)
