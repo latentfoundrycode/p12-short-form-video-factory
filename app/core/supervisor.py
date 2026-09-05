@@ -204,6 +204,20 @@ def _make_context(
     )
 
 
+def _scrub_context_secrets(context_path: Path) -> None:
+    """Blank the `secrets` in an on-disk context.json after its subprocess has consumed it,
+    so provider keys don't persist in the run directory. Best-effort; never raises."""
+    try:
+        if not context_path.is_file():
+            return
+        data = json.loads(context_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and data.get("secrets"):
+            data["secrets"] = {}
+            write_json_atomic(context_path, data)
+    except (OSError, ValueError):
+        return
+
+
 def _aggregate_status(
     statuses: Sequence[VideoStatus],
     *,
@@ -574,18 +588,18 @@ def _run_prepare(
         params=params,
     )
     write_json_atomic(context_path, context.model_dump(mode="json"))
-    proc = _start_runner(
-        python,
-        workflow_dir,
-        context_path,
-        cwd=shared_dir,
-        popen=popen,
-        extra_args=["--entry", "prepare", "--result", str(result_path)],
-    )
-    pending = state.register_proc("prep", proc, shared_dir)
-    if pending is not None:
-        _apply_stop(pending, proc, shared_dir)
     try:
+        proc = _start_runner(
+            python,
+            workflow_dir,
+            context_path,
+            cwd=shared_dir,
+            popen=popen,
+            extra_args=["--entry", "prepare", "--result", str(result_path)],
+        )
+        pending = state.register_proc("prep", proc, shared_dir)
+        if pending is not None:
+            _apply_stop(pending, proc, shared_dir)
         _consume_stdout(
             proc,
             run_dir,
@@ -599,6 +613,7 @@ def _run_prepare(
             return False, None
     finally:
         state.unregister_proc("prep")
+        _scrub_context_secrets(context_path)
     payload: object = json.loads(result_path.read_text(encoding="utf-8"))
     if payload is None:
         return True, None
@@ -756,3 +771,5 @@ def _run_one_video(
                 ),
             )
         state.set_video(run_dir, index, status, atomic=atomic)
+    finally:
+        _scrub_context_secrets(video_dir / "context.json")
