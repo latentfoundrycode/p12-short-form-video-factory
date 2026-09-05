@@ -31,6 +31,7 @@ from pathlib import Path
 
 import pytest
 from sfvf._budget import (
+    BudgetError,
     BudgetExceededError,
     BudgetGuard,
     Ceilings,
@@ -210,3 +211,55 @@ def test_reconcile_rejects_non_finite_actual(tmp_path: Path, bad: float):
     with pytest.raises(ValueError):
         guard.reconcile(before[0]["token"], actual=bad)
     assert _ledger_lines(tmp_path / "ledger.jsonl") == before
+
+
+# --- ledger integrity: a corrupt ledger must fail closed, a torn tail must be tolerated ---
+
+
+def test_corrupt_ledger_line_fails_closed(tmp_path: Path):
+    # A complete-but-unparseable ledger line means real corruption. Silently skipping it would
+    # under-count spend and let a run overshoot, so the guard must refuse (fail closed) instead.
+    ledger = tmp_path / "ledger.jsonl"
+    ledger.write_text("this is not json\n", encoding="utf-8")
+    guard = _guard(tmp_path, per_day={"openrouter": 100.0})
+    with pytest.raises(BudgetError):
+        guard.reserve(run_id="r1", meter="openrouter", unit="EUR", estimate=0.1)
+
+
+def test_torn_tail_line_is_tolerated(tmp_path: Path):
+    # A crash mid-append leaves a final line with no trailing newline; that write never completed
+    # and never handed back a token, so only that tail is dropped — earlier entries still count.
+    ledger = tmp_path / "ledger.jsonl"
+    good = {
+        "ts": "2026-09-05T10:00:00Z",
+        "token": "t1",
+        "run_id": "r1",
+        "meter": "openrouter",
+        "unit": "EUR",
+        "amount": 0.4,
+        "kind": "reserved",
+        "note": "",
+    }
+    ledger.write_text(
+        json.dumps(good) + "\n" + '{"ts": "2026-09-05T10:00:01Z", "tok', encoding="utf-8"
+    )
+    guard = _guard(tmp_path, per_day={"openrouter": 100.0})
+    assert guard.day_total("openrouter") == pytest.approx(
+        0.4
+    )  # torn tail dropped, good line counts
+    guard.reserve(run_id="r1", meter="openrouter", unit="EUR", estimate=0.1)  # append still works
+
+
+def test_lock_path_is_canonical_across_spellings(tmp_path: Path):
+    # Two guards addressing the same ledger via different path spellings must share one lock file,
+    # or concurrent appends from each would not serialize.
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    direct = _guard(sub, per_day={"openrouter": 1.0})
+    spelled = BudgetGuard(
+        tmp_path / "sub" / ".." / "sub" / "ledger.jsonl",
+        ceilings=Ceilings(per_run={}, per_day={"openrouter": 1.0}),
+        now=_fixed_clock(datetime(2026, 9, 5, 12, 0, tzinfo=UTC)),
+    )
+    assert direct._lock_path == spelled._lock_path
+    assert direct._ledger_path == spelled._ledger_path
