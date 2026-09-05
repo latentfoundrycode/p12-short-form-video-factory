@@ -93,6 +93,20 @@ increments that logged them.
   first live `research` call**, and update the pinned `_RESEARCH_MODEL` / plugin form if needed. _Source: B-4d
   review B, non-blocking currency note (PR #31)._ Open (low).
 
+- **H13 — Higgsfield per-model request fields are best-effort until verified live.** `media.video.generate`
+  sends `{prompt, duration: duration_s, **extra}`; Higgsfield's request body is model-dependent and the exact
+  per-model field names (e.g. is it `duration`/`seconds`/`duration_ms`? aspect ratio? resolution for the credit
+  estimate?) were not pinned per-model from the OpenAPI. Before the first LIVE Higgsfield call, verify the
+  chosen model's request schema (per-model OpenAPI) and fix the `duration_s`/aspect/resolution mappings; `extra`
+  is the escape hatch meanwhile. _Source: B-5, dry_run/mocked (PR #33)._ Open (verify-before-live).
+- **H14 — Higgsfield submit/poll/download has no 429/backoff retry.** Unlike the OpenRouter adapter, the
+  Higgsfield adapter raises on any non-2xx submit and does not honor a `Retry-After` on 429 (it queues behind
+  the §5.5 limiter but doesn't `penalize`+retry). Add the same bounded 429-retry as `agents._post_chat_completion`
+  before any unattended live use. _Source: B-5 (PR #33)._ Open (low, pre-live).
+- **H15 — Higgsfield frame/ref-conditioned generation not built.** `first_frame`/`last_frame`/`refs` raise
+  `NotImplementedError`; image-to-video and first-last-frame endpoints (plus the image-upload mechanics and the
+  `media.analyze.frame` clip-chaining path, §6.3/§6.3a) are a follow-up increment. _Source: B-5 (PR #33)._ Open.
+
 ## Resolved
 
 _(none yet)_

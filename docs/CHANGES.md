@@ -2,6 +2,21 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-05 — B-5: `media.video.generate` on Higgsfield REST (mocked HTTP; no live call)
+
+New `sdk/sfvf/media/video.py`: `media.video.generate(prompt, *, model, ...) -> str` on Higgsfield's documented
+REST API (Architecture §5.5 amended to REST/API-key — Option B). Async lifecycle over `httpx2`: submit
+`POST /<model>` with `Authorization: Key <secret>` → `{request_id, status_url}`; poll `GET /requests/{id}/status`
+(`queued`/`in_progress` → keep going; `completed` → `video.url`; `failed`/`nsfw`/`canceled` → error),
+**heartbeating each poll** (§2.8/§6.3) with a bounded `_POLL_TIMEOUT_S`; download `video.url` → content-addressed
+artifact → video-relative path. Reuses `ctx.secret` (§5.6, `HIGGSFIELD_API_KEY` = `"id:secret"`), the §5.5
+`RateLimiter` (`higgsfield` queue), the `httpx2` `sfvf[openrouter]` extra, and `graphics._artifact`/`_sha8`.
+`dry_run` is a genuine no-network stub: a real placeholder MP4 via `_ffmpeg.color_bars` at zero cost. Exercised
+entirely against `httpx2.MockTransport` — **no live call, no OAuth, no real key**. **Scope: text-to-video**;
+frame/ref-conditioned generation raises `NotImplementedError` (deferred). Cost surfaced via `ctx.log`, no cost
+event (Stage C, H10). This is the last paid provider in dry_run/mocked form; the live-key boundary (a real
+Higgsfield API key) is next and NOT built.
+
 ## 2026-09-05 — H7 fix: atomic-record I/O resilient to the Windows replace/open race
 
 `app/core/records.py` now retries `write_json_atomic`'s `os.replace` and `read_json`'s `read_text` on a
