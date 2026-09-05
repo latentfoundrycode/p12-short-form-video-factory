@@ -136,6 +136,11 @@ def _store_path() -> Path:
     return _DEFAULT_STORE
 
 
+def subprocess_env() -> dict[str, str]:
+    """os.environ minus the master passphrase — for any subprocess we spawn (§5.6 / H17)."""
+    return {k: v for k, v in os.environ.items() if k != "SFVF_SECRETS_PASSPHRASE"}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="app.core.secrets")
     sub = parser.add_subparsers(dest="command", required=True)

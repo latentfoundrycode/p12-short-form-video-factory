@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.core.secrets import subprocess_env
 from app.paths import SDK_DIR, VENVS_DIR, is_safe_path_segment
 
 HASH_MARKER = ".requirements.sha256"
@@ -52,6 +53,7 @@ def default_find_python(version: str) -> Path | None:
                 text=True,
                 timeout=15,
                 check=False,
+                env=subprocess_env(),
             )
         except OSError:
             completed = None
@@ -68,7 +70,7 @@ def default_find_python(version: str) -> Path | None:
 
 def _run_timed(command: list[str], *, timeout: float = ENV_SUBPROCESS_TIMEOUT) -> None:
     try:
-        subprocess.run(command, check=True, timeout=timeout)
+        subprocess.run(command, check=True, timeout=timeout, env=subprocess_env())
     except subprocess.TimeoutExpired as exc:
         raise TimeoutError(f"environment setup timed out after {timeout}s") from exc
 

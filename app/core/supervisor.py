@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import signal
 import subprocess
 import sys
@@ -33,6 +32,7 @@ from app.core.records import (
     write_json_atomic,
     write_video,
 )
+from app.core.secrets import subprocess_env
 from app.paths import CACHE_DIR
 from app.registry.schema import parse_manifest_toml
 
@@ -291,6 +291,8 @@ def run_request(
         mode = "dry" if dry_run else "real"
         cache_root = ((cache_dir or CACHE_DIR) / workflow_id / mode).resolve()
         cache_root.mkdir(parents=True, exist_ok=True)
+        allowed = {rk.name for rk in manifest.requires_keys}
+        injected = {k: v for k, v in (secrets or {}).items() if k in allowed}
         wiring = _ContextWiring(
             workflow_id=workflow_id,
             run_id=run_id,
@@ -300,7 +302,7 @@ def run_request(
             workflow_dir=workflow_dir,
             dry_run=dry_run,
             step_concurrency=step_concurrency,
-            secrets=dict(secrets or {}),
+            secrets=injected,
         )
         with _lock:
             _active[workflow_id] = run_id
@@ -420,10 +422,6 @@ def stop(run_id: str, *, mode: StopMode) -> StopResult:
     return StopAccepted(run_id=run_id, mode=mode)
 
 
-def _subprocess_env() -> dict[str, str]:
-    return {k: v for k, v in os.environ.items() if k != "SFVF_SECRETS_PASSPHRASE"}
-
-
 def _start_runner(
     python: Path,
     workflow_dir: Path,
@@ -455,7 +453,7 @@ def _start_runner(
         encoding="utf-8",
         errors="replace",
         bufsize=1,
-        env=_subprocess_env(),
+        env=subprocess_env(),
         **_process_group_kwargs(),
     )
 
