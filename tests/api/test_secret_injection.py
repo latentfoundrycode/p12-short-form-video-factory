@@ -10,6 +10,7 @@ env-setup / `pip install` subprocesses (HARDENING H17), via the shared
 
 import json
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -62,7 +63,7 @@ def _install_stub(
         toml.write_text(toml.read_text(encoding="utf-8") + extra, encoding="utf-8")
 
 
-def _client(tmp_path: Path, *, secrets: object = None) -> TestClient:
+def _client(tmp_path: Path, *, secrets: object = None, popen: object = None) -> TestClient:
     workflows_dir = tmp_path / "workflows"
     workflows_dir.mkdir(exist_ok=True)
     return TestClient(
@@ -71,8 +72,24 @@ def _client(tmp_path: Path, *, secrets: object = None) -> TestClient:
             runs_dir=tmp_path / "runs",
             ensure_env=_ready,  # type: ignore[arg-type]
             secrets=secrets,  # type: ignore[arg-type]
+            popen=popen,  # type: ignore[arg-type]
         )
     )
+
+
+def _capture_context_secrets(records: list):
+    # Capture each spawned runner's context.json secrets AT SPAWN — before S2b scrubs them
+    # post-run — then delegate to the real Popen so the stub still runs to completion.
+    def popen(command, **kwargs):
+        try:
+            idx = command.index("--context")
+            data = json.loads(Path(command[idx + 1]).read_text(encoding="utf-8"))
+            records.append(data.get("secrets"))
+        except (ValueError, OSError, IndexError):
+            records.append(None)
+        return subprocess.Popen(command, **kwargs)
+
+    return popen
 
 
 def _wait_terminal(client: TestClient, run_id: str, timeout: float = 15) -> None:
@@ -85,42 +102,44 @@ def _wait_terminal(client: TestClient, run_id: str, timeout: float = 15) -> None
     raise AssertionError(f"run {run_id} did not reach a terminal status")
 
 
-def _run_and_read_context(
+def _injected_secrets_at_spawn(
     tmp_path: Path, *, secrets: object, requires_keys: list[str] | None
 ) -> dict:
+    # Verify injection by what the runner actually received in context.json AT SPAWN — S2b
+    # scrubs those secrets from the on-disk file after the run, so a post-run read would be {}.
     workflows_dir = tmp_path / "workflows"
     workflows_dir.mkdir(exist_ok=True)
     _install_stub(workflows_dir, "succeeds", requires_keys=requires_keys)
-    client = _client(tmp_path, secrets=secrets)
+    records: list = []
+    client = _client(tmp_path, secrets=secrets, popen=_capture_context_secrets(records))
     r = client.post(
         "/api/workflows/succeeds/runs",
         json={"params": {"topic": "a"}, "video_count": 1, "concurrency": 1},
     )
     assert r.status_code == 202
     _wait_terminal(client, r.json()["run_id"])
-    contexts = list((tmp_path / "runs").rglob("context.json"))
-    assert contexts, "no context.json was written"
-    return json.loads(contexts[0].read_text(encoding="utf-8"))
+    assert records, "the runner was never spawned"
+    return records[0] or {}
 
 
 def test_only_allowlisted_secrets_are_injected(tmp_path):
     # The workflow declares it needs OPENROUTER_API_KEY; HIGGSFIELD_API_KEY is withheld.
-    ctx = _run_and_read_context(
+    injected = _injected_secrets_at_spawn(
         tmp_path,
         secrets={"OPENROUTER_API_KEY": "sk-or", "HIGGSFIELD_API_KEY": "hf-secret"},
         requires_keys=["OPENROUTER_API_KEY"],
     )
-    assert ctx["secrets"] == {"OPENROUTER_API_KEY": "sk-or"}
+    assert injected == {"OPENROUTER_API_KEY": "sk-or"}
 
 
 def test_no_required_keys_injects_empty(tmp_path):
     # A workflow that declares no keys receives none, even when the store is populated.
-    ctx = _run_and_read_context(
+    injected = _injected_secrets_at_spawn(
         tmp_path,
         secrets={"OPENROUTER_API_KEY": "sk-or"},
         requires_keys=None,
     )
-    assert ctx["secrets"] == {}
+    assert injected == {}
 
 
 def test_subprocess_env_strips_the_master_passphrase(monkeypatch):
