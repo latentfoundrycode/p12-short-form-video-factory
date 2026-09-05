@@ -114,6 +114,13 @@ def _or_success(cost: float) -> httpx2.MockTransport:
     return httpx2.MockTransport(handler)
 
 
+def _or_body(body: dict[str, object]) -> httpx2.MockTransport:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json=body)
+
+    return httpx2.MockTransport(handler)
+
+
 # --- OpenRouter gate ---
 
 
@@ -150,6 +157,37 @@ def test_llm_allowed_reserves_then_reconciles_actual(
     actual = next(e for e in entries if e["kind"] == "actual")
     assert actual["meter"] == "openrouter"
     assert actual["amount"] == pytest.approx(0.03)  # reconciled to the real usage.cost
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"choices": [{"message": {"content": "hello"}}]},  # no usage key at all
+        {"choices": [{"message": {"content": "hello"}}], "usage": None},  # usage present but null
+        {"choices": [{"message": {"content": "hello"}}], "usage": []},  # usage a non-dict
+        {
+            "choices": [{"message": {"content": "hello"}}],
+            "usage": {"cost": "oops"},
+        },  # cost not a number
+    ],
+)
+def test_llm_success_with_unusable_cost_holds_reservation_without_crashing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: dict[str, object]
+):
+    # A 200 whose usage/cost is missing or malformed must NOT crash the call AFTER the paid request
+    # succeeded — reconcile is skipped and the conservative estimate reservation stands.
+    budget = _budget(tmp_path, per_day={"openrouter": 10.0}, estimates={"openrouter": 0.5})
+    _install_or_mock(monkeypatch, _or_body(body))
+    ctx = _ctx(tmp_path, budget=budget)
+    token = set_active(ctx)
+    try:
+        out = agents.llm("hi", agent="a", model="m")  # must not raise
+    finally:
+        reset_active(token)
+    assert out == "hello"
+    entries = _ledger_lines(budget.ledger_path)
+    assert [e["kind"] for e in entries] == ["reserved"]  # reservation stands, no actual booked
+    assert entries[0]["amount"] == pytest.approx(0.5)
 
 
 def test_kill_switch_blocks_llm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
