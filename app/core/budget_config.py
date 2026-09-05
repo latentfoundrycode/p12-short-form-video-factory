@@ -10,6 +10,7 @@ SKELETON — signatures frozen by tests/api/test_budget_activation.py; the build
 
 from __future__ import annotations
 
+import math
 import os
 import tomllib
 from pathlib import Path
@@ -21,6 +22,16 @@ from app.paths import APP_ROOT
 
 class BudgetConfigError(Exception):
     """The configured budget file is missing or malformed (fail closed)."""
+
+
+def _as_amount(value: object) -> float:
+    """Coerce a TOML ceiling/estimate to float. Bools and non-numbers fail closed."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise BudgetConfigError("budget amount must be a finite number")
+    amount = float(value)
+    if not math.isfinite(amount):
+        raise BudgetConfigError("budget amount must be a finite number")
+    return amount
 
 
 def load_budget_config() -> BudgetConfig | None:
@@ -46,11 +57,11 @@ def load_budget_config() -> BudgetConfig | None:
         if not isinstance(table, dict):
             continue
         if "per_run" in table:
-            per_run[meter] = float(table["per_run"])
+            per_run[meter] = _as_amount(table["per_run"])
         if "per_day" in table:
-            per_day[meter] = float(table["per_day"])
+            per_day[meter] = _as_amount(table["per_day"])
         if "estimate" in table:
-            estimates[meter] = float(table["estimate"])
+            estimates[meter] = _as_amount(table["estimate"])
 
     state = Path(os.environ.get("SFVF_BUDGET_STATE") or (APP_ROOT / "state" / "budget"))
     return BudgetConfig(
