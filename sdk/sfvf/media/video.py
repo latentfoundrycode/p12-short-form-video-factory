@@ -92,6 +92,8 @@ def generate(
                     f"(request_id={request_id})"
                 )
             poll = client.get(status_url)
+            if poll.status_code // 100 != 2:
+                raise RuntimeError(f"Higgsfield poll {poll.status_code}: {poll.text}")
             payload: dict[str, Any] = poll.json()
             status = payload["status"]
             if status == "completed":
@@ -103,6 +105,8 @@ def generate(
             time.sleep(_POLL_INTERVAL_S)
 
         download = client.get(completed["video"]["url"])
+        if download.status_code // 100 != 2:
+            raise RuntimeError(f"Higgsfield download {download.status_code}: {download.text}")
         dest.write_bytes(download.content)
 
     ctx.log(f"Higgsfield video model={model} request_id={request_id}")
