@@ -10,7 +10,13 @@ SKELETON — signatures frozen by tests/api/test_budget_activation.py; the build
 
 from __future__ import annotations
 
+import os
+import tomllib
+from pathlib import Path
+
 from sfvf.context import BudgetConfig
+
+from app.paths import APP_ROOT
 
 
 class BudgetConfigError(Exception):
@@ -24,4 +30,33 @@ def load_budget_config() -> BudgetConfig | None:
     and per-meter reserve estimates, deriving the ledger and kill-switch paths from the state dir
     (`SFVF_BUDGET_STATE` or a default). A missing or malformed file raises `BudgetConfigError`.
     """
-    raise NotImplementedError
+    config_path = os.environ.get("SFVF_BUDGET_CONFIG")
+    if not config_path:
+        return None
+    try:
+        with Path(config_path).open("rb") as handle:
+            data = tomllib.load(handle)
+    except (FileNotFoundError, OSError, tomllib.TOMLDecodeError) as exc:
+        raise BudgetConfigError(str(exc)) from exc
+
+    per_run: dict[str, float] = {}
+    per_day: dict[str, float] = {}
+    estimates: dict[str, float] = {}
+    for meter, table in data.items():
+        if not isinstance(table, dict):
+            continue
+        if "per_run" in table:
+            per_run[meter] = float(table["per_run"])
+        if "per_day" in table:
+            per_day[meter] = float(table["per_day"])
+        if "estimate" in table:
+            estimates[meter] = float(table["estimate"])
+
+    state = Path(os.environ.get("SFVF_BUDGET_STATE") or (APP_ROOT / "state" / "budget"))
+    return BudgetConfig(
+        ledger_path=(state / "ledger.jsonl").resolve(),
+        kill_switch_path=(state / "STOP").resolve(),
+        per_run=per_run,
+        per_day=per_day,
+        estimates=estimates,
+    )

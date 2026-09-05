@@ -14,6 +14,7 @@ from typing import Any, cast
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from sfvf.context import BudgetConfig
 
 from app.api.workflows import RegistryHolder
 from app.core.env import EnvBlocked
@@ -151,6 +152,10 @@ def _secrets(request: Request) -> Mapping[str, str]:
     return cast(Mapping[str, str], injected) if injected is not None else {}
 
 
+def _budget(request: Request) -> BudgetConfig | None:
+    return getattr(request.app.state, "budget", None)
+
+
 def admit_run(
     workflow_dir: Path,
     *,
@@ -161,6 +166,7 @@ def admit_run(
     ensure_env: EnsureEnv = default_ensure_env,
     popen: PopenFn = subprocess.Popen,
     secrets: Mapping[str, str] | None = None,
+    budget: BudgetConfig | None = None,
 ) -> AdmissionResult:
     """Launch run_request on a daemon thread; return as soon as admission resolves."""
     started = threading.Event()
@@ -185,6 +191,7 @@ def admit_run(
                     popen=popen,
                     on_started=on_started,
                     secrets=secrets,
+                    budget=budget,
                 )
             )
         except BaseException as exc:
@@ -266,6 +273,7 @@ def launch_run(workflow_id: str, body: LaunchBody, request: Request) -> JSONResp
         ensure_env=_ensure_env(request),
         popen=_popen(request),
         secrets=_secrets(request),
+        budget=_budget(request),
     )
     if isinstance(outcome, AdmissionAccepted):
         return JSONResponse(
