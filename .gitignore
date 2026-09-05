@@ -4,6 +4,7 @@ library/
 venvs/
 archive/
 staging/
+state/
 schedules.json
 settings.json
 secrets.enc

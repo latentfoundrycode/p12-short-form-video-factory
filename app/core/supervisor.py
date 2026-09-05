@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from sfvf.context import ContextFile, ContextPaths
+from sfvf.context import BudgetConfig, ContextFile, ContextPaths
 
 from app.core.env import EnvBlocked, EnvReady, EnvResult
 from app.core.env import ensure_env as default_ensure_env
@@ -84,6 +84,7 @@ class _ContextWiring:
     dry_run: bool
     step_concurrency: int
     secrets: dict[str, str]
+    budget: BudgetConfig | None = None
 
 
 def _redact_secrets[T](obj: T, values: frozenset[str]) -> T:
@@ -226,6 +227,7 @@ def _make_context(
         secrets=dict(wiring.secrets),
         previous=previous,
         shared=shared_payload,
+        budget=wiring.budget,
     )
 
 
@@ -309,6 +311,7 @@ def run_request(
     dry_run: bool = False,
     step_concurrency: int = 1,
     secrets: Mapping[str, str] | None = None,
+    budget: BudgetConfig | None = None,
 ) -> RunRequestResult:
     workflow_dir = workflow_dir.resolve()
     manifest = parse_manifest_toml((workflow_dir / "workflow.toml").read_text(encoding="utf-8"))
@@ -342,6 +345,7 @@ def run_request(
             dry_run=dry_run,
             step_concurrency=step_concurrency,
             secrets=injected,
+            budget=budget,
         )
         with _lock:
             _active[workflow_id] = run_id

@@ -1,0 +1,25 @@
+# SFVF budget circuit-breaker configuration.
+#
+# ACTIVE ONLY when the SFVF_BUDGET_CONFIG environment variable points at this file. When it is unset
+# the breaker is inert (no ceilings enforced). Ledger + kill-switch live under SFVF_BUDGET_STATE (or a
+# default state dir). To halt ALL paid calls immediately, create the kill-switch sentinel file in that
+# state dir (default name: STOP).
+#
+# Amounts are per meter (provider). Units are never combined across meters:
+#   openrouter → USD (reconciled from the real usage.cost after each call)
+#   higgsfield → credits (estimate-capped only until a Stage-C reconcile — see HARDENING H20)
+#
+# NOTE: these are deliberately TIGHT proof-of-breaker floors for the attended first live run
+# (OpenRouter, cheapest model, video_count=1 — cents at most). Raise them once a live run has been
+# watched and the real per-video cost is known.
+
+[openrouter]
+per_run = 0.50   # USD — hard ceiling for a single run
+per_day = 2.00   # USD — hard ceiling across all runs in a UTC day
+estimate = 0.05  # USD — conservative amount reserved before each call
+
+[higgsfield]
+# Placeholders — confirm against real Higgsfield credit pricing BEFORE its attended run.
+per_run = 100    # credits
+per_day = 300    # credits
+estimate = 50    # credits reserved per video
