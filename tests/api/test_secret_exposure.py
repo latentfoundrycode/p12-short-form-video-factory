@@ -61,7 +61,7 @@ def _install_stub(
         toml.write_text(toml.read_text(encoding="utf-8") + extra, encoding="utf-8")
 
 
-def _client(tmp_path: Path, *, secrets: object = None) -> TestClient:
+def _client(tmp_path: Path, *, secrets: object = None, popen: object = None) -> TestClient:
     workflows_dir = tmp_path / "workflows"
     workflows_dir.mkdir(exist_ok=True)
     return TestClient(
@@ -70,6 +70,7 @@ def _client(tmp_path: Path, *, secrets: object = None) -> TestClient:
             runs_dir=tmp_path / "runs",
             ensure_env=_ready,  # type: ignore[arg-type]
             secrets=secrets,  # type: ignore[arg-type]
+            popen=popen,  # type: ignore[arg-type]
         )
     )
 
@@ -98,6 +99,42 @@ def test_context_json_is_not_downloadable(tmp_path):
     base = "/api/workflows/succeeds/runs/20260101-000000/files/shared"
     assert client.get(f"{base}/context.json").status_code == 404  # secret file blocked
     assert client.get(f"{base}/note.txt").status_code == 200  # ordinary file still served
+
+
+def test_secrets_scrubbed_even_when_runner_spawn_fails(tmp_path):
+    # Even if the runner subprocess fails to spawn, the injected secrets must not linger on disk
+    # in context.json (the scrub runs in a finally that wraps the spawn).
+    workflows_dir = tmp_path / "workflows"
+    workflows_dir.mkdir()
+    _install_stub(workflows_dir, "succeeds", requires_keys=["OPENROUTER_API_KEY"])
+
+    def failing_popen(command, **kwargs):
+        raise OSError("cannot spawn runner")
+
+    client = _client(
+        tmp_path, secrets={"OPENROUTER_API_KEY": "sk-secret-value"}, popen=failing_popen
+    )
+    r = client.post(
+        "/api/workflows/succeeds/runs",
+        json={"params": {"topic": "a"}, "video_count": 1, "concurrency": 1},
+    )
+    assert r.status_code == 202
+
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        found = list((tmp_path / "runs").rglob("context.json"))
+        if found and all(
+            json.loads(p.read_text(encoding="utf-8")).get("secrets") == {} for p in found
+        ):
+            break
+        time.sleep(0.05)
+
+    contexts = list((tmp_path / "runs").rglob("context.json"))
+    assert contexts, "context.json was never written"
+    for ctx_path in contexts:
+        text = ctx_path.read_text(encoding="utf-8")
+        assert json.loads(text).get("secrets") == {}, f"secrets not scrubbed in {ctx_path}"
+        assert "sk-secret-value" not in text
 
 
 def test_context_json_secrets_are_scrubbed_after_run(tmp_path):
