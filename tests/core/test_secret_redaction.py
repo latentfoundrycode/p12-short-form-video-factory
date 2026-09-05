@@ -8,9 +8,21 @@ the run's secret values. Fake values live only under tmp_path.
 """
 
 import json
+import shutil
+import sys
+import time
 from pathlib import Path
 
+import pytest
+from fastapi.testclient import TestClient
+
+import app.core.supervisor as supervisor_mod
+from app.core.env import EnvReady
 from app.core.supervisor import _redact_secrets, _RunState
+from app.main import create_app
+
+_STUBS = Path(__file__).resolve().parent.parent / "stubs"
+_TERMINAL = {"complete", "partial", "stopped", "stopped-budget", "failed"}
 
 
 def test_redact_secrets_scrubs_nested_string_values():
@@ -58,3 +70,70 @@ def test_record_event_empty_secret_string_is_ignored(tmp_path: Path):
     text = (tmp_path / "events.jsonl").read_text(encoding="utf-8")
     assert "hello world" in text
     assert "[REDACTED]" not in text
+
+
+def test_redact_secrets_scrubs_dict_keys(tmp_path: Path):
+    # A secret used as a dict KEY must also be scrubbed, not just values.
+    out = _redact_secrets({"sk-abc123": "value"}, frozenset({"sk-abc123"}))
+    assert "sk-abc123" not in json.dumps(out)
+    assert "[REDACTED]" in json.dumps(out)
+
+
+# --- integration: a secret in a workflow's structured result must not persist in video.json ---
+
+
+@pytest.fixture(autouse=True)
+def _clear_supervisor_state():
+    with supervisor_mod._lock:
+        supervisor_mod._active.clear()
+        supervisor_mod._runs.clear()
+    yield
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        with supervisor_mod._lock:
+            if not supervisor_mod._active and not supervisor_mod._runs:
+                break
+        time.sleep(0.05)
+    with supervisor_mod._lock:
+        supervisor_mod._active.clear()
+        supervisor_mod._runs.clear()
+
+
+def _ready(*_a: object, **_k: object) -> EnvReady:
+    return EnvReady(python=Path(sys.executable))
+
+
+def test_result_secret_is_redacted_in_video_json(tmp_path: Path):
+    workflows_dir = tmp_path / "workflows"
+    workflows_dir.mkdir()
+    shutil.copytree(_STUBS / "leaks_secret", workflows_dir / "leaks_secret")
+    (workflows_dir / "leaks_secret" / "requirements.txt").write_text("", encoding="utf-8")
+    client = TestClient(
+        create_app(
+            workflows_dir=workflows_dir,
+            runs_dir=tmp_path / "runs",
+            ensure_env=_ready,  # type: ignore[arg-type]
+            secrets={"OPENROUTER_API_KEY": "sk-leaked-value"},  # type: ignore[arg-type]
+        )
+    )
+    r = client.post(
+        "/api/workflows/leaks_secret/runs",
+        json={"params": {}, "video_count": 1, "concurrency": 1},
+    )
+    assert r.status_code == 202
+    run_id = r.json()["run_id"]
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        d = client.get(f"/api/workflows/leaks_secret/runs/{run_id}")
+        if d.status_code == 200 and d.json()["status"] in _TERMINAL:
+            break
+        time.sleep(0.05)
+
+    videos = list((tmp_path / "runs").rglob("video.json"))
+    assert videos, "no video.json written"
+    for vj in videos:
+        text = vj.read_text(encoding="utf-8")
+        assert "sk-leaked-value" not in text, f"secret leaked into {vj}"
+    # events.jsonl must also be clean
+    for ev in (tmp_path / "runs").rglob("events.jsonl"):
+        assert "sk-leaked-value" not in ev.read_text(encoding="utf-8")
