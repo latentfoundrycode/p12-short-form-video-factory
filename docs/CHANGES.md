@@ -2,6 +2,27 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-05 — T2a: budget circuit-breaker engine (§5.4 safety subset)
+
+The minimal money-safety backstop that must exist before any live paid call. New pure, file-backed
+engine `sfvf._budget`: a `BudgetGuard` enforcing per-meter **per-run** and **per-day** spend ceilings
+plus an operator **kill-switch**, over a durable JSONL **ledger** (the cross-process source of truth —
+the child enforces against it before a call; the parent surfaces it). `reserve(...)` is called before a
+priced call and refuses (`BudgetExceededError` / `KillSwitchEngagedError`) unless the prospective charge
+fits; a reservation is visible immediately so concurrent steps can't each see the full balance and
+overshoot together. `reconcile(token, actual=...)` supersedes the estimate with the real amount. This is
+the reserve-then-reconcile scheme of §5.4 restricted to the safety subset — full per-provider metering,
+cost events, and forecasts remain Stage C and will extend this file. T2a is the engine only, with NO
+wiring into the agents/video call paths (that is T2b). Nothing here makes or enables a live call.
+
+Decorrelated review hardened the engine so it cannot be defeated by bad input or a damaged ledger:
+`reserve`/`reconcile` reject non-finite or negative amounts (a `NaN` estimate would otherwise slip past
+every `> ceiling` check and poison all totals); appends are single-line, `fsync`-durable, and drop only
+a torn trailing line from a crashed write; a genuinely corrupt ledger line fails **closed** (refuse)
+rather than being silently skipped into an under-count; and the ledger path is canonicalized so the
+cross-process lock identity is stable across path spellings. Open residuals (inherent to the calendar-day
+/ estimate model) are tracked as **H19**.
+
 ## 2026-09-05 — S2c: redact secret values from the event stream (§5.6 defense-in-depth)
 
 Last §5.6 layer. All run events (subprocess stdout, silence-watcher notes, logs, errors) pass through
