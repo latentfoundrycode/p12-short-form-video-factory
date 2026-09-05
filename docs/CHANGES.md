@@ -2,6 +2,17 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-05 — H7 fix: atomic-record I/O resilient to the Windows replace/open race
+
+`app/core/records.py` now retries `write_json_atomic`'s `os.replace` and `read_json`'s `read_text` on a
+transient `PermissionError` (bounded: `_RETRY_ATTEMPTS`×`_RETRY_DELAY_S`, then re-raise). On windows-latest,
+an in-flight atomic record swap and a concurrent record read collide as a file-sharing violation
+(`PermissionError [Errno 13]`) on either side; the swap completes in microseconds, so a small bounded retry
+removes it. This is the fix for HARDENING **H7** — the app-layer subprocess/file-contention CI flake that
+blocked CI three times (`test_runs`, `test_run_events`, `test_supervisor`, all `PermissionError` on
+`request.json`/`video.json`). No behaviour change on the happy path; the temp file is still cleaned up when the
+retries are exhausted. Not weakening — it makes the record I/O correct under Windows file-sharing semantics.
+
 ## 2026-09-03 — B-4d: real `agents.research` over OpenRouter web search (mocked HTTP; no live call)
 
 The **non-dry** path of `agents.research` now uses OpenRouter's **web plugin** (`plugins:[{"id":"web"}]`) on a

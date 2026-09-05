@@ -3,13 +3,34 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from collections.abc import Iterator, Mapping, Sequence
+import time
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from app.core import ids as clock
+
+_RETRY_ATTEMPTS = 10
+_RETRY_DELAY_S = 0.02  # tests monkeypatch this to 0.0
+
+
+def _retry_on_permission_error[T](op: Callable[[], T]) -> T:
+    """Run op(); on a transient PermissionError (Windows atomic-replace/open race), retry a
+    bounded number of times with a short delay, then re-raise the last error."""
+    last: PermissionError | None = None
+    for attempt in range(_RETRY_ATTEMPTS):
+        try:
+            return op()
+        except PermissionError as exc:
+            last = exc
+            if attempt + 1 < _RETRY_ATTEMPTS:
+                time.sleep(_RETRY_DELAY_S)
+    if last is None:
+        raise RuntimeError("retry helper exhausted without an error")
+    raise last
+
 
 type RequestStatus = Literal[
     "running", "complete", "partial", "stopped", "stopped-budget", "failed"
@@ -96,14 +117,15 @@ def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp_path, path)  # noqa: PTH105  # os.replace is atomic on Windows
+        _retry_on_permission_error(lambda: os.replace(tmp_path, path))  # noqa: PTH105  # os.replace is atomic on Windows
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    payload: Any = json.loads(path.read_text(encoding="utf-8"))
+    text = _retry_on_permission_error(lambda: path.read_text(encoding="utf-8"))
+    payload: Any = json.loads(text)
     if not isinstance(payload, dict):
         raise TypeError(f"expected a JSON object in {path}")
     return payload

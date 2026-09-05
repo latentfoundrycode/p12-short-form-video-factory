@@ -46,9 +46,15 @@ increments that logged them.
   (PR #29): the same test hit a Windows `PermissionError` on `request.json`, AND `test_supervisor.py::
   test_heartbeating_stub_survives_past_silence_limit` flaked the same way (stub run → terminal `failed`); both
   passed on re-run.** So this is now a recurring, CI-blocking flake class across the app-layer subprocess-run
-  tests (`test_runs.py`, `test_supervisor.py`) under windows-latest load — not a one-off. Worth real hardening
-  of the run-admission / subprocess-spawn / temp-file handling (Windows file-lock + timing), or a scoped retry,
-  since it now costs a CI re-run most increments. Open (rising priority).
+  tests (`test_runs.py`, `test_supervisor.py`, `test_run_events.py`) under windows-latest load — not a
+  one-off (blocked B-4d's CI twice more before greening on the 3rd re-run). **CORE RACE FIXED (PR #32):** the
+  cause is a Windows file-sharing violation between `write_json_atomic`'s atomic `os.replace` and a concurrent
+  `read_json` `read_text` of the same `request.json`/`video.json`; both now retry on transient
+  `PermissionError` (`app/core/records.py`), which removes this flake class. **Residual vectors (open, low):**
+  (a) test-teardown `shutil.rmtree` of a run dir a subprocess handle still holds can raise its own
+  `PermissionError` — a separate path not covered here; (b) `events.jsonl` (`append_event`/`read_events`) is
+  not wrapped by the record retry — `append` is `O_APPEND` and `read_events` tolerates torn lines, but the same
+  class could surface there. Reopen/extend if either residual vector produces a flake. Open (low, residual).
 
 - **H8 — `RateLimiter.configure` replaces a live semaphore.** `configure(provider, …)` rebuilds the
   provider's `threading.Semaphore`, so reconfiguring **while slots are active** leaves old holders on the old
