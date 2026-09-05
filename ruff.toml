@@ -7,7 +7,7 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "S", "A", "C4", "SIM", "PTH", "RUF
 
 [lint.per-file-ignores]
 "workflows/**/*.py" = ["S603", "S607"]
-"tests/**/*.py" = ["S101", "S108", "S404", "S603", "S607"]
+"tests/**/*.py" = ["S101", "S105", "S106", "S108", "S404", "S603", "S607"]
 "app/registry/schema.py" = ["A003"]
 "app/core/env.py" = ["S404", "S603", "S607"]
 "app/core/proc.py" = ["S404", "S603", "S607"]
