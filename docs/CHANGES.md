@@ -15,7 +15,12 @@ submit. A refused reservation (ceiling or kill-switch) raises before any HTTP ca
 budget blocks the spend outright; a budget that is configured but missing an estimate for the charged
 meter fails **closed** rather than proceeding ungated. When `budget` is absent behaviour is unchanged.
 SDK-only: the supervisor populating this config from app settings and mapping a denial to the
-`stopped-budget` status is T2b-2. No live call is made or enabled here.
+`stopped-budget` status is T2b-2. No live call is made or enabled here. Review hardening: the reconcile
+reads `usage.cost` defensively (`_usage_cost` — non-dict `usage`, non-numeric/bool, or non-finite cost
+all yield "no cost"), so a malformed 200 body after a paid call holds the reservation at the estimate
+instead of crashing the call. Remaining known limits (H19): Higgsfield is estimate-capped only until a
+Stage-C reconcile (set its estimate ≥ realistic per-video cost), and the kill-switch is checked at
+reserve time, not mid-flight.
 
 ## 2026-09-05 — T2a: budget circuit-breaker engine (§5.4 safety subset)
 

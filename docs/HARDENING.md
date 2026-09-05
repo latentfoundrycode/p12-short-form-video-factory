@@ -155,6 +155,17 @@ increments that logged them.
   `ts` is excluded from `day_total` (still counted in `run_total`) — cannot arise from engine-written
   entries; and a `per_day`/`per_run` ceiling set to `inf` refuses everything (the "unlimited" convention
   is meter **absence**, not `inf`). _Source: T2a review A/B (PR #38)._ Open.
+- **H20 — budget-gate wiring residuals (T2b-1).** The SDK now gates both paid providers before spending
+  (`Context._budget_reserve`/`_reconcile`), but two limits remain until Stage C / T2b-2:
+  (a) **Higgsfield is estimate-capped only** — `generate` reserves the configured estimate but never
+  reconciles a real amount (the submit returns no per-request cost), so its per-run/per-day cap is only
+  as tight as the configured estimate. Set the Higgsfield estimate ≥ a realistic per-video credit cost,
+  and add a real reconcile (from the status/credits response) in Stage C. (b) **Kill-switch is checked at
+  reserve time, not mid-flight** — engaging the switch after a Higgsfield reserve does not abort the
+  in-flight submit/poll/download (up to the poll timeout). (c) OpenRouter reconcile does not re-check
+  ceilings (H19(b) applies): one allowed call whose real `usage.cost` exceeds headroom breaches after the
+  fact; the next reserve is then denied. Also: production spend stays **ungated until T2b-2** populates
+  `ContextFile.budget` on real runs. _Source: T2b-1 review A/B (PR #39)._ Open.
 
 ## Resolved
 
