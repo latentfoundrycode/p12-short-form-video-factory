@@ -79,6 +79,18 @@ def test_redact_secrets_scrubs_dict_keys(tmp_path: Path):
     assert "[REDACTED]" in json.dumps(out)
 
 
+def test_redact_secrets_handles_overlapping_values():
+    # When one secret value is a prefix of another, redaction must not leave a
+    # dangling suffix of the longer value. Longest match must win regardless of
+    # frozenset iteration order.
+    values = frozenset({"sk-ab", "sk-abcdefghij"})
+    out = _redact_secrets({"msg": "here is sk-abcdefghij in a line"}, values)
+    dumped = json.dumps(out)
+    assert "sk-ab" not in dumped  # no prefix left
+    assert "cdefghij" not in dumped  # no suffix of the longer value left
+    assert "[REDACTED]" in dumped
+
+
 # --- integration: a secret in a workflow's structured result must not persist in video.json ---
 
 
@@ -135,5 +147,43 @@ def test_result_secret_is_redacted_in_video_json(tmp_path: Path):
         text = vj.read_text(encoding="utf-8")
         assert "sk-leaked-value" not in text, f"secret leaked into {vj}"
     # events.jsonl must also be clean
+    for ev in (tmp_path / "runs").rglob("events.jsonl"):
+        assert "sk-leaked-value" not in ev.read_text(encoding="utf-8")
+
+
+def test_prepare_result_secret_is_redacted(tmp_path: Path):
+    # A prepare step's return value is written to shared/result.json (directly by the
+    # runner) and threaded into each video's context.json `shared` payload. Neither the
+    # on-disk result.json nor any context.json may persist an injected secret verbatim.
+    workflows_dir = tmp_path / "workflows"
+    workflows_dir.mkdir()
+    shutil.copytree(_STUBS / "leaks_secret_prepare", workflows_dir / "leaks_secret_prepare")
+    (workflows_dir / "leaks_secret_prepare" / "requirements.txt").write_text("", encoding="utf-8")
+    client = TestClient(
+        create_app(
+            workflows_dir=workflows_dir,
+            runs_dir=tmp_path / "runs",
+            ensure_env=_ready,  # type: ignore[arg-type]
+            secrets={"OPENROUTER_API_KEY": "sk-leaked-value"},  # type: ignore[arg-type]
+        )
+    )
+    r = client.post(
+        "/api/workflows/leaks_secret_prepare/runs",
+        json={"params": {}, "video_count": 1, "concurrency": 1},
+    )
+    assert r.status_code == 202
+    run_id = r.json()["run_id"]
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        d = client.get(f"/api/workflows/leaks_secret_prepare/runs/{run_id}")
+        if d.status_code == 200 and d.json()["status"] in _TERMINAL:
+            break
+        time.sleep(0.05)
+
+    results = list((tmp_path / "runs").rglob("result.json"))
+    assert results, "no result.json written"
+    # Every JSON record under the run tree must be free of the secret value.
+    for jf in (tmp_path / "runs").rglob("*.json"):
+        assert "sk-leaked-value" not in jf.read_text(encoding="utf-8"), f"secret leaked into {jf}"
     for ev in (tmp_path / "runs").rglob("events.jsonl"):
         assert "sk-leaked-value" not in ev.read_text(encoding="utf-8")
