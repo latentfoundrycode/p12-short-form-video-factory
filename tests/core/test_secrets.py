@@ -65,6 +65,14 @@ def test_store_file_has_a_format_version_header(tmp_path):
     assert SecretStore(path, passphrase="pw").get("K") == "v"
 
 
+def test_current_kdf_cost_meets_2026_floor():
+    # The current format version's scrypt cost must meet a 2026-appropriate floor so offline
+    # guessing of a copied store is expensive. (n=2**16 minimum; brief specifies 2**17.)
+    from app.core.secrets import _CURRENT_KDF_N
+
+    assert _CURRENT_KDF_N >= 2**16
+
+
 def test_empty_passphrase_is_rejected(tmp_path):
     # An empty passphrase would encrypt the store with a trivially-guessable key — reject it.
     with pytest.raises(ValueError):
