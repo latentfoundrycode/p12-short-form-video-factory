@@ -55,6 +55,16 @@ def test_missing_file_is_empty(tmp_path):
         store.get("X")
 
 
+def test_store_file_has_a_format_version_header(tmp_path):
+    # A 1-byte version header lets the KDF params be strengthened later without breaking
+    # existing stores (the reader dispatches params by version).
+    path = tmp_path / "secrets.enc"
+    SecretStore(path, passphrase="pw").set("K", "v")
+    assert path.read_bytes()[0] == 1
+    # round-trips through the versioned format
+    assert SecretStore(path, passphrase="pw").get("K") == "v"
+
+
 def test_empty_passphrase_is_rejected(tmp_path):
     # An empty passphrase would encrypt the store with a trivially-guessable key — reject it.
     with pytest.raises(ValueError):
