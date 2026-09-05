@@ -263,3 +263,17 @@ def test_lock_path_is_canonical_across_spellings(tmp_path: Path):
     )
     assert direct._lock_path == spelled._lock_path
     assert direct._ledger_path == spelled._ledger_path
+
+
+def test_kill_switch_path_is_canonicalized(tmp_path: Path):
+    # The emergency stop must not fail open: a relative kill-switch path would stop matching after a
+    # chdir. The guard must canonicalize it at construction so it is checked at a stable location.
+    guard = BudgetGuard(
+        tmp_path / "ledger.jsonl",
+        ceilings=Ceilings(per_run={}, per_day={}),
+        kill_switch_path=Path("relative") / ".." / "relative" / "STOP",
+        now=_fixed_clock(datetime(2026, 9, 5, 12, 0, tzinfo=UTC)),
+    )
+    assert guard._kill_switch_path is not None
+    assert guard._kill_switch_path.is_absolute()
+    assert guard._kill_switch_path == (Path("relative") / ".." / "relative" / "STOP").resolve()
