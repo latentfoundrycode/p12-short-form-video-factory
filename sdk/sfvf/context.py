@@ -35,6 +35,29 @@ class _ContextModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class BudgetConfig(_ContextModel):
+    """Budget-guard configuration carried into the run (T2b). Absent → the gate is inert.
+
+    Ceilings and per-meter reserve estimates are keyed by meter (a provider id, e.g. "openrouter").
+    The supervisor populates this from app config (T2b-2); the SDK enforces it before each call.
+    """
+
+    ledger_path: Path = Field(description="JSONL spend ledger shared across this machine's runs.")
+    kill_switch_path: Path | None = Field(
+        default=None, description="If this file exists, all paid calls are refused."
+    )
+    per_run: dict[str, float] = Field(
+        default_factory=dict, description="Per-meter ceiling for one run; meter absent = unlimited."
+    )
+    per_day: dict[str, float] = Field(
+        default_factory=dict, description="Per-meter ceiling per UTC day; meter absent = unlimited."
+    )
+    estimates: dict[str, float] = Field(
+        default_factory=dict,
+        description="Per-meter conservative amount reserved before a call (must be > 0 to gate).",
+    )
+
+
 class ContextPaths(_ContextModel):
     """Paths the workflow is allowed to use for this video."""
 
@@ -89,6 +112,10 @@ class ContextFile(_ContextModel):
     shared: dict[str, Any] | None = Field(
         default=None,
         description="Output of the shared preparation phase, if any.",
+    )
+    budget: BudgetConfig | None = Field(
+        default=None,
+        description="Budget-guard config; when set, paid calls are gated before spending.",
     )
 
 
@@ -213,6 +240,19 @@ class Context:
         The value is never logged. The encrypted store is out of scope.
         """
         return str(self._file.secrets[name])
+
+    def _budget_reserve(self, meter: str, unit: str) -> str | None:
+        """Reserve the configured estimate for `meter` before a paid call (T2b-1).
+
+        No budget config → return None (gate inert). Otherwise reserve via a BudgetGuard built from
+        the config; a refusal (ceiling/kill-switch) or a missing/non-positive estimate raises so the
+        caller must not proceed. Returns the reservation token to pass to `_budget_reconcile`.
+        """
+        raise NotImplementedError
+
+    def _budget_reconcile(self, token: str | None, *, actual: float) -> None:
+        """Reconcile a reservation with the real amount. No-op when token is None."""
+        raise NotImplementedError
 
     def emit(self, event: dict[str, Any]) -> None:
         emit(event)

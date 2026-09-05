@@ -2,6 +2,21 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-05 — T2b-1: gate the paid-call paths with the budget guard (SDK side)
+
+Wires the T2a `BudgetGuard` into the two paid providers so a run cannot spend past its ceilings or an
+engaged kill-switch. Budget config now travels in `context.json` (`ContextFile.budget`, a `BudgetConfig`
+with `ledger_path`, `kill_switch_path`, per-meter `per_run`/`per_day` ceilings and per-meter reserve
+`estimates`). `Context._budget_reserve(meter, unit)` reserves the configured estimate before a call and
+`Context._budget_reconcile(token, actual=...)` settles it after; both no-op when no budget is configured.
+`agents._post_chat_completion` (OpenRouter llm/research) reserves meter "openrouter" before the request
+and reconciles with the real `usage.cost`; `media.video.generate` reserves meter "higgsfield" before the
+submit. A refused reservation (ceiling or kill-switch) raises before any HTTP call, so an exhausted
+budget blocks the spend outright; a budget that is configured but missing an estimate for the charged
+meter fails **closed** rather than proceeding ungated. When `budget` is absent behaviour is unchanged.
+SDK-only: the supervisor populating this config from app settings and mapping a denial to the
+`stopped-budget` status is T2b-2. No live call is made or enabled here.
+
 ## 2026-09-05 — T2a: budget circuit-breaker engine (§5.4 safety subset)
 
 The minimal money-safety backstop that must exist before any live paid call. New pure, file-backed
