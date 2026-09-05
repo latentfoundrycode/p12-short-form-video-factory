@@ -166,6 +166,19 @@ increments that logged them.
   ceilings (H19(b) applies): one allowed call whose real `usage.cost` exceeds headroom breaches after the
   fact; the next reserve is then denied. Also: production spend stays **ungated until T2b-2** populates
   `ContextFile.budget` on real runs. _Source: T2b-1 review A/B (PR #39)._ Open.
+- **H21 — a real paid run with no budget config is not refused (fail-open-when-unset).** T2b-2a makes the
+  gate live *when* `SFVF_BUDGET_CONFIG` is set, but a non-dry_run run of a paid-provider workflow with the
+  env **unset** still runs ungated: T2b-1 deliberately made "no budget config → passthrough" so the
+  pre-budget OpenRouter/Higgsfield mocked-integration tests and the secret-injection/redaction security
+  tests (which run the real path / declare `requires_keys` with no budget) keep passing. Closing this
+  (refuse a real paid call when no budget is configured — at the SDK reserve site or at admission) requires
+  reversing that passthrough contract and migrating those merged tests to supply a budget, so it is a
+  deliberate follow-up, not folded in here. **Mitigation for the attended first run:** the attended
+  protocol stops before the first paid call and positively verifies the gate is live (app budget loaded /
+  `context.json` carries the budget block), so the fail-open cannot silently apply to the attended run;
+  the exposure is future **unattended** runs. Fix later: flip `_budget_reserve` to raise when a paid call
+  is attempted with no config (or refuse at admission on `requires_keys` + no budget), and migrate the
+  affected integration/security tests to provide a budget. _Source: T2b-2a design review._ Open.
 
 ## Resolved
 
