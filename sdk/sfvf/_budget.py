@@ -245,7 +245,7 @@ class BudgetGuard:
         self._ledger_path = ledger_path.resolve()
         self._lock_path = Path(str(self._ledger_path) + ".lock")
         self._ceilings = ceilings
-        self._kill_switch_path = kill_switch_path
+        self._kill_switch_path = None if kill_switch_path is None else kill_switch_path.resolve()
         self._now = now
         self._lock = threading.Lock()
 
