@@ -11,8 +11,12 @@ values ignored). `_RunState` carries `secret_values` (the injected allowlisted v
 `run_request`. So a workflow that accidentally prints its own key can't persist it in the record. Two review
 findings closed the same layer beyond stdout→events: (1) a workflow's structured `result` payload also flows to
 `video.json`, so `_consume_stdout` now redacts the captured result before persisting it; (2) `_redact_secrets`
-scrubs dict KEYS as well as values, so a secret used as a JSON key can't survive verbatim. With S1+S2a+S2b+S2c
-the secret path is fully closed. Next: T2 (budget circuit-breaker) — then the attended first live run.
+scrubs dict KEYS as well as values, so a secret used as a JSON key can't survive verbatim. A second review round
+(both reviewers convergent) closed two more: (3) a `prepare()` return flows to `shared/result.json` (downloadable)
+and into each video's context.json `shared` payload — `_run_prepare` now redacts the payload and rewrites
+`result.json` on disk; (4) `_redact_secrets` replaces longest values first so a secret that is a prefix of another
+can't leave a dangling suffix. With S1+S2a+S2b+S2c the secret path is fully closed. Next: T2 (budget
+circuit-breaker) — then the attended first live run.
 
 ## 2026-09-05 — S2b: stop exposing injected secrets (block context.json download + scrub post-run)
 
