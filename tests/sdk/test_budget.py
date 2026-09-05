@@ -25,6 +25,7 @@ Fake ceilings/paths live only under tmp_path; no real spend, no network.
 from __future__ import annotations
 
 import json
+import math
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -184,3 +185,28 @@ def test_prior_day_entries_do_not_count_today(tmp_path: Path):
     assert today.day_total("openrouter") == pytest.approx(0.0)
     # fits today's fresh 10.0
     today.reserve(run_id="r1", meter="openrouter", unit="EUR", estimate=9.5)
+
+
+# --- hostile input must not defeat the guard ---
+
+
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf, -0.5])
+def test_reserve_rejects_non_finite_or_negative_estimate(tmp_path: Path, bad: float):
+    # A NaN/inf estimate would slip past every `estimate > ceiling` check (NaN compares False)
+    # and poison all later totals; a negative estimate is nonsense. Both must be refused and must
+    # append nothing, so the money guard cannot be defeated by a bad estimate.
+    guard = _guard(tmp_path, per_run={"openrouter": 100.0}, per_day={"openrouter": 100.0})
+    with pytest.raises(ValueError):
+        guard.reserve(run_id="r1", meter="openrouter", unit="EUR", estimate=bad)
+    assert _ledger_lines(tmp_path / "ledger.jsonl") == []
+
+
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+def test_reconcile_rejects_non_finite_actual(tmp_path: Path, bad: float):
+    # A non-finite actual would likewise poison totals. Reject it; the prior reservation stays.
+    guard = _guard(tmp_path, per_day={"openrouter": 100.0})
+    guard.reserve(run_id="r1", meter="openrouter", unit="EUR", estimate=0.5)
+    before = _ledger_lines(tmp_path / "ledger.jsonl")
+    with pytest.raises(ValueError):
+        guard.reconcile(before[0]["token"], actual=bad)
+    assert _ledger_lines(tmp_path / "ledger.jsonl") == before
