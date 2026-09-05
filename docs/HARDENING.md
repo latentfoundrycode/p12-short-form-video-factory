@@ -109,6 +109,17 @@ increments that logged them.
 - **H15 — Higgsfield frame/ref-conditioned generation not built.** `first_frame`/`last_frame`/`refs` raise
   `NotImplementedError`; image-to-video and first-last-frame endpoints (plus the image-upload mechanics and the
   `media.analyze.frame` clip-chaining path, §6.3/§6.3a) are a follow-up increment. _Source: B-5 (PR #33)._ Open.
+- **H16 — secret-store durability (non-blocking, residual).** RESOLVED in S1: the KDF was strengthened to
+  scrypt `n=2**17` and the on-disk format now carries a 1-byte version header (`_KDF_BY_VERSION`), so future
+  param bumps are migratable; empty passphrases are rejected. Residual (low): the parent directory is not
+  fsync'd after `os.replace` (the store can't be *truncated* — atomic replace — but the rename may not survive
+  an immediate power loss). The `chmod 0o600` note was invalid (mkstemp creates owner-only files on POSIX and
+  `os.replace` preserves the mode). _Source: S1 review A/B (PR #34)._ Open (low, residual).
+- **H17 — S2 must not leak the master passphrase to workflow subprocesses.** `SFVF_SECRETS_PASSPHRASE` is read
+  from the environment; when S2 loads the store at app start and spawns workflow subprocesses, it must **strip
+  `SFVF_SECRETS_PASSPHRASE` (and the passphrase generally) from the child env** — only the specific permitted
+  secrets go to the workflow via `context.json`, never the master passphrase. Address in S2. _Source: S1
+  review B, low (PR #34)._ Open (address in S2).
 
 ## Resolved
 

@@ -2,6 +2,20 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-05 — S1: §5.6 encrypted secret store + CLI (first live-path prerequisite)
+
+New `app/core/secrets.py`: `SecretStore(path, passphrase)` holds provider keys encrypted at rest —
+`cryptography` Fernet with a key derived from the passphrase via scrypt over a random salt; the whole
+name/value dict is encrypted (nothing plaintext on disk), the passphrase is never stored, and a wrong
+passphrase raises `SecretsError` (fails loudly, no value leaked). A `python -m app.core.secrets` CLI provides
+`set <NAME>` (reads the value via `getpass`, never echoed or on the command line), `list` (names only), and
+`delete <NAME>`; passphrase from `SFVF_SECRETS_PASSPHRASE`, path from `SFVF_SECRETS_PATH`. **This is how a
+human places real provider keys** (OPENROUTER_API_KEY / HIGGSFIELD_API_KEY) — no key is handled in the build.
+Adds the `cryptography==50.0.1` app dependency (native binding verified not SAC-blocked). `ruff.toml`
+`tests/**` gains `S105`/`S106` ignores (test fixtures for a secret store use hardcoded fake passphrases —
+scoped to tests, product scanning unchanged). Next (S2): load the store at app start and inject permitted
+secrets into `context.json` + redact secret values from records/logs/errors.
+
 ## 2026-09-05 — B-5: `media.video.generate` on Higgsfield REST (mocked HTTP; no live call)
 
 New `sdk/sfvf/media/video.py`: `media.video.generate(prompt, *, model, ...) -> str` on Higgsfield's documented
