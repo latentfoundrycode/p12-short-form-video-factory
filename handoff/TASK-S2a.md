@@ -1,55 +1,65 @@
-# TASK S2a — load secrets at startup, inject into context.json, strip passphrase from subprocess env
+# TASK S2a — least-privilege secret injection + strip passphrase from ALL subprocesses
 
-**Builder:** Cursor. **Product code only.** Touch `app/main.py`, `app/api/runs.py`, `app/core/supervisor.py`.
-Do NOT touch `tests/`, `docs/`, `handoff/`, or `app/core/secrets.py`. The reviewer contract
+**Builder:** Cursor. **Product code only.** Touch `app/main.py`, `app/api/runs.py`, `app/core/supervisor.py`,
+`app/core/secrets.py`, `app/core/env.py`. Do NOT touch `tests/`, `docs/`, `handoff/`. The reviewer contract
 `tests/api/test_secret_injection.py` is FROZEN.
 
-Wire the §5.6 secret store (S1) into the run pipeline: load it at app start, inject the permitted secrets into
-every `context.json`, and make sure the master passphrase never reaches a workflow subprocess (HARDENING H17).
-Mirror the existing `ensure_env`/`popen` injection pattern exactly.
+Wire the §5.6 store into the run pipeline with **least privilege** and make sure the master passphrase never
+reaches any child process. (This supersedes an earlier whole-store version — inject only allowlisted keys.)
 
-## 1. `app/main.py` — load the store at startup
+## 1. `app/core/secrets.py` — shared subprocess-env helper
 
-- `create_app(..., secrets: Mapping[str, str] | None = None)` (new keyword-only param alongside `ensure_env`/
-  `popen`). Resolve the secrets mapping:
-  - if `secrets is not None`: use it as-is;
-  - else if `os.environ.get("SFVF_SECRETS_PASSPHRASE")` is set (non-empty): load
-    `SecretStore(store_path, passphrase).all()` where `store_path` comes from `SFVF_SECRETS_PATH` else the
-    `SecretStore` default (reuse `app.core.secrets`'s path logic — import a helper or replicate the same
-    `SFVF_SECRETS_PATH`/default). A `SecretsError` here should propagate (fail fast at startup — a wrong
-    passphrase must not start silently);
-  - else: `{}`.
-- Store it on `application.state.secrets = dict(resolved)`.
+Add a public helper (used by both the supervisor and env setup):
+```python
+def subprocess_env() -> dict[str, str]:
+    """os.environ minus the master passphrase — for any subprocess we spawn (§5.6 / H17)."""
+    return {k: v for k, v in os.environ.items() if k != "SFVF_SECRETS_PASSPHRASE"}
+```
+(`import os` already present.)
 
-## 2. `app/api/runs.py` — thread it to admission
+## 2. `app/main.py` — load the store at startup (unchanged from before)
 
-- Add a `_secrets(request) -> Mapping[str, str]` accessor mirroring `_ensure_env`/`_popen`
-  (`getattr(request.app.state, "secrets", None)` → `{}` if absent).
-- Pass `secrets=_secrets(request)` into the `admit_run(...)` call.
+`create_app(..., secrets: Mapping[str, str] | None = None)`: injected mapping wins; else if
+`SFVF_SECRETS_PASSPHRASE` is set/non-empty, load `SecretStore(store_path, passphrase).all()` (path from
+`SFVF_SECRETS_PATH` else the `secrets` default — reuse `_store_path`); else `{}`. A `SecretsError` propagates
+(fail-fast startup). `application.state.secrets = dict(resolved)`.
 
-## 3. `app/core/supervisor.py` — inject + strip passphrase
+## 3. `app/api/runs.py` — thread it (unchanged)
 
-- `admit_run(..., secrets: Mapping[str, str] = {})` — accept the mapping (use a safe default, e.g.
-  `secrets: Mapping[str, str] | None = None` then `secrets = secrets or {}`; do NOT use a mutable default
-  literal that ruff/B006 would flag).
-- Add `secrets: dict[str, str]` to the `_ContextWiring` dataclass, and set it when the wiring is built in
-  `admit_run` (from the `secrets` param, as `dict(secrets)`).
-- In `_make_context`, change `secrets={}` to `secrets=dict(wiring.secrets)` so every `context.json`
-  (prepare + per-video) carries the permitted secrets.
-- Add `def _subprocess_env() -> dict[str, str]: return {k: v for k, v in os.environ.items() if k !=
-  "SFVF_SECRETS_PASSPHRASE"}` and pass `env=_subprocess_env()` in the `popen(...)` call inside `_start_runner`.
-  (`import os` if not already imported.) This is H17: the workflow subprocess gets its secrets from
-  `context.json`, never the master passphrase from the environment.
+`_secrets(request) -> Mapping[str, str]` mirroring `_ensure_env`/`_popen`; pass `secrets=_secrets(request)` into
+`admit_run(...)`.
 
-Never log/print a secret value or the passphrase. mypy-strict clean. No new dependency.
+## 4. `app/core/supervisor.py` — ALLOWLISTED injection + passphrase strip
+
+- `admit_run`/`run_request` take `secrets: Mapping[str, str] | None = None` (coerce `dict(secrets or {})`).
+- The manifest is already parsed in `run_request` (`parse_manifest_toml(...)`). Compute the allowlist from the
+  workflow's declared keys and inject **only those**:
+  ```python
+  allowed = {rk.name for rk in manifest.requires_keys}
+  injected = {k: v for k, v in (secrets or {}).items() if k in allowed}
+  ```
+  Put `injected` on `_ContextWiring.secrets` (add the `secrets: dict[str, str]` field). `_make_context` writes
+  `secrets=dict(wiring.secrets)` into every `context.json`. **Do NOT inject the whole store** — a workflow gets
+  only the keys it declared in `[[requires_keys]]` (least privilege).
+- In `_start_runner`, pass `env=subprocess_env()` (import from `app.core.secrets`) to the `popen(...)` call, so
+  the runner subprocess never inherits the passphrase.
+
+## 5. `app/core/env.py` — strip passphrase from env-setup subprocesses (HARDENING H17, HIGH)
+
+The venv/`pip install` subprocesses currently inherit the full environment, so workflow-declared dependency
+build code could read `SFVF_SECRETS_PASSPHRASE`. Fix the choke point `_run_timed` (and
+`default_find_python`'s `subprocess.run`): pass `env=subprocess_env()` (import from `app.core.secrets`). All
+env-setup spawns then run without the master passphrase.
+
+Never log a secret value or the passphrase. mypy-strict clean. No new dependency.
 
 ## Acceptance
 
-`tests/api/test_secret_injection.py` passes (6 tests): loaded secrets appear in `context.json`; no secrets →
-`{}`; `_subprocess_env()` strips `SFVF_SECRETS_PASSPHRASE` while keeping other env; `create_app` loads the
-store when the passphrase env is set; `create_app` with no passphrase → empty. The existing `tests/api/
-test_runs.py` and the rest of the suite still pass (the new `create_app` param + `admit_run` param are additive
-with safe defaults).
+`tests/api/test_secret_injection.py` passes (6 tests): only the `[[requires_keys]]`-allowlisted secret reaches
+`context.json` (others withheld); a workflow with no required keys gets `{}`; `subprocess_env()` strips the
+passphrase while keeping other env; `env._run_timed` spawns with `env=` excluding the passphrase; `create_app`
+loads the store when the passphrase is set; no passphrase → empty. Existing `tests/api/test_runs.py` and the
+env tests still pass.
 
 ## Full local gate (from the worktree venv)
 
@@ -59,7 +69,7 @@ with safe defaults).
 .\.venv\Scripts\python.exe -m mypy
 npm --prefix frontend run lint
 npm --prefix frontend run typecheck
-.\.venv\Scripts\python.exe -m pytest -q tests/api/test_secret_injection.py tests/api/test_runs.py
+.\.venv\Scripts\python.exe -m pytest -q tests/api/test_secret_injection.py tests/api/test_runs.py tests/core/test_env.py
 ```
 (The full `pytest` run also shows 3 pre-existing `finalize`/`example_workflow` failures — ONLY the HyperFrames
 toolchain missing in this worktree; CI installs it and runs them green. Ignore them.)

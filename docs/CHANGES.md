@@ -2,16 +2,19 @@
 
 A running log of notable changes outside the per-task build history.
 
-## 2026-09-05 — S2a: load secrets at startup, inject into context.json, strip passphrase from subprocess env
+## 2026-09-05 — S2a: least-privilege secret injection + strip passphrase from all subprocesses
 
 Wires the §5.6 store (S1) into the run pipeline. `create_app(..., secrets=None)` loads the `SecretStore` at app
-start from `SFVF_SECRETS_PASSPHRASE` (+ `SFVF_SECRETS_PATH`) — empty when the passphrase is unset, so dry runs
-need no store; a wrong passphrase fails fast at startup — and holds the decrypted mapping on
-`app.state.secrets`. Admission threads it (mirroring `ensure_env`/`popen`) into `_ContextWiring.secrets`, and
-`_make_context` writes it into every run's `context.json` (the transient hand-off the workflow subprocess reads,
-§5.6). `_subprocess_env()` strips `SFVF_SECRETS_PASSPHRASE` from the workflow subprocess environment (HARDENING
-**H17**) — a workflow receives only its permitted secrets via `context.json`, never the master passphrase. No
-value or passphrase is logged. Next (S2b): redact secret values from records/logs/errors before disk write.
+start from `SFVF_SECRETS_PASSPHRASE` (+ `SFVF_SECRETS_PATH`) — empty when the passphrase is unset (dry runs need
+no store); a wrong passphrase fails fast at startup — and holds the decrypted mapping on `app.state.secrets`.
+Admission threads it (mirroring `ensure_env`/`popen`) into the run. **Least privilege:** each run's
+`context.json` receives ONLY the secrets the workflow declares via the manifest `[[requires_keys]]` allowlist —
+never the whole store (a compromised workflow can't reach unrelated providers' credentials). A new shared
+`app.core.secrets.subprocess_env()` (os.environ minus `SFVF_SECRETS_PASSPHRASE`) is applied to **every** child
+process the app spawns — the workflow runner AND the env-setup / `pip install` subprocesses in `env.py`
+(HARDENING **H17**, incl. the HIGH finding that workflow-declared dependency builds could otherwise read the
+master passphrase). No value or passphrase is logged. Next (S2b): keep `context.json` out of the run-file
+download endpoint + scrub it after the runner reads it, and redact secret values from records/logs/errors.
 
 ## 2026-09-05 — S1: §5.6 encrypted secret store + CLI (first live-path prerequisite)
 

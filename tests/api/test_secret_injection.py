@@ -1,12 +1,11 @@
-"""S2a contract: load the §5.6 secret store at app start, inject permitted secrets into every
-`context.json`, and never leak the master passphrase to workflow subprocesses (HARDENING H17).
+"""S2a contract: least-privilege secret injection + passphrase never reaches a subprocess.
 
-`create_app(..., secrets=...)` accepts an injected mapping (tests use it); when omitted it loads the
-`SecretStore` from `SFVF_SECRETS_PASSPHRASE` + `SFVF_SECRETS_PATH` (empty when the passphrase is
-unset, so dry runs need no store). The loaded secrets are written into each run's `context.json`
-(the transient hand-off the workflow subprocess reads — §5.6), and `_subprocess_env()` strips
-`SFVF_SECRETS_PASSPHRASE` from the child environment so the master passphrase never reaches a
-workflow. All fake values here live only under tmp_path.
+At app start the §5.6 store is loaded (`create_app(secrets=...)` / `SFVF_SECRETS_PASSPHRASE`).
+Each run's `context.json` receives ONLY the secrets the workflow declares it needs via the
+manifest `[[requires_keys]]` allowlist — never the whole store (least privilege). The master
+passphrase is stripped from EVERY child process the app spawns: the workflow runner AND the
+env-setup / `pip install` subprocesses (HARDENING H17), via the shared
+`app.core.secrets.subprocess_env()`. All fake values live only under tmp_path.
 """
 
 import json
@@ -18,9 +17,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+import app.core.env as env_mod
 import app.core.supervisor as supervisor_mod
 from app.core.env import EnvReady
-from app.core.secrets import SecretStore
+from app.core.secrets import SecretStore, subprocess_env
 from app.main import create_app
 
 STUBS = Path(__file__).resolve().parent.parent / "stubs"
@@ -48,10 +48,18 @@ def _ready(*_args: object, **_kwargs: object) -> EnvReady:
     return EnvReady(python=Path(sys.executable))
 
 
-def _install_stub(workflows_dir: Path, name: str) -> None:
+def _install_stub(
+    workflows_dir: Path, name: str, *, requires_keys: list[str] | None = None
+) -> None:
     dest = workflows_dir / name
     shutil.copytree(STUBS / name, dest)
     (dest / "requirements.txt").write_text("", encoding="utf-8")
+    if requires_keys:
+        toml = dest / "workflow.toml"
+        extra = "".join(
+            f'\n[[requires_keys]]\nname = "{k}"\nlabel = "{k}"\n' for k in requires_keys
+        )
+        toml.write_text(toml.read_text(encoding="utf-8") + extra, encoding="utf-8")
 
 
 def _client(tmp_path: Path, *, secrets: object = None) -> TestClient:
@@ -77,10 +85,12 @@ def _wait_terminal(client: TestClient, run_id: str, timeout: float = 15) -> None
     raise AssertionError(f"run {run_id} did not reach a terminal status")
 
 
-def _run_and_read_context(tmp_path: Path, secrets: object) -> dict:
+def _run_and_read_context(
+    tmp_path: Path, *, secrets: object, requires_keys: list[str] | None
+) -> dict:
     workflows_dir = tmp_path / "workflows"
     workflows_dir.mkdir(exist_ok=True)
-    _install_stub(workflows_dir, "succeeds")
+    _install_stub(workflows_dir, "succeeds", requires_keys=requires_keys)
     client = _client(tmp_path, secrets=secrets)
     r = client.post(
         "/api/workflows/succeeds/runs",
@@ -93,25 +103,52 @@ def _run_and_read_context(tmp_path: Path, secrets: object) -> dict:
     return json.loads(contexts[0].read_text(encoding="utf-8"))
 
 
-def test_loaded_secrets_are_injected_into_context(tmp_path):
-    ctx = _run_and_read_context(tmp_path, {"OPENROUTER_API_KEY": "sk-inject-test"})
-    assert ctx["secrets"] == {"OPENROUTER_API_KEY": "sk-inject-test"}
+def test_only_allowlisted_secrets_are_injected(tmp_path):
+    # The workflow declares it needs OPENROUTER_API_KEY; HIGGSFIELD_API_KEY is withheld.
+    ctx = _run_and_read_context(
+        tmp_path,
+        secrets={"OPENROUTER_API_KEY": "sk-or", "HIGGSFIELD_API_KEY": "hf-secret"},
+        requires_keys=["OPENROUTER_API_KEY"],
+    )
+    assert ctx["secrets"] == {"OPENROUTER_API_KEY": "sk-or"}
 
 
-def test_no_secrets_injects_empty_mapping(tmp_path):
-    ctx = _run_and_read_context(tmp_path, None)
+def test_no_required_keys_injects_empty(tmp_path):
+    # A workflow that declares no keys receives none, even when the store is populated.
+    ctx = _run_and_read_context(
+        tmp_path,
+        secrets={"OPENROUTER_API_KEY": "sk-or"},
+        requires_keys=None,
+    )
     assert ctx["secrets"] == {}
 
 
 def test_subprocess_env_strips_the_master_passphrase(monkeypatch):
-    # H17: the workflow subprocess must never inherit SFVF_SECRETS_PASSPHRASE.
     monkeypatch.setenv("SFVF_SECRETS_PASSPHRASE", "top-secret-passphrase")
     monkeypatch.setenv("SFVF_MARKER_KEEP", "keep-me")
-    from app.core.supervisor import _subprocess_env
-
-    env = _subprocess_env()
+    env = subprocess_env()
     assert "SFVF_SECRETS_PASSPHRASE" not in env
     assert env.get("SFVF_MARKER_KEEP") == "keep-me"  # other env is still inherited
+
+
+def test_env_setup_subprocess_does_not_inherit_passphrase(monkeypatch):
+    # H17: pip install / venv setup (env._run_timed) must not leak the master passphrase to
+    # workflow-declared dependency build code.
+    monkeypatch.setenv("SFVF_SECRETS_PASSPHRASE", "top-secret-passphrase")
+    captured: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):
+        captured.update(kwargs)
+
+        class _Done:
+            returncode = 0
+
+        return _Done()
+
+    monkeypatch.setattr(env_mod.subprocess, "run", fake_run)
+    env_mod._run_timed(["python", "-c", "pass"])
+    assert "env" in captured
+    assert "SFVF_SECRETS_PASSPHRASE" not in captured["env"]  # type: ignore[operator]
 
 
 def test_create_app_loads_store_when_passphrase_set(tmp_path, monkeypatch):
