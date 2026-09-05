@@ -132,6 +132,21 @@ increments that logged them.
   key into `result.json` AND fail after writing it). Fix: redact `result.json` best-effort in the `_run_prepare`
   `finally` (covering both paths uniformly), or block `result.json` download alongside `context.json`.
   _Source: S2c review B residual note (PR #37)._ Open (low, residual).
+- **H19 — budget-breaker model residuals (T2a).** The T2a `BudgetGuard` (`sfvf._budget`) is a hard
+  pre-call gate; these are limits inherent to its minimal reserve-then-reconcile / calendar-day model,
+  to close as the engine grows (T2b wiring + Stage C metering):
+  (a) **Midnight-in-flight (low/med):** `day_total` attributes a reservation to the UTC calendar day of
+  its `reserved` ts. A reservation opened at 23:59Z is invisible to the next day's total at 00:01Z, so a
+  fresh day's ceiling can be reserved while that call is still in flight — a bounded, one-ceiling
+  overshoot across a midnight boundary. (b) **Underestimate slips one call (inherent):** `reserve` is the
+  only gate; a single underestimated call whose reconciled `actual` exceeds the ceiling is allowed after
+  the fact (subsequent reserves are then correctly denied because the actual counts). Mitigated later by
+  Stage-C forecasts and per-provider estimators. (c) **POSIX same-process lock (low):** the cross-process
+  lock is validated on Windows (the deployment target); on POSIX, `fcntl.flock` semantics across two
+  `BudgetGuard` instances in one process are not exercised — revisit if CI or deployment adds Linux.
+  **T2b acceptance requirement (not a defect):** a lock-acquire `OSError`/timeout (Windows `LK_LOCK`
+  blocks ~10s then raises) MUST be treated by the caller as a hard **denial** (fail-closed → refuse the
+  paid call / `stopped-budget`), never as "proceed". _Source: T2a review A/B (PR #38)._ Open.
 
 ## Resolved
 
