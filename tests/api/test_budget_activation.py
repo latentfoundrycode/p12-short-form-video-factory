@@ -169,6 +169,25 @@ def test_load_malformed_toml_fails_closed(tmp_path, monkeypatch):
         load_budget_config()
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        'per_run = "lots"',  # a string where a number is required
+        "per_run = true",  # a bool must not silently coerce to 1.0
+        "estimate = [1, 2]",  # an array is not a ceiling
+    ],
+)
+def test_load_non_numeric_ceiling_fails_closed(tmp_path, monkeypatch, value):
+    # A ceiling/estimate that parses as valid TOML but is not a real number must raise
+    # BudgetConfigError (fail closed with the config error type), never a raw ValueError/TypeError
+    # and never a silent bool→1.0 coercion that would install a wrong money ceiling.
+    bad = tmp_path / "budget.toml"
+    bad.write_text(f"[openrouter]\n{value}\n", encoding="utf-8")
+    monkeypatch.setenv("SFVF_BUDGET_CONFIG", str(bad))
+    with pytest.raises(BudgetConfigError):
+        load_budget_config()
+
+
 # --- create_app wiring ---
 
 
