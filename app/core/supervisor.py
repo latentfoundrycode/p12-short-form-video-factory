@@ -588,18 +588,18 @@ def _run_prepare(
         params=params,
     )
     write_json_atomic(context_path, context.model_dump(mode="json"))
-    proc = _start_runner(
-        python,
-        workflow_dir,
-        context_path,
-        cwd=shared_dir,
-        popen=popen,
-        extra_args=["--entry", "prepare", "--result", str(result_path)],
-    )
-    pending = state.register_proc("prep", proc, shared_dir)
-    if pending is not None:
-        _apply_stop(pending, proc, shared_dir)
     try:
+        proc = _start_runner(
+            python,
+            workflow_dir,
+            context_path,
+            cwd=shared_dir,
+            popen=popen,
+            extra_args=["--entry", "prepare", "--result", str(result_path)],
+        )
+        pending = state.register_proc("prep", proc, shared_dir)
+        if pending is not None:
+            _apply_stop(pending, proc, shared_dir)
         _consume_stdout(
             proc,
             run_dir,
@@ -742,7 +742,6 @@ def _run_one_video(
             returncode = proc.wait()
         finally:
             state.unregister_proc(source)
-            _scrub_context_secrets(video_dir / "context.json")
         status: VideoStatus = (
             "stopped" if state.was_stopped() else ("complete" if returncode == 0 else "failed")
         )
@@ -772,3 +771,5 @@ def _run_one_video(
                 ),
             )
         state.set_video(run_dir, index, status, atomic=atomic)
+    finally:
+        _scrub_context_secrets(video_dir / "context.json")
