@@ -131,7 +131,7 @@ increments that logged them.
   `get_run_file`. Same defect class as the closed success-path leak; narrow trigger (prepare must both leak its
   key into `result.json` AND fail after writing it). Fix: redact `result.json` best-effort in the `_run_prepare`
   `finally` (covering both paths uniformly), or block `result.json` download alongside `context.json`.
-  _Source: S2c review B residual note (PR #36)._ Open (low, residual).
+  _Source: S2c review B residual note (PR #37)._ Open (low, residual).
 
 ## Resolved
 
