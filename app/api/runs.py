@@ -384,5 +384,7 @@ def get_run_file(workflow_id: str, run_id: str, path: str, request: Request) -> 
         raise HTTPException(status_code=404)
     if not resolved.is_file():
         raise HTTPException(status_code=404)
+    if resolved.name == "context.json":
+        raise HTTPException(status_code=404)
     media_type, _encoding = mimetypes.guess_type(resolved.name)
     return FileResponse(resolved, media_type=media_type or "application/octet-stream")

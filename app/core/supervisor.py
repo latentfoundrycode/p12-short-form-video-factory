@@ -204,6 +204,20 @@ def _make_context(
     )
 
 
+def _scrub_context_secrets(context_path: Path) -> None:
+    """Blank the `secrets` in an on-disk context.json after its subprocess has consumed it,
+    so provider keys don't persist in the run directory. Best-effort; never raises."""
+    try:
+        if not context_path.is_file():
+            return
+        data = json.loads(context_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and data.get("secrets"):
+            data["secrets"] = {}
+            write_json_atomic(context_path, data)
+    except (OSError, ValueError):
+        return
+
+
 def _aggregate_status(
     statuses: Sequence[VideoStatus],
     *,
@@ -599,6 +613,7 @@ def _run_prepare(
             return False, None
     finally:
         state.unregister_proc("prep")
+        _scrub_context_secrets(context_path)
     payload: object = json.loads(result_path.read_text(encoding="utf-8"))
     if payload is None:
         return True, None
@@ -727,6 +742,7 @@ def _run_one_video(
             returncode = proc.wait()
         finally:
             state.unregister_proc(source)
+            _scrub_context_secrets(video_dir / "context.json")
         status: VideoStatus = (
             "stopped" if state.was_stopped() else ("complete" if returncode == 0 else "failed")
         )
