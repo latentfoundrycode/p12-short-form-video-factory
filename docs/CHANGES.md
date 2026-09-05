@@ -2,6 +2,17 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-05 — S2c: redact secret values from the event stream (§5.6 defense-in-depth)
+
+Last §5.6 layer. All run events (subprocess stdout, silence-watcher notes, logs, errors) pass through
+`_RunState.record_event` before `events.jsonl` / the SSE feed; it now runs `_redact_secrets`, replacing every
+occurrence of the run's injected secret VALUES with `[REDACTED]` (walking nested dicts/lists/strings; empty
+values ignored). `_RunState` carries `secret_values` (the injected allowlisted values), populated in
+`run_request`. So a workflow that accidentally prints its own key can't persist it in the record. Records
+(request.json/video.json) carry no secrets by construction; the acute vector was the stdout→events path. With
+S1+S2a+S2b+S2c the secret path is fully closed. Next: T2 (budget circuit-breaker) — then the attended first
+live run.
+
 ## 2026-09-05 — S2b: stop exposing injected secrets (block context.json download + scrub post-run)
 
 Closes the two exposure vectors a decorrelated security review flagged after S2a began injecting allowlisted
