@@ -88,6 +88,7 @@ def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
     resp.json() on 200. The bearer key is never logged or put in an error message.
     """
     key = ctx.secret("OPENROUTER_API_KEY")
+    token = ctx._budget_reserve("openrouter", "usd")
     with _http_client() as client:
         for _attempt in range(_MAX_ATTEMPTS):
             with _LIMITER.slot("openrouter"):
@@ -108,6 +109,9 @@ def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
             raise RuntimeError("OpenRouter: rate limited after retries (429)")
 
         data: dict[str, Any] = resp.json()
+    cost = data.get("usage", {}).get("cost")
+    if cost is not None:
+        ctx._budget_reconcile(token, actual=float(cost))
     return data
 
 

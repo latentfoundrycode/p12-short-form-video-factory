@@ -10,6 +10,7 @@ from typing import Any, Literal, TypeVar, cast, overload
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ._budget import BudgetError, BudgetGuard, Ceilings
 from .cache import StepCache, step_key
 from .emit import decision, emit, heartbeat, log, stage
 
@@ -248,11 +249,30 @@ class Context:
         the config; a refusal (ceiling/kill-switch) or a missing/non-positive estimate raises so the
         caller must not proceed. Returns the reservation token to pass to `_budget_reconcile`.
         """
-        raise NotImplementedError
+        cfg = self._file.budget
+        if cfg is None:
+            return None
+        estimate = cfg.estimates.get(meter)
+        if estimate is None or not (estimate > 0):
+            # Configured budget but no positive estimate for this meter → fail closed
+            # (never reserve 0 as "unknown"): reserving nothing would let the call through ungated.
+            raise BudgetError(f"no positive budget estimate configured for meter {meter!r}")
+        guard = self._budget_guard(cfg)
+        return guard.reserve(run_id=self.run_id, meter=meter, unit=unit, estimate=estimate)
 
     def _budget_reconcile(self, token: str | None, *, actual: float) -> None:
         """Reconcile a reservation with the real amount. No-op when token is None."""
-        raise NotImplementedError
+        cfg = self._file.budget
+        if token is None or cfg is None:
+            return
+        self._budget_guard(cfg).reconcile(token, actual=actual)
+
+    def _budget_guard(self, cfg: BudgetConfig) -> BudgetGuard:
+        return BudgetGuard(
+            cfg.ledger_path,
+            ceilings=Ceilings(per_run=cfg.per_run, per_day=cfg.per_day),
+            kill_switch_path=cfg.kill_switch_path,
+        )
 
     def emit(self, event: dict[str, Any]) -> None:
         emit(event)

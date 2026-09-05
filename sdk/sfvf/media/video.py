@@ -65,6 +65,7 @@ def generate(
         )
 
     key = ctx.secret("HIGGSFIELD_API_KEY")
+    ctx._budget_reserve("higgsfield", "credits")
     body: dict[str, Any] = {"prompt": prompt}
     if duration_s is not None:
         body["duration"] = duration_s
