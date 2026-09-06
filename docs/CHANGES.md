@@ -2,6 +2,14 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-06 — Narration: speak clean prose, not the LLM's stage directions
+
+The first real video's narration read scene directions and speaker labels aloud ("[Scene: ...] Narrator
+voice-over: ...") because the explainer fed the raw LLM script to TTS. Fixed: the script prompt now asks
+for only the spoken narration, and a `_narration_text` sanitizer (safety net) strips bracketed directions,
+markdown, speaker labels, and quotation marks before the text reaches `speak()` — so the audio and the
+timed captions are clean. No pipeline/cost change (script LLM step still caches; only speech re-runs).
+
 ## 2026-09-06 — Composition: legible, word-timed captions for the explainer
 
 The first real end-to-end video was unreadable (dark-grey text on near-black; whole script dumped
