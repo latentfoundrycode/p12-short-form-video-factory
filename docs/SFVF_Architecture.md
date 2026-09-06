@@ -332,9 +332,8 @@ Everything is JSON files. The structures below are indicative rather than exhaus
   "params": {"topic": "…", "duration_s": 45},
   "params_locked_utc": "2026-08-10T14:30:22Z",
   "budget": {
-    "openrouter": {"unit": "EUR",        "limit": 2.00, "reserved": 0, "spent": 1.42},
-    "higgsfield": {"unit": "credits",    "limit": 150,  "reserved": 0, "spent": 96},
-    "elevenlabs": {"unit": "characters", "limit": null, "spent": 4210}
+    "openrouter": {"unit": "EUR",     "limit": 2.00, "reserved": 0, "spent": 1.42},
+    "higgsfield": {"unit": "credits", "limit": 150,  "reserved": 0, "spent": 96}
   },
   "forecast": {"higgsfield": {"unit": "credits", "amount": 720, "at_utc": "…"}},
   "videos": [{"index": 1, "status": "complete"}]
@@ -492,7 +491,7 @@ For a workflow declaring `atomic = true`, an incomplete video has no value, so i
 
 The reserve-then-reconcile scheme is unchanged underneath; atomic mode changes when the reservation happens and how large it is, not how it works.
 
-Quota meters are read from the provider rather than accumulated locally. ElevenLabs reports characters used, the limit for the billing period and the reset time through its subscription endpoint, and that is the authoritative figure: characters spent from the same account outside SFVF would otherwise be invisible, and the pre-flight check would clear a run that cannot actually complete.
+Quota meters are read from the provider rather than accumulated locally, where a provider has an authoritative account-side figure that spend outside SFVF would otherwise make invisible: characters, credits or the like reported through a subscription/usage endpoint, so the pre-flight check does not clear a run that cannot actually complete. (This applies to account-backed providers such as Higgsfield credits; local speech has no such quota — it is free and unmetered. The original ElevenLabs character-quota example was dropped with that provider — see the speech amendment above.)
 
 ### 5.5 Provider layer
 
@@ -509,8 +508,16 @@ The vocabulary is deliberately coarse. A finer one — naming which reference *k
 | Adapter | Authentication | Notes |
 |---|---|---|
 | OpenRouter | API key | Uses the OpenAI-compatible interface. Reports real per-call cost. Model identifiers must be pinned explicitly rather than relying on the provider's automatic fallback routing — otherwise the model that produced a given video is unknown, and the run is not reproducible. |
-| ElevenLabs | API key | `GET /v1/voices` lists every voice the key can reach, cloned voices included, with a `category` field distinguishing premade, cloned, generated and professional, and paging driven by a `has_more` flag. `GET /v1/models` lists the speech models, each carrying a flag for whether it can do text to speech. `GET /v1/user/subscription` reports characters used, the period limit and the reset time. Speech is requested through the timestamped endpoint, which returns character-level alignment. Plan-level concurrency caps must be respected by the rate limiter. |
+| Speech (local) | Local, no authentication | Narration is generated locally and for free (amended 2026-09-06 — see note; replaces the dropped ElevenLabs plan). **Chatterbox** (Resemble AI) synthesizes the audio on the GPU; **WhisperX** then force-aligns the known script text to that audio for word-level timings. No key, no quota, no character metering, no per-call network (model weights download once and cache). Wrapped by `media.speech.speak` behind the SDK `sfvf[speech]` extra (torch/CUDA); a workflow that narrates declares those deps in its own `requirements.txt`. |
 | Higgsfield | REST API with an API key (amended 2026-09-05 — see note) | Higgsfield's documented REST API at `api.higgsfield.ai`, authenticated with `Authorization: Key {api_key_id}:{api_key_secret}`. Work is submitted to a per-model endpoint (e.g. `/sora-2/text-to-video`) returning a `request_id` + `status_url`; polled at `GET /requests/{id}/status` (`status ∈ queued\|in_progress\|nsfw\|failed\|completed\|canceled`) until terminal; the finished clip (`video.url`) is then downloaded (outputs live ≈7 days). Credit cost varies by model and resolution, so the estimate must account for both. |
+
+> **Speech amendment (2026-09-06):** Speech was originally an ElevenLabs paid API (key, character quota,
+> character-level alignment via a timestamped endpoint). It was dropped in favour of a **local, zero-cost,
+> no-key** stack: **Chatterbox** for synthesis + **WhisperX** for word-level forced alignment. This removes a
+> paid provider, a stored key, and a quota meter entirely; the trade-off is a heavy local GPU dependency
+> (torch/CUDA), isolated behind the optional `sfvf[speech]` extra so only narrating workflows carry it.
+> Proven on an RTX 4000 Ada (synthesis ≈ real-time, alignment ≈ 0.1 s). Consequently the "characters" budget
+> meter, the ElevenLabs subscription quota, and the ElevenLabs option-lists below no longer apply to speech.
 
 > **§5.5 amendment (2026-09-05):** Higgsfield was originally specified as its *official MCP server over OAuth* ("no API key stored"). On investigation Higgsfield also ships a **documented, versioned REST API with API-key auth** (the same submit → poll → download lifecycle). The architect chose the REST/API-key path (Option B): it is concrete and stable — exactly the property the MCP path was flagged as lacking (§9) — and mirrors the OpenRouter adapter, reusing the same `httpx2` client, §5.6 `ctx.secret`, and §5.5 rate limiter. The trade-off is that an API key is stored (handled by §5.6) rather than a revocable OAuth token. The `media.video.generate` adapter (submit/poll/download/heartbeat, §6.3) is transport-agnostic; only auth + transport changed.
 | Kinocut | Local, no authentication | An existing external project with its own repository, integrated rather than built here — obtained from source and reached through an adapter. The programmatic client is preferred over the MCP interface, because it is deterministic and therefore cacheable. |
@@ -520,7 +527,7 @@ The vocabulary is deliberately coarse. A finer one — naming which reference *k
 
 Isolating each provider in its own adapter is what makes the partly-unknown Higgsfield tool surface an acceptable risk: if the available tools differ from what was assumed, only that one file changes.
 
-**Adapters also supply option lists.** Each adapter exposes a way to enumerate the choices it offers, so that the Run pop-up can be filled in from the account rather than from the manifest: voices and speech models from ElevenLabs, video models from Higgsfield, language models from OpenRouter. Three properties matter.
+**Adapters also supply option lists.** Each account-backed adapter exposes a way to enumerate the choices it offers, so that the Run pop-up can be filled in from the account rather than from the manifest: video models from Higgsfield, language models from OpenRouter. (Local speech has no account to query — its voice/model are local and fixed — so it contributes no such list.) Three properties matter.
 
 The results are cached with a short lifetime and refreshed when the pop-up opens, because these lists change on the provider's schedule and a stale dropdown that silently omits a voice added this morning is exactly the kind of failure that wastes an afternoon.
 
@@ -659,7 +666,7 @@ Each stage should be genuinely usable before the next begins, so that problems s
 2. **Execution.** Environment management, subprocess launching, reading the event stream, creating run folders, live progress in the interface. Heartbeat-based step limits belong here rather than later: retrofitting the timer once workflows depend on kill-and-retry behaviour means re-testing every long-running path.
 3. **The SDK.** The context object, the step mechanism *in its final family/inputs/label form*, checkpointing and caching including content-hashing of paths, `ctx.map()`, and dry-run stubs. The step signature is cheap to settle now and touches everything downstream, which is why it is not deferred.
 4. **The example workflow.** Composition-based, deterministic, nearly free. Iterating on it is how the plug-in interface gets validated while changing it is still cheap.
-5. **Providers**, in ascending order of cost to debug: OpenRouter, then ElevenLabs, then HyperFrames and Kinocut, then Higgsfield last. **The provider spikes of §9 run before the Higgsfield adapter is written**, because their outcomes determine what its interface needs to be.
+5. **Providers**, in ascending order of cost to debug: OpenRouter, then local speech (Chatterbox + WhisperX), then HyperFrames and Kinocut, then Higgsfield last. **The provider spikes of §9 run before the Higgsfield adapter is written**, because their outcomes determine what its interface needs to be.
 6. **Money.** Budget engine, meters, estimation, forecasts, atomic pre-flight, the Statistics tab.
 7. **The library.** Descriptors, catalogue, retrieval, dry-run overlay. Placed here deliberately: nothing before it needs it, and designing a descriptor schema before a single real asset exists means designing against imagined content.
 8. **Records and review.** The video detail view, replay, self-review including the composition checks.

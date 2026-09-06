@@ -1,0 +1,15 @@
+# Explainer uses OpenRouter (agents.llm/research) + local speech (Chatterbox TTS + WhisperX align)
+# + HyperFrames render. The SDK itself is installed by the chassis; these are the provider extras.
+#
+# CUDA torch must come from the PyTorch index (the +cu124 build is not on PyPI). Pin it before the
+# speech libs so pip resolves the GPU build to satisfy their torch requirement.
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0+cu124
+torchaudio==2.6.0+cu124
+
+# Local speech (sfvf[speech])
+chatterbox-tts==0.1.7
+whisperx==3.3.1
+
+# OpenRouter (sfvf[openrouter])
+httpx2==2.10.0
