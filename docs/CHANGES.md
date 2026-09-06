@@ -2,6 +2,19 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-06 — Speech-1: local narration real mode (Chatterbox TTS + WhisperX alignment)
+
+`media.speech.speak` real mode is implemented — the deferred ElevenLabs plan is replaced by a LOCAL,
+zero-cost, no-key stack: **Chatterbox** synthesizes the narration on the GPU and **WhisperX** force-aligns
+the known script text to the audio for real word timings. The `Speech` shape is unchanged, so it is
+drop-in for `explainer` (captions/finalize consume the same dict). The heavy GPU libraries live behind two
+module-level seams — `speech._synthesize` (Chatterbox → wav) and `speech._align` (WhisperX → timings) —
+that lazy-import only when called; `speak()` assembles them: synth → ffmpeg wav→m4a → align → real
+`probe` duration → `Speech`. CI patches the seams (no torch imported); the real stack is proven by a local
+spike (RTX 4000 Ada: synth ~8.6s/clip, align ~0.1s). New optional extra `sfvf[speech]`
+(`chatterbox-tts`, `whisperx`); GPU needs the CUDA torch build from the PyTorch index in the consuming
+workflow's requirements (see Speech-2). dry_run is unchanged. No paid provider, no network.
+
 ## 2026-09-06 — smoke_openrouter: minimal live-path validation workflow
 
 A tiny workflow (`workflows/smoke_openrouter/`) that makes exactly one cheap real `agents.llm` call on

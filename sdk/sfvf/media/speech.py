@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 from typing import TypedDict
 
 from .._ffmpeg import silent_audio
@@ -21,28 +22,42 @@ class Speech(TypedDict):
     duration: float
 
 
+def _synthesize(text: str, *, voice: str, model: str, dest: Path) -> None:
+    """Synthesize `text` to a wav file at `dest` on the GPU (Chatterbox).
+
+    SEAM — lazy-imports Chatterbox so CI (which patches this) never loads torch. Builder implements.
+    """
+    raise NotImplementedError
+
+
+def _align(text: str, audio: Path) -> list[WordTiming]:
+    """Force-align the known `text` to `audio`, returning word timings (WhisperX).
+
+    SEAM — lazy-imports WhisperX so CI (which patches this) never loads torch. Builder implements.
+    """
+    raise NotImplementedError
+
+
 def speak(text: str, *, voice: str, model: str) -> Speech:
     ctx = current_context()
-    if not ctx.dry_run:
-        raise NotImplementedError(
-            "media.speech.speak: the ElevenLabs adapter arrives in Stage B; run with dry_run=True"
+    if ctx.dry_run:
+        words = text.split()
+        duration = max(len(words), 1) / _RATE
+        sha = hashlib.sha256(f"{voice}|{model}|{text}".encode()).hexdigest()[:8]
+        filename = f"narration-{sha}.m4a"
+        dest = ctx.paths.artifacts / filename
+        ctx.paths.artifacts.mkdir(parents=True, exist_ok=True)
+        silent_audio(dest, duration_s=duration)
+
+        n = len(words)
+        timings: list[WordTiming] = [
+            WordTiming(word=word, start=i * duration / n, end=(i + 1) * duration / n)
+            for i, word in enumerate(words)
+        ]
+        return Speech(
+            audio=dest.relative_to(ctx.paths.video).as_posix(),
+            timings=timings,
+            duration=duration,
         )
 
-    words = text.split()
-    duration = max(len(words), 1) / _RATE
-    sha = hashlib.sha256(f"{voice}|{model}|{text}".encode()).hexdigest()[:8]
-    filename = f"narration-{sha}.m4a"
-    dest = ctx.paths.artifacts / filename
-    ctx.paths.artifacts.mkdir(parents=True, exist_ok=True)
-    silent_audio(dest, duration_s=duration)
-
-    n = len(words)
-    timings: list[WordTiming] = [
-        WordTiming(word=word, start=i * duration / n, end=(i + 1) * duration / n)
-        for i, word in enumerate(words)
-    ]
-    return Speech(
-        audio=dest.relative_to(ctx.paths.video).as_posix(),
-        timings=timings,
-        duration=duration,
-    )
+    raise NotImplementedError("Speech-1: real mode not yet implemented")

@@ -22,6 +22,17 @@ edit = [
 openrouter = [
     "httpx2==2.10.0",
 ]
+# `media.speech.speak` real mode synthesizes locally (Chatterbox TTS) and force-aligns the known
+# text to the audio for word timings (WhisperX). Both drag a heavy GPU stack (torch, transformers,
+# faster-whisper), so they are an OPTIONAL extra; the adapter lazy-imports them and raises a clear
+# error if absent. NOTE: this extra pulls the *CPU* torch from PyPI. For GPU (CUDA) synthesis a
+# speech-using workflow's requirements.txt must also pull the matching CUDA torch build from the
+# PyTorch index, e.g. `--extra-index-url https://download.pytorch.org/whl/cu124` +
+# `torch==2.6.0+cu124 torchaudio==2.6.0+cu124` (see workflows/explainer in Speech-2).
+speech = [
+    "chatterbox-tts==0.1.7",
+    "whisperx==3.3.1",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["sfvf"]
