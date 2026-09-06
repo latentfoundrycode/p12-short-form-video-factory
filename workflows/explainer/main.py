@@ -72,7 +72,6 @@ def _composition_html(script: str, timings: object, css_path: str) -> str:
             js_words.append(
                 {
                     "id": word["id"],
-                    "text": safe,
                     "start": word["start"],
                     "end": word["end"],
                 }
@@ -86,6 +85,9 @@ def _composition_html(script: str, timings: object, css_path: str) -> str:
                 "words": js_words,
             }
         )
+    # json.dumps' default ensure_ascii=True is REQUIRED for injection safety here —
+    # it escapes U+2028/U+2029 (JS line terminators) and non-ASCII so untrusted word
+    # text cannot break out of the inline <script>; do not pass ensure_ascii=False.
     groups_json = json.dumps(payload)
     return f"""<style>
 @import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@800&display=swap");
