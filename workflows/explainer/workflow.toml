@@ -31,3 +31,10 @@ key = "voice"
 type = "text"
 label = "Narrator voice"
 default = "narrator"
+
+# OpenRouter powers the research + script LLM steps; the chassis injects this key into the run's
+# context only because it is declared here (least-privilege allowlist, §5.6). Speech is local
+# (Chatterbox/WhisperX) and needs no key.
+[[requires_keys]]
+name = "OPENROUTER_API_KEY"
+label = "OpenRouter"
