@@ -13,7 +13,11 @@ that lazy-import only when called; `speak()` assembles them: synth → ffmpeg wa
 `probe` duration → `Speech`. CI patches the seams (no torch imported); the real stack is proven by a local
 spike (RTX 4000 Ada: synth ~8.6s/clip, align ~0.1s). New optional extra `sfvf[speech]`
 (`chatterbox-tts`, `whisperx`); GPU needs the CUDA torch build from the PyTorch index in the consuming
-workflow's requirements (see Speech-2). dry_run is unchanged. No paid provider, no network.
+workflow's requirements (see Speech-2). dry_run is unchanged. No paid provider and no per-call network;
+the first real `speak()` downloads the model weights from Hugging Face / torchaudio (cached thereafter).
+Review hardening: model use is serialized under the cache locks (safe under `ctx.map` concurrency),
+alignment runs on the delivered m4a (timings and duration describe one file), and non-empty text that
+aligns to zero timings fails closed rather than shipping empty captions.
 
 ## 2026-09-06 — smoke_openrouter: minimal live-path validation workflow
 

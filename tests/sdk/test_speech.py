@@ -149,14 +149,14 @@ def test_speak_real_mode_passes_text_voice_model_to_seams(
     video_dir = tmp_path / "01"
     video_dir.mkdir()
     synth_calls: list[dict[str, object]] = []
-    align_calls: list[str] = []
+    align_calls: list[tuple[str, str]] = []
 
     def fake_synthesize(text: str, *, voice: str, model: str, dest: Path) -> None:
         synth_calls.append({"text": text, "voice": voice, "model": model})
         _write_wav(dest, seconds=0.5)
 
     def fake_align(text: str, audio: Path) -> list[WordTiming]:
-        align_calls.append(text)
+        align_calls.append((text, Path(audio).name))
         return list(_CANNED)
 
     monkeypatch.setattr(media.speech, "_synthesize", fake_synthesize)
@@ -169,4 +169,29 @@ def test_speak_real_mode_passes_text_voice_model_to_seams(
         reset_active(token)
 
     assert synth_calls == [{"text": "the script text", "voice": "narrator", "model": "local-tts"}]
-    assert align_calls == ["the script text"]
+    # alignment runs on the delivered .m4a, so timings and the probed duration describe one file
+    assert len(align_calls) == 1
+    assert align_calls[0][0] == "the script text"
+    assert align_calls[0][1].endswith(".m4a")
+
+
+def test_speak_real_mode_fails_closed_on_empty_timings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Non-empty text but the aligner returns no timings → a Speech with audio and empty captions
+    # would be a silent caption miss. speak() must fail closed instead.
+    video_dir = tmp_path / "01"
+    video_dir.mkdir()
+
+    def fake_synthesize(text: str, *, voice: str, model: str, dest: Path) -> None:
+        _write_wav(dest, seconds=0.5)
+
+    monkeypatch.setattr(media.speech, "_synthesize", fake_synthesize)
+    monkeypatch.setattr(media.speech, "_align", lambda text, audio: [])
+
+    token = set_active(_ctx(video_dir, dry_run=False))
+    try:
+        with pytest.raises(RuntimeError):
+            media.speech.speak("some spoken words here", voice="v", model="m")
+    finally:
+        reset_active(token)
