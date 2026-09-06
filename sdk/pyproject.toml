@@ -32,6 +32,9 @@ openrouter = [
 speech = [
     "chatterbox-tts==0.1.7",
     "whisperx==3.3.1",
+    # Chatterbox's watermarker (resemble-perth) imports `pkg_resources`, removed in setuptools 81;
+    # without this pin synthesis fails with PerthImplicitWatermarker = None.
+    "setuptools<81",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -7,7 +7,10 @@
 torch==2.6.0+cu124
 torchaudio==2.6.0+cu124
 
-# Local speech (sfvf[speech])
+# Local speech (sfvf[speech]). Chatterbox's watermarker (resemble-perth) still imports
+# `pkg_resources`, which setuptools removed in 81 — pin setuptools below that or synthesis fails
+# with `PerthImplicitWatermarker` = None.
+setuptools<81
 chatterbox-tts==0.1.7
 whisperx==3.3.1
 

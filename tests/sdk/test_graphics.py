@@ -61,6 +61,27 @@ def test_captions_dry_run_returns_video_relative_file(tmp_path: Path) -> None:
     _rel_file(video_dir, out)
 
 
+def test_captions_real_mode_writes_srt(tmp_path: Path) -> None:
+    # captions is toolchain-free (an SRT built from the word timings), so it must work in REAL mode
+    # too — the explainer's real end-to-end run calls it after live synthesis + alignment.
+    video_dir = tmp_path / "01"
+    video_dir.mkdir()
+    timings = [
+        {"word": "one", "start": 0.0, "end": 0.5},
+        {"word": "two", "start": 0.5, "end": 1.0},
+    ]
+    token = set_active(_ctx(video_dir, dry_run=False))
+    try:
+        out = media.graphics.captions("artifacts/narration.m4a", timings, "bold")
+    finally:
+        reset_active(token)
+    assert isinstance(out, str)
+    assert out.endswith(".srt")
+    text = _rel_file(video_dir, out).read_text(encoding="utf-8")
+    assert "one" in text and "two" in text
+    assert "-->" in text  # SRT cue timing line
+
+
 def test_safe_zone_css_uses_prd_margins(tmp_path: Path) -> None:
     video_dir = tmp_path / "01"
     video_dir.mkdir()
