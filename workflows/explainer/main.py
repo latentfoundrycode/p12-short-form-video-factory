@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import date
 from html import escape
 
@@ -136,6 +137,20 @@ window.__timelines["main"] = tl;
 </script>"""
 
 
+def _narration_text(raw: str) -> str:
+    """Reduce an LLM 'script' to the words meant to be spoken: drop bracketed stage directions,
+    markdown emphasis, speaker labels, and quotation marks; collapse whitespace."""
+    text = re.sub(r"\[[^\]]*\]", " ", raw)  # [Scene: …], [Cut …], [End …]
+    text = re.sub(
+        r"(?i)\b(?:narrator|voice[\s-]?over|vo|host|speaker)\b\s*(?:\([^)]*\))?\s*:",
+        " ",
+        text,
+    )  # "Narrator (voice-over):", "Narrator:"
+    text = re.sub(r"[*_]+", "", text)  # markdown ** * __ _
+    text = text.replace('"', " ").replace("“", " ").replace("”", " ")  # VO quotes
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _caption(script: str) -> str:
     stripped = " ".join(script.split())
     return stripped[:120] if stripped else "Explainer"
@@ -175,19 +190,24 @@ def run(ctx: Context) -> Result:
         if not step.cached:
             step.set(
                 agents.llm(
-                    f"Write a {duration}-second script on {topic}.",
+                    f"Write only the spoken narration for a {duration}-second "
+                    f"short-form video about {topic}. Output plain sentences "
+                    "to be read aloud — no scene directions, no bracketed stage "
+                    "cues, no speaker labels or 'voice-over', no markdown, no "
+                    "quotation marks. Just the words the narrator says.",
                     agent="scriptwriter",
                     model=_LLM_MODEL,
                 )
             )
     script = step.value
+    narration = _narration_text(script)
 
-    with ctx.step("speech", inputs={"script": script, "voice": voice}) as step:
+    with ctx.step("speech", inputs={"script": narration, "voice": voice}) as step:
         if not step.cached:
-            step.set(media.speech.speak(script, voice=voice, model=_TTS_MODEL))
+            step.set(media.speech.speak(narration, voice=voice, model=_TTS_MODEL))
     speech = step.value
 
-    html = _composition_html(script, speech["timings"], media.graphics.safe_zone_css())
+    html = _composition_html(narration, speech["timings"], media.graphics.safe_zone_css())
     with ctx.step("render", inputs={"html": html}) as step:
         if not step.cached:
             step.set(media.graphics.render(html, duration_s=speech["duration"]))
@@ -195,4 +215,4 @@ def run(ctx: Context) -> Result:
 
     captions = media.graphics.captions(speech["audio"], speech["timings"], style="bold")
     final = media.finalize(visual, audio=speech["audio"], captions=captions)
-    return Result(video=ctx.video_dir / final, caption=_caption(script))
+    return Result(video=ctx.video_dir / final, caption=_caption(narration))
