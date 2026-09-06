@@ -2,6 +2,14 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-06 — Composition: legible, word-timed captions for the explainer
+
+The first real end-to-end video was unreadable (dark-grey text on near-black; whole script dumped
+statically). `explainer._composition_html` is reworked into a proper short-form caption composition:
+high-contrast white Montserrat, karaoke-style per-word highlighting synced to the WhisperX word timings,
+grouped into short phrases, animated on the `main` GSAP timeline HyperFrames drives. Model-authored word
+text is HTML-escaped. No pipeline change — just the on-screen visual.
+
 ## 2026-09-06 — Speech-3: real captions + speech venv setuptools pin (unblock explainer end-to-end)
 
 Two fixes surfaced by the first real end-to-end explainer run. (1) `media.graphics.captions` was a
