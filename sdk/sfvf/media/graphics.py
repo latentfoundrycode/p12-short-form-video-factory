@@ -49,11 +49,6 @@ def render(composition_html: str, *, duration_s: float) -> str:
 
 def captions(audio: str, timings: list[WordTiming], style: str) -> str:
     ctx = current_context()
-    if not ctx.dry_run:
-        raise NotImplementedError(
-            "media.graphics.captions: the HyperFrames adapter arrives in Stage B; "
-            "run with dry_run=True"
-        )
     sha = _sha8([audio, timings, style])
     dest, rel = _artifact(ctx, f"captions-{sha}.srt")
     dest.write_text(_srt_from_timings(timings), encoding="utf-8")
