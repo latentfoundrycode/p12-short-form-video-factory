@@ -44,6 +44,13 @@ def silent_audio(dest: Path, *, duration_s: float) -> Path:
     return dest
 
 
+def encode_m4a(src: Path, dest: Path) -> Path:
+    """Transcode any audio `src` to AAC/m4a at `dest` (used by real speech synthesis)."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    _run([_binary("ffmpeg"), "-y", "-i", str(src), "-c:a", "aac", "-map_metadata", "-1", str(dest)])
+    return dest
+
+
 def color_bars(dest: Path, *, duration_s: float, width: int, height: int, fps: int) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     _run(
