@@ -2,6 +2,18 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-06 — Speech-2: explainer real-runnable + architecture doc updated to local speech
+
+Makes the reference `explainer` workflow runnable for real end to end. Its `main.py` swaps the placeholder
+`stub-llm`/`stub-tts` ids for real providers (`openai/gpt-4o-mini` for the LLM steps; `chatterbox` for
+narration), and a new `workflows/explainer/requirements.txt` pulls the provider stack into its venv: CUDA
+torch from the PyTorch index (`--extra-index-url .../cu124`, `torch==2.6.0+cu124`, `torchaudio==2.6.0+cu124`),
+the local speech libs (`chatterbox-tts`, `whisperx`), and `httpx2` (OpenRouter). HyperFrames render is a Node
+toolchain installed once via `npm ci` in `tools/hyperframes`. The architecture doc is updated to reflect the
+dropped ElevenLabs plan: the provider table now lists **Speech (local)** — Chatterbox + WhisperX, no key/quota
+— with a dated amendment note, and the quota-meter, option-list, and budget-example ElevenLabs references are
+corrected. Enables the first real end-to-end video (attended: cheap OpenRouter + local speech + render).
+
 ## 2026-09-06 — Speech-1: local narration real mode (Chatterbox TTS + WhisperX alignment)
 
 `media.speech.speak` real mode is implemented — the deferred ElevenLabs plan is replaced by a LOCAL,

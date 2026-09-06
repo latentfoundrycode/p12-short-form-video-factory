@@ -3,6 +3,10 @@ from html import escape
 
 from sfvf import Context, Result, agents, media
 
+# Real providers: a cheap OpenRouter model for the LLM steps; local Chatterbox for narration.
+_LLM_MODEL = "openai/gpt-4o-mini"
+_TTS_MODEL = "chatterbox"
+
 
 def _composition_html(script: str, timings: object, css_path: str) -> str:
     cues: list[str] = []
@@ -40,7 +44,7 @@ def prepare(ctx: Context) -> dict:
                     agents.llm(
                         "Pick one topic worth explaining.",
                         agent="researcher",
-                        model="stub-llm",
+                        model=_LLM_MODEL,
                     )
                 )
     topic = step.value
@@ -65,14 +69,14 @@ def run(ctx: Context) -> Result:
                 agents.llm(
                     f"Write a {duration}-second script on {topic}.",
                     agent="scriptwriter",
-                    model="stub-llm",
+                    model=_LLM_MODEL,
                 )
             )
     script = step.value
 
     with ctx.step("speech", inputs={"script": script, "voice": voice}) as step:
         if not step.cached:
-            step.set(media.speech.speak(script, voice=voice, model="stub-tts"))
+            step.set(media.speech.speak(script, voice=voice, model=_TTS_MODEL))
     speech = step.value
 
     html = _composition_html(script, speech["timings"], media.graphics.safe_zone_css())
