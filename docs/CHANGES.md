@@ -2,6 +2,16 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-06 — smoke_openrouter: minimal live-path validation workflow
+
+A tiny workflow (`workflows/smoke_openrouter/`) that makes exactly one cheap real `agents.llm` call on
+`openai/gpt-4o-mini` and returns a trivial result — no speech/render/HyperFrames. It declares
+`requires_keys = OPENROUTER_API_KEY` and depends on `httpx2` (the OpenRouter extra the workflow venv needs).
+Purpose: re-validate the live paid path + budget breaker end to end with sub-cent spend whenever the
+provider layer changes. Used for the first attended live OpenRouter run (2026-09-06): kill-switch proven to
+refuse a call with zero spend, then one real call reconciled a true `usage.cost` of ~$3.45e-06 against the
+$0.50/run · $2.00/day ceilings. Kept as a standing smoke tool.
+
 ## 2026-09-05 — T2b-2a: activate the budget gate (load config + inject into context.json)
 
 The T2b-1 SDK gate was inert until fed config; this activates it on real runs. New
