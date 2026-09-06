@@ -2,6 +2,17 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-06 — Speech-3: real captions + speech venv setuptools pin (unblock explainer end-to-end)
+
+Two fixes surfaced by the first real end-to-end explainer run. (1) `media.graphics.captions` was a
+dry-run-only stub even though it just writes an SRT from the word timings (no toolchain); the
+over-conservative `NotImplementedError` guard is removed so captions works in real mode too. (2) Chatterbox's
+watermarker (`resemble-perth`) imports `pkg_resources`, which setuptools removed in v81; a fresh venv pulling
+setuptools≥81 makes `PerthImplicitWatermarker` `None` and synthesis crash. Pinned `setuptools<81` in both the
+`sfvf[speech]` extra and `workflows/explainer/requirements.txt`. With these (plus Speech-2b's `requires_keys`),
+the explainer runs fully live: real OpenRouter research+script, local Chatterbox/WhisperX narration, HyperFrames
+render, SRT captions, finalize.
+
 ## 2026-09-06 — Speech-2: explainer real-runnable + architecture doc updated to local speech
 
 Makes the reference `explainer` workflow runnable for real end to end. Its `main.py` swaps the placeholder
