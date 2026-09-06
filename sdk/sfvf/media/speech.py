@@ -35,7 +35,7 @@ def _synthesize(text: str, *, voice: str, model: str, dest: Path) -> None:
     SEAM — lazy-imports Chatterbox so CI (which patches this) never loads torch. Builder implements.
     """
     try:
-        import torch  # type: ignore[import-not-found]
+        import torch
         import torchaudio
         from chatterbox.tts import ChatterboxTTS
     except ImportError as exc:
@@ -53,9 +53,10 @@ def _synthesize(text: str, *, voice: str, model: str, dest: Path) -> None:
         if _tts_model is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
             _tts_model = ChatterboxTTS.from_pretrained(device=device)
-        tts = _tts_model
-    wav = tts.generate(text)
-    torchaudio.save(str(dest), wav.detach().cpu(), tts.sr)
+        # generate mutates instance state; hold the lock so ctx.map concurrency cannot race.
+        wav = _tts_model.generate(text).detach().cpu()
+        sample_rate = _tts_model.sr
+    torchaudio.save(str(dest), wav, sample_rate)
 
 
 def _align(text: str, audio: Path) -> list[WordTiming]:
@@ -73,17 +74,19 @@ def _align(text: str, audio: Path) -> list[WordTiming]:
         ) from exc
 
     global _align_bundle
+    a = whisperx.load_audio(str(audio))
+    total = len(a) / 16000.0
+    segments = [{"text": text, "start": 0.0, "end": total}]
     with _align_lock:
         if _align_bundle is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
             model_a, metadata = whisperx.load_align_model(language_code="en", device=device)
             _align_bundle = (model_a, metadata, device)
         model_a, metadata, device = _align_bundle
-
-    a = whisperx.load_audio(str(audio))
-    total = len(a) / 16000.0
-    segments = [{"text": text, "start": 0.0, "end": total}]
-    result = whisperx.align(segments, model_a, metadata, a, device, return_char_alignments=False)
+        # align mutates the cached model; hold the lock across the call, not just the load.
+        result = whisperx.align(
+            segments, model_a, metadata, a, device, return_char_alignments=False
+        )
 
     timings: list[WordTiming] = []
     for entry in result.get("word_segments") or []:
@@ -134,7 +137,11 @@ def speak(text: str, *, voice: str, model: str) -> Speech:
     dest = ctx.paths.artifacts / f"narration-{sha}.m4a"
     _synthesize(text, voice=voice, model=model, dest=wav)
     encode_m4a(wav, dest)
-    timings = _align(text, wav)
+    timings = _align(text, dest)
+    if text.split() and not timings:
+        raise RuntimeError(
+            "media.speech.speak: alignment produced no word timings for non-empty text"
+        )
     duration = probe(dest).duration_s
     return Speech(
         audio=dest.relative_to(ctx.paths.video).as_posix(),
