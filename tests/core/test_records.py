@@ -179,3 +179,54 @@ def test_read_events_stops_at_torn_final_line(
         ("2026-08-10T14:30:22Z", "01", {"t": "log", "msg": "one"}),
         ("2026-08-10T14:30:22Z", "01", {"t": "log", "msg": "two"}),
     ]
+
+
+# --- budget block (T2b-2c spend surfacing) ---
+
+
+def _make_running_request(run_dir: Path) -> None:
+    create_request(
+        run_dir,
+        run_id="r1",
+        workflow={"id": "w", "version": "1", "sdk": "1"},
+        params={},
+        videos=[{"index": 1, "status": "running"}],
+    )
+
+
+def test_update_request_persists_budget_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _pin_clock(monkeypatch)
+    run_dir = tmp_path / "run"
+    _make_running_request(run_dir)
+    # No budget block until the supervisor surfaces one.
+    assert "budget" not in json.loads((run_dir / "request.json").read_text(encoding="utf-8"))
+    block = {
+        "spend": {"openrouter": 0.017},
+        "per_run": {"openrouter": 0.5},
+        "per_day": {"openrouter": 2.0},
+    }
+    updated = update_request(
+        run_dir,
+        status="stopped-budget",
+        ended_utc="2026-08-10T14:30:22Z",
+        budget=block,
+    )
+    assert updated.status == "stopped-budget"
+    assert updated.budget == block
+    raw = json.loads((run_dir / "request.json").read_text(encoding="utf-8"))
+    assert raw["budget"] == block
+    assert read_request(run_dir).budget == block
+
+
+def test_update_request_without_budget_leaves_it_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _pin_clock(monkeypatch)
+    run_dir = tmp_path / "run"
+    _make_running_request(run_dir)
+    update_request(run_dir, status="complete", ended_utc="2026-08-10T14:30:22Z")
+    raw = json.loads((run_dir / "request.json").read_text(encoding="utf-8"))
+    # The optional field stays omitted from the JSON when no spend was surfaced.
+    assert "budget" not in raw

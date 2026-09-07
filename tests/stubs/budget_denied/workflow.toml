@@ -1,0 +1,6 @@
+[workflow]
+id = "budget-denied"
+name = "Budget Denied"
+version = "1.0.0"
+entrypoint = "main:run"
+sdk = "1"
