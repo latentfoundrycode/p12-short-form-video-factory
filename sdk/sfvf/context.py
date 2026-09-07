@@ -37,7 +37,7 @@ class _ContextModel(BaseModel):
 
 
 class BudgetConfig(_ContextModel):
-    """Budget-guard configuration carried into the run (T2b). Absent → the gate is inert.
+    """Budget-guard config carried into the run (T2b). Absent → a real paid call is refused (H21).
 
     Ceilings and per-meter reserve estimates are keyed by meter (a provider id, e.g. "openrouter").
     The supervisor populates this from app config (T2b-2); the SDK enforces it before each call.

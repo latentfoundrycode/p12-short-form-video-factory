@@ -1,7 +1,8 @@
 # SFVF budget circuit-breaker configuration.
 #
 # ACTIVE ONLY when the SFVF_BUDGET_CONFIG environment variable points at this file. When it is unset
-# the breaker is inert (no ceilings enforced). Ledger + kill-switch live under SFVF_BUDGET_STATE (or a
+# a real paid call is refused (H21 fail-closed; no run spends ungated). Ledger + kill-switch live under
+# SFVF_BUDGET_STATE (or a
 # default state dir). To halt ALL paid calls immediately, create the kill-switch sentinel file in that
 # state dir (default name: STOP).
 #
