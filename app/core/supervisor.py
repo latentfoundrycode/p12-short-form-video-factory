@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from sfvf._budget import read_run_spend
+from sfvf._budget import BudgetError, read_run_spend
 from sfvf.context import BudgetConfig, ContextFile, ContextPaths
 from sfvf.runner import EXIT_BUDGET_DENIED
 
@@ -150,11 +150,18 @@ class _RunState:
         run_dir: Path,
         *,
         atomic: bool,
-        status: RequestStatus,
         ended_utc: str,
         budget: dict[str, Any] | None = None,
+        status: RequestStatus | None = None,
     ) -> RequestRecord:
         with self.lock:
+            if status is None:
+                status = _aggregate_status(
+                    list(self.statuses.values()),
+                    atomic=atomic,
+                    stopped=self.stop_requested,
+                    budget_denied=self.budget_denied,
+                )
             return update_request(
                 run_dir,
                 atomic=atomic,
@@ -190,6 +197,10 @@ class _RunState:
     def was_budget_denied(self) -> bool:
         with self.lock:
             return self.budget_denied
+
+    def terminal_flags(self) -> tuple[bool, bool]:
+        with self.lock:
+            return self.stop_requested, self.budget_denied
 
     def mark_pending_stopped(self, run_dir: Path, *, atomic: bool) -> None:
         with self.lock:
@@ -261,8 +272,12 @@ def _scrub_context_secrets(context_path: Path) -> None:
 def _budget_report(wiring: _ContextWiring) -> dict[str, Any] | None:
     if wiring.budget is None:
         return None
+    try:
+        spend = read_run_spend(wiring.budget.ledger_path, wiring.run_id)
+    except (BudgetError, ValueError, OSError, OverflowError):
+        spend = {}
     return {
-        "spend": read_run_spend(wiring.budget.ledger_path, wiring.run_id),
+        "spend": spend,
         "per_run": dict(wiring.budget.per_run),
         "per_day": dict(wiring.budget.per_day),
     }
@@ -407,7 +422,8 @@ def run_request(
                 wiring=wiring,
             )
             if not ok:
-                if state.was_stopped():
+                stopped, budget_denied = state.terminal_flags()
+                if stopped:
                     state.mark_pending_stopped(run_dir, atomic=workflow.atomic)
                     return state.finish_request(
                         run_dir,
@@ -419,7 +435,7 @@ def run_request(
                 return state.finish_request(
                     run_dir,
                     atomic=workflow.atomic,
-                    status="stopped-budget" if state.was_budget_denied() else "failed",
+                    status="stopped-budget" if budget_denied else "failed",
                     ended_utc=format_utc_z(utc_now()),
                     budget=_budget_report(wiring),
                 )
@@ -729,12 +745,6 @@ def _run_videos(
     return state.finish_request(
         run_dir,
         atomic=atomic,
-        status=_aggregate_status(
-            list(state.statuses.values()),
-            atomic=atomic,
-            stopped=state.was_stopped(),
-            budget_denied=state.was_budget_denied(),
-        ),
         ended_utc=format_utc_z(utc_now()),
         budget=_budget_report(wiring),
     )

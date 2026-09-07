@@ -103,3 +103,19 @@ def test_valid_json_line_with_unusable_amount_reports_nothing(tmp_path: Path) ->
         encoding="utf-8",
     )
     assert read_run_spend(ledger, "run-1") == {}
+
+
+def test_ledger_amount_too_large_for_float_reports_nothing(tmp_path: Path) -> None:
+    # A valid-JSON entry whose amount is an integer too large to convert to float raises
+    # OverflowError (an ArithmeticError, not a ValueError) during amount coercion. The best-effort
+    # reader must still fail soft to {} — the contract is "never raise into the record write",
+    # regardless of which exception the poisoned ledger provokes.
+    ledger = tmp_path / "ledger.jsonl"
+    huge = "1" + "0" * 400
+    ledger.write_text(
+        '{"token":"t","kind":"actual","meter":"openrouter","run_id":"run-1","amount":'
+        + huge
+        + "}\n",
+        encoding="utf-8",
+    )
+    assert read_run_spend(ledger, "run-1") == {}
