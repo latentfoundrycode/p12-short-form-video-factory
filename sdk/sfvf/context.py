@@ -242,16 +242,20 @@ class Context:
         """
         return str(self._file.secrets[name])
 
-    def _budget_reserve(self, meter: str, unit: str) -> str | None:
+    def _budget_reserve(self, meter: str, unit: str) -> str:
         """Reserve the configured estimate for `meter` before a paid call (T2b-1).
 
-        No budget config → return None (gate inert). Otherwise reserve via a BudgetGuard built from
-        the config; a refusal (ceiling/kill-switch) or a missing/non-positive estimate raises so the
-        caller must not proceed. Returns the reservation token to pass to `_budget_reconcile`.
+        No budget config → raise BudgetError (fail-closed; refuse the paid call). Otherwise reserve
+        via a BudgetGuard built from the config; a refusal (ceiling/kill-switch) or a
+        missing/non-positive estimate raises so the caller must not proceed. Returns the reservation
+        token to pass to `_budget_reconcile`.
         """
         cfg = self._file.budget
         if cfg is None:
-            return None
+            raise BudgetError(
+                f"no budget configured; refusing paid call for meter {meter!r} "
+                "— set SFVF_BUDGET_CONFIG"
+            )
         estimate = cfg.estimates.get(meter)
         if estimate is None or not (estimate > 0):
             # Configured budget but no positive estimate for this meter → fail closed
