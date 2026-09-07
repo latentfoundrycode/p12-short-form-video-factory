@@ -20,7 +20,7 @@ import pytest
 from sfvf import media
 from sfvf._ffmpeg import probe
 from sfvf._runtime import reset_active, set_active
-from sfvf.context import Context, ContextFile, ContextPaths
+from sfvf.context import BudgetConfig, Context, ContextFile, ContextPaths
 
 _KEY = "hf-fake-id:hf-fake-secret-not-real"
 _MODEL = "sora-2/text-to-video"
@@ -36,6 +36,14 @@ def _ctx(tmp: Path, *, dry_run: bool, secrets: dict[str, object] | None = None) 
             secrets={"HIGGSFIELD_API_KEY": _KEY} if secrets is None else secrets,
             paths=ContextPaths(
                 video=tmp, artifacts=tmp / "artifacts", steps=tmp / ".steps", shared=tmp
+            ),
+            # H21: the real paid path is now refused without a budget, so these adapter tests carry
+            # a permissive one (huge ceiling) — the gate is satisfied and the HTTP behaviour under
+            # test is unchanged. The budget-gate semantics themselves live in test_budget_gate.py.
+            budget=BudgetConfig(
+                ledger_path=tmp / "budget" / "ledger.jsonl",
+                per_day={"higgsfield": 1_000_000.0},
+                estimates={"higgsfield": 1.0},
             ),
         )
     )
