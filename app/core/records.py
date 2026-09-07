@@ -173,6 +173,7 @@ def update_request(
     status: RequestStatus | None = None,
     ended_utc: str | None = None,
     videos: Sequence[VideoRef | Mapping[str, Any]] | None = None,
+    budget: dict[str, Any] | None = None,
 ) -> RequestRecord:
     current = read_request(run_dir)
     new_status = current.status if status is None else status
@@ -186,6 +187,7 @@ def update_request(
                 if videos is None
                 else [VideoRef.model_validate(video) for video in videos]
             ),
+            "budget": current.budget if budget is None else budget,
         }
     )
     write_json_atomic(run_dir / "request.json", _dump_owned(updated, REQUEST_OPTIONAL_FIELDS))

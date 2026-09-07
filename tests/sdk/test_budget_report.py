@@ -90,3 +90,16 @@ def test_corrupt_ledger_reports_nothing_rather_than_raising(tmp_path: Path) -> N
     ledger = tmp_path / "ledger.jsonl"
     ledger.write_text("{not valid json}\n", encoding="utf-8")
     assert read_run_spend(ledger, "run-1") == {}
+
+
+def test_valid_json_line_with_unusable_amount_reports_nothing(tmp_path: Path) -> None:
+    # A syntactically valid JSON entry whose amount is missing (or non-numeric/negative) passes the
+    # JSON-shape check but breaks amount coercion downstream. Reporting must STILL fail soft to {} —
+    # the ledger is a machine-wide file a child can append to, and this read must never raise into
+    # the finished run's record write.
+    ledger = tmp_path / "ledger.jsonl"
+    ledger.write_text(
+        '{"token":"t","kind":"reserved","meter":"openrouter","run_id":"run-1"}\n',
+        encoding="utf-8",
+    )
+    assert read_run_spend(ledger, "run-1") == {}

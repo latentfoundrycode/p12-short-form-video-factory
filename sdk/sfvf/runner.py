@@ -13,6 +13,7 @@ from typing import Any, Literal, cast
 
 from pydantic import ValidationError
 
+from ._budget import BudgetError
 from ._runtime import reset_active, set_active
 from .context import Context, ContextFile
 from .emit import emit
@@ -20,11 +21,27 @@ from .result import Result
 
 type EntryField = Literal["entrypoint", "prepare"]
 
+EXIT_BUDGET_DENIED = 2
+
 
 class _EntryFailedError(RuntimeError):
     def __init__(self, message: str, trace: str) -> None:
         super().__init__(message)
         self.trace = trace
+
+
+def _budget_reason(exc: BaseException) -> str | None:
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None:
+        ident = id(current)
+        if ident in seen:
+            break
+        seen.add(ident)
+        if isinstance(current, BudgetError):
+            return "budget"
+        current = current.__cause__ or current.__context__
+    return None
 
 
 def _parse_file_function(spec: str) -> tuple[str, str] | None:
@@ -200,6 +217,10 @@ def main(argv: list[str] | None = None) -> int:
         event: dict[str, Any] = {"t": "log", "level": "error", "msg": str(exc)}
         if isinstance(exc, _EntryFailedError):
             event["trace"] = exc.trace
+        if _budget_reason(exc) == "budget":
+            event["reason"] = "budget"
+            emit(event)
+            return EXIT_BUDGET_DENIED
         emit(event)
         return 1
     return 0
