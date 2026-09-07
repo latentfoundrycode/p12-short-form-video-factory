@@ -179,6 +179,33 @@ increments that logged them.
   the exposure is future **unattended** runs. Fix later: flip `_budget_reserve` to raise when a paid call
   is attempted with no config (or refuse at admission on `requires_keys` + no budget), and migrate the
   affected integration/security tests to provide a budget. _Source: T2b-2a design review._ Open.
+- **H22 — budget ledger keys spend by a run_id that is only per-workflow-unique.** `allocate_run`
+  (`app/core/ids.py`) suffixes for collisions only within one workflow's runs dir, so two *different*
+  workflows started in the same UTC second share the same `run_id`. The ledger is machine-wide, and both
+  the gate's per-run accounting (`_run_sum`) and T2b-2c's `read_run_spend` filter by `run_id`+`meter`
+  only — so those two runs' spend merges, over-counting each other's per-run ceiling and cross-reporting
+  spend. Pre-existing to the T2a engine; `read_run_spend` faithfully mirrors the gate's own filter (fixing
+  one without the other would desync them). Fix: namespace ledger entries by `workflow_id` (write+filter),
+  or make `run_id` globally unique. Low likelihood (same-second cross-workflow starts), report/accounting
+  accuracy only — never authorizes extra spend (ceilings only tighten under a merge). _Source: T2b-2c
+  review B._ Open.
+- **H23 — `BudgetGuard.reserve` can leak non-`BudgetError` exceptions from a poisoned ledger.** During a
+  reserve, the engine re-reads the ledger; a valid-JSON line with a bad/overflowing `amount` raises
+  `ValueError`/`OverflowError` (and a read fault `OSError`) straight out of `reserve()`, not wrapped as a
+  `BudgetError`. The runner's `_budget_reason` keys on `BudgetError`, so such a corruption-driven refusal
+  is labeled generic `failed` rather than a budget stop — arguably correct (a corrupt ledger is infra, not
+  exhaustion, and a top-up won't fix it), but the engine's public methods should be uniformly
+  fail-closed-as-`BudgetError` so callers get one refusal type. Fix in the T2a engine: wrap ledger-parse
+  errors inside `reserve`/`day_total`/`run_total` as `BudgetError`. (T2b-2c's report read is already fully
+  best-effort and unaffected.) _Source: T2b-2c review B (High #3, de-scoped from the label increment)._ Open.
+- **H24 — budget-denial signal is the runner exit code alone.** The supervisor maps child exit code
+  `EXIT_BUDGET_DENIED=2` to `stopped-budget`. A workflow that itself terminates with code 2 (e.g.
+  `sys.exit(2)`, or an argparse error — `SystemExit` bypasses the runner's `except Exception`) would be
+  mislabeled `stopped-budget`. Consequence is a status **label** only — no spend-authorization effect (the
+  SDK gate already refused before any HTTP) — and idiomatic workflows return a `Result`, so the trigger is
+  non-idiomatic. Harden by requiring BOTH exit code 2 AND a recorded `reason:"budget"` error event before
+  mapping (the runner already emits both together). Flagged by all three T2b-2c reviewers as non-blocking.
+  _Source: T2b-2c review (diff-reviewer NOTED / security-auditor ADVISORY / review B Medium)._ Open.
 
 ## Resolved
 

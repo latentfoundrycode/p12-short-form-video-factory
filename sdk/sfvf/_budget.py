@@ -178,6 +178,20 @@ def _run_sum(states: Mapping[str, _TokenState], run_id: str, meter: str) -> floa
     )
 
 
+def read_run_spend(ledger_path: Path, run_id: str) -> dict[str, float]:
+    # Best-effort: a corrupt ledger (unreadable, unusable/overflowing amount, or OSError)
+    # must not fail the finished run's record write.
+    try:
+        entries = _read_ledger(ledger_path)
+        spend: dict[str, float] = {}
+        for state in _token_states(entries).values():
+            if state.run_id == run_id and state.meter:
+                spend[state.meter] = spend.get(state.meter, 0.0) + state.effective_amount()
+        return spend
+    except (BudgetError, ValueError, OSError, OverflowError):
+        return {}
+
+
 def _append_line(path: Path, record: dict[str, str | float]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = (json.dumps(record, allow_nan=False) + "\n").encode("utf-8")

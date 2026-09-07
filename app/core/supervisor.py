@@ -12,7 +12,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from sfvf._budget import BudgetError, read_run_spend
 from sfvf.context import BudgetConfig, ContextFile, ContextPaths
+from sfvf.runner import EXIT_BUDGET_DENIED
 
 from app.core.env import EnvBlocked, EnvReady, EnvResult
 from app.core.env import ensure_env as default_ensure_env
@@ -119,6 +121,7 @@ class _RunState:
     statuses: dict[int, VideoStatus] = field(default_factory=dict)
     stop_requested: bool = False
     stop_mode: StopMode | None = None
+    budget_denied: bool = False
     procs: dict[str, tuple[subprocess.Popen[str], Path]] = field(default_factory=dict)
     secret_values: frozenset[str] = frozenset()
 
@@ -147,16 +150,25 @@ class _RunState:
         run_dir: Path,
         *,
         atomic: bool,
-        status: RequestStatus,
         ended_utc: str,
+        budget: dict[str, Any] | None = None,
+        status: RequestStatus | None = None,
     ) -> RequestRecord:
         with self.lock:
+            if status is None:
+                status = _aggregate_status(
+                    list(self.statuses.values()),
+                    atomic=atomic,
+                    stopped=self.stop_requested,
+                    budget_denied=self.budget_denied,
+                )
             return update_request(
                 run_dir,
                 atomic=atomic,
                 status=status,
                 ended_utc=ended_utc,
                 videos=_video_refs(self.statuses),
+                budget=budget,
             )
 
     def register_proc(self, key: str, proc: subprocess.Popen[str], folder: Path) -> StopMode | None:
@@ -177,6 +189,18 @@ class _RunState:
     def was_stopped(self) -> bool:
         with self.lock:
             return self.stop_requested
+
+    def mark_budget_denied(self) -> None:
+        with self.lock:
+            self.budget_denied = True
+
+    def was_budget_denied(self) -> bool:
+        with self.lock:
+            return self.budget_denied
+
+    def terminal_flags(self) -> tuple[bool, bool]:
+        with self.lock:
+            return self.stop_requested, self.budget_denied
 
     def mark_pending_stopped(self, run_dir: Path, *, atomic: bool) -> None:
         with self.lock:
@@ -245,14 +269,31 @@ def _scrub_context_secrets(context_path: Path) -> None:
         return
 
 
+def _budget_report(wiring: _ContextWiring) -> dict[str, Any] | None:
+    if wiring.budget is None:
+        return None
+    try:
+        spend = read_run_spend(wiring.budget.ledger_path, wiring.run_id)
+    except (BudgetError, ValueError, OSError, OverflowError):
+        spend = {}
+    return {
+        "spend": spend,
+        "per_run": dict(wiring.budget.per_run),
+        "per_day": dict(wiring.budget.per_day),
+    }
+
+
 def _aggregate_status(
     statuses: Sequence[VideoStatus],
     *,
     atomic: bool,
     stopped: bool = False,
+    budget_denied: bool = False,
 ) -> RequestStatus:
     if stopped:
         return "stopped"
+    if budget_denied:
+        return "stopped-budget"
     if any(status in {"pending", "running"} for status in statuses):
         raise RuntimeError("videos remained in-flight after the pool drained")
     completed = all(status == "complete" for status in statuses)
@@ -381,19 +422,22 @@ def run_request(
                 wiring=wiring,
             )
             if not ok:
-                if state.was_stopped():
+                stopped, budget_denied = state.terminal_flags()
+                if stopped:
                     state.mark_pending_stopped(run_dir, atomic=workflow.atomic)
                     return state.finish_request(
                         run_dir,
                         atomic=workflow.atomic,
                         status="stopped",
                         ended_utc=format_utc_z(utc_now()),
+                        budget=_budget_report(wiring),
                     )
                 return state.finish_request(
                     run_dir,
                     atomic=workflow.atomic,
-                    status="failed",
+                    status="stopped-budget" if budget_denied else "failed",
                     ended_utc=format_utc_z(utc_now()),
+                    budget=_budget_report(wiring),
                 )
             if state.was_stopped():
                 state.mark_pending_stopped(run_dir, atomic=workflow.atomic)
@@ -402,6 +446,7 @@ def run_request(
                     atomic=workflow.atomic,
                     status="stopped",
                     ended_utc=format_utc_z(utc_now()),
+                    budget=_budget_report(wiring),
                 )
         return _run_videos(
             env.python,
@@ -640,7 +685,10 @@ def _run_prepare(
             limits=limits,
             silence_limit_default=silence_limit_default,
         )
-        if proc.wait() != 0 or not result_path.is_file():
+        returncode = proc.wait()
+        if returncode == EXIT_BUDGET_DENIED:
+            state.mark_budget_denied()
+        if returncode != 0 or not result_path.is_file():
             return False, None
     finally:
         state.unregister_proc("prep")
@@ -697,12 +745,8 @@ def _run_videos(
     return state.finish_request(
         run_dir,
         atomic=atomic,
-        status=_aggregate_status(
-            list(state.statuses.values()),
-            atomic=atomic,
-            stopped=state.was_stopped(),
-        ),
         ended_utc=format_utc_z(utc_now()),
+        budget=_budget_report(wiring),
     )
 
 
@@ -775,8 +819,12 @@ def _run_one_video(
             returncode = proc.wait()
         finally:
             state.unregister_proc(source)
+        if returncode == EXIT_BUDGET_DENIED:
+            state.mark_budget_denied()
         status: VideoStatus = (
-            "stopped" if state.was_stopped() else ("complete" if returncode == 0 else "failed")
+            "stopped"
+            if state.was_stopped() or returncode == EXIT_BUDGET_DENIED
+            else ("complete" if returncode == 0 else "failed")
         )
         ended = format_utc_z(utc_now())
         write_video(
