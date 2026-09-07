@@ -8,10 +8,10 @@ ceilings or a kill-switch. The gate lives in the SDK because that is where the c
 Before each real call the SDK RESERVES a conservative per-meter estimate; if the reservation is
 refused (ceiling or kill-switch), the call is blocked and NO HTTP request is made. After a
 successful OpenRouter call the SDK RECONCILES with the real `usage.cost`. Budget config travels in
-`context.json` (`ContextFile.budget`); when absent the behaviour is exactly as before (no gate).
-This increment is SDK-only — the supervisor populating that config and mapping a denial to the
-`stopped-budget` status is T2b-2. No network call is ever made: HTTP is a MockTransport; a blocked
-call's transport must never be invoked. Fake keys/ceilings live only under tmp_path.
+`context.json` (`ContextFile.budget`); when it is absent, a real paid call is now REFUSED before any
+HTTP (H21 fail-closed) so an unconfigured real run never spends ungated (dry_run never reaches the
+paid path). No network call is ever made: HTTP is a MockTransport; a blocked call's transport must
+never be invoked. Fake keys/ceilings live only under tmp_path.
 """
 
 from __future__ import annotations
@@ -206,16 +206,19 @@ def test_kill_switch_blocks_llm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         reset_active(token)
 
 
-def test_no_budget_config_is_passthrough(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    # Without budget config the call runs exactly as before and writes no ledger.
-    _install_or_mock(monkeypatch, _or_success(0.03))
+def test_no_budget_config_refuses_the_paid_call(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # H21: a real paid call with NO budget config is refused (fail-closed) BEFORE any HTTP. A real
+    # run that reaches a paid provider with no breaker configured must never spend ungated; the
+    # refusal is a BudgetError, which the supervisor maps to the stopped-budget status (T2b-2c).
+    _install_or_mock(monkeypatch, _NoCallTransport())
     ctx = _ctx(tmp_path, budget=None)
     token = set_active(ctx)
     try:
-        out = agents.llm("hi", agent="a", model="m")
+        with pytest.raises(BudgetError):
+            agents.llm("hi", agent="a", model="m")
     finally:
         reset_active(token)
-    assert out == "hello"
+    # A refused call writes no ledger (nothing was reserved).
     assert not (tmp_path / "budget" / "ledger.jsonl").exists()
 
 

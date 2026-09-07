@@ -2,8 +2,8 @@
 
 Activation layer for the T2b-1 SDK gate: the supervisor reads this and injects it into each run's
 context.json so the child enforces ceilings/kill-switch before a paid call. Env-gated like secrets
-— no `SFVF_BUDGET_CONFIG` means no budget (the gate stays inert). A configured-but-unreadable
-file fails closed (raises `BudgetConfigError`) rather than running ungated.
+— no `SFVF_BUDGET_CONFIG` means no budget is injected, so a real paid call is refused (H21
+fail-closed). A configured-but-unreadable file also fails closed (raises `BudgetConfigError`).
 
 SKELETON — signatures frozen by tests/api/test_budget_activation.py; the builder fills the bodies.
 """

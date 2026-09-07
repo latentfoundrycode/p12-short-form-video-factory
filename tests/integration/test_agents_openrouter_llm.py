@@ -21,7 +21,7 @@ import pytest
 from sfvf import agents
 from sfvf._ratelimit import RateLimiter
 from sfvf._runtime import reset_active, set_active
-from sfvf.context import Context, ContextFile, ContextPaths
+from sfvf.context import BudgetConfig, Context, ContextFile, ContextPaths
 
 _BASE = "https://openrouter.ai/api/v1"
 _KEY = "sk-fake-inmemory-not-real"
@@ -48,6 +48,14 @@ def _ctx(tmp: Path, *, dry_run: bool, secrets: dict[str, object] | None = None) 
             secrets={"OPENROUTER_API_KEY": _KEY} if secrets is None else secrets,
             paths=ContextPaths(
                 video=tmp, artifacts=tmp / "artifacts", steps=tmp / ".steps", shared=tmp
+            ),
+            # H21: the real paid path is now refused without a budget, so these adapter tests carry
+            # a permissive one (huge ceiling) — the gate is satisfied and the HTTP behaviour under
+            # test is unchanged. The budget-gate semantics themselves live in test_budget_gate.py.
+            budget=BudgetConfig(
+                ledger_path=tmp / "budget" / "ledger.jsonl",
+                per_day={"openrouter": 1_000_000.0},
+                estimates={"openrouter": 0.01},
             ),
         )
     )

@@ -178,7 +178,14 @@ increments that logged them.
   `context.json` carries the budget block), so the fail-open cannot silently apply to the attended run;
   the exposure is future **unattended** runs. Fix later: flip `_budget_reserve` to raise when a paid call
   is attempted with no config (or refuse at admission on `requires_keys` + no budget), and migrate the
-  affected integration/security tests to provide a budget. _Source: T2b-2a design review._ Open.
+  affected integration/security tests to provide a budget. _Source: T2b-2a design review._
+  **RESOLVED (H21 increment):** `Context._budget_reserve` now raises `BudgetError` when no budget is
+  configured, refusing the paid call before any HTTP. Enforcement is at the SDK reserve site — reached
+  only on the non-dry paid path, after the key read — so the blast radius was just the passthrough
+  contract (reversed) + the three real-adapter integration tests (migrated to carry a permissive budget);
+  the secret-injection/redaction suites were untouched (their stubs never reserve), avoiding the feared
+  security-suite migration. A `BudgetError` here is mapped to `stopped-budget` by T2b-2c, so an
+  unconfigured real run stops cleanly with no spend. See Resolved.
 - **H22 — budget ledger keys spend by a run_id that is only per-workflow-unique.** `allocate_run`
   (`app/core/ids.py`) suffixes for collisions only within one workflow's runs dir, so two *different*
   workflows started in the same UTC second share the same `run_id`. The ledger is machine-wide, and both
@@ -209,4 +216,8 @@ increments that logged them.
 
 ## Resolved
 
-_(none yet)_
+- **H21 — fail-open-when-unset** (resolved by the H21 increment). A real (non-dry) paid provider call
+  with no budget configured is now refused at `Context._budget_reserve` (raises `BudgetError`, mapped to
+  `stopped-budget` by T2b-2c) instead of passing through ungated. Enforced at the reserve site (after the
+  key read, non-dry path only); passthrough contract reversed, three real-adapter integration suites
+  migrated to a permissive budget, secret suites untouched.
