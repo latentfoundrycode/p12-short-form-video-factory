@@ -63,6 +63,20 @@ class SecretStore:
         del secrets[name]
         self._save(secrets)
 
+    def rekey(self, new_passphrase: str) -> None:
+        if not new_passphrase:
+            raise ValueError("passphrase must not be empty")
+        if not self._path.is_file() or self._path.stat().st_size == 0:
+            raise SecretsError(f"no secret store to rekey at {self._path}")
+        secrets = self._load()
+        old_passphrase = self._passphrase
+        self._passphrase = new_passphrase
+        try:
+            self._save(secrets)
+        except Exception:
+            self._passphrase = old_passphrase
+            raise
+
     def _fernet(self, salt: bytes, version: int) -> Fernet:
         params = _KDF_BY_VERSION.get(version)
         if params is None:
@@ -149,6 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("list", help="print secret names")
     del_p = sub.add_parser("delete", help="remove a secret")
     del_p.add_argument("name")
+    sub.add_parser("rekey", help="re-encrypt the store under a new passphrase")
     args = parser.parse_args(argv)
     try:
         store = SecretStore(_store_path(), _passphrase())
@@ -160,6 +175,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(name)
         elif args.command == "delete":
             store.delete(args.name)
+        elif args.command == "rekey":
+            new = getpass.getpass("New passphrase: ")
+            confirm = getpass.getpass("Confirm new passphrase: ")
+            if new != confirm:
+                print("passphrases did not match", file=sys.stderr)
+                return 1
+            store.rekey(new)
     except (SecretsError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1

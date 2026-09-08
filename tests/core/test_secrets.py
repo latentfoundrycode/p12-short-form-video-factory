@@ -111,3 +111,99 @@ def test_cli_wrong_passphrase_returns_nonzero(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("SFVF_SECRETS_PATH", str(path))
     # `list` with the wrong passphrase fails cleanly (non-zero exit), not a traceback dump.
     assert main(["list"]) != 0
+
+
+# --- rekey: re-encrypt the whole store under a new passphrase (no delete-and-recreate) ---
+
+
+def test_rekey_re_encrypts_and_preserves_all_secrets(tmp_path):
+    path = tmp_path / "secrets.enc"
+    store = SecretStore(path, passphrase="old-pass")
+    store.set("OPENROUTER_API_KEY", "sk-openrouter")
+    store.set("HIGGSFIELD_API_KEY", "hf-id:hf-secret")
+
+    SecretStore(path, passphrase="old-pass").rekey("new-pass")
+
+    # The new passphrase opens the store and every secret survived unchanged.
+    reopened = SecretStore(path, passphrase="new-pass")
+    assert reopened.names() == ["HIGGSFIELD_API_KEY", "OPENROUTER_API_KEY"]
+    assert reopened.get("OPENROUTER_API_KEY") == "sk-openrouter"
+    assert reopened.get("HIGGSFIELD_API_KEY") == "hf-id:hf-secret"
+    # The OLD passphrase no longer works.
+    with pytest.raises(SecretsError):
+        SecretStore(path, passphrase="old-pass").get("OPENROUTER_API_KEY")
+
+
+def test_rekey_wrong_current_passphrase_fails_and_leaves_store_intact(tmp_path):
+    path = tmp_path / "secrets.enc"
+    SecretStore(path, passphrase="right").set("K", "v")
+    # Rekey attempted with the wrong CURRENT passphrase must fail before writing anything.
+    with pytest.raises(SecretsError):
+        SecretStore(path, passphrase="wrong").rekey("new-pass")
+    # The original passphrase still opens the untouched store; the (never-used) new one does not.
+    assert SecretStore(path, passphrase="right").get("K") == "v"
+    with pytest.raises(SecretsError):
+        SecretStore(path, passphrase="new-pass").get("K")
+
+
+def test_rekey_on_absent_store_raises(tmp_path):
+    # Rekey must not silently create an empty store under a new passphrase for a store that isn't
+    # there (that would "succeed" without ever validating the current passphrase).
+    with pytest.raises(SecretsError):
+        SecretStore(tmp_path / "absent.enc", passphrase="whatever").rekey("new-pass")
+
+
+def test_rekey_empty_new_passphrase_rejected_and_store_intact(tmp_path):
+    path = tmp_path / "secrets.enc"
+    SecretStore(path, passphrase="pw").set("K", "v")
+    with pytest.raises(ValueError):
+        SecretStore(path, passphrase="pw").rekey("")
+    # The store is unchanged: still opens under the original passphrase.
+    assert SecretStore(path, passphrase="pw").get("K") == "v"
+
+
+def test_cli_rekey_re_encrypts_under_new_passphrase(tmp_path, monkeypatch):
+    path = tmp_path / "secrets.enc"
+    SecretStore(path, passphrase="old-pass").set("OPENROUTER_API_KEY", "sk-value")
+    # The current passphrase comes from the env; the NEW one (and its confirmation) via getpass.
+    monkeypatch.setenv("SFVF_SECRETS_PASSPHRASE", "old-pass")
+    monkeypatch.setenv("SFVF_SECRETS_PATH", str(path))
+    monkeypatch.setattr("app.core.secrets.getpass.getpass", lambda *a, **k: "new-pass")
+
+    assert main(["rekey"]) == 0
+    assert SecretStore(path, passphrase="new-pass").get("OPENROUTER_API_KEY") == "sk-value"
+
+
+def test_cli_rekey_mismatched_confirmation_returns_nonzero_and_store_intact(tmp_path, monkeypatch):
+    path = tmp_path / "secrets.enc"
+    SecretStore(path, passphrase="old-pass").set("K", "v")
+    monkeypatch.setenv("SFVF_SECRETS_PASSPHRASE", "old-pass")
+    monkeypatch.setenv("SFVF_SECRETS_PATH", str(path))
+    # New passphrase and its confirmation differ → refuse without touching the store.
+    entries = iter(["new-pass", "typo-different"])
+    monkeypatch.setattr("app.core.secrets.getpass.getpass", lambda *a, **k: next(entries))
+
+    assert main(["rekey"]) != 0
+    # Store untouched: original passphrase still works; neither typed new value opens it.
+    assert SecretStore(path, passphrase="old-pass").get("K") == "v"
+    for candidate in ("new-pass", "typo-different"):
+        with pytest.raises(SecretsError):
+            SecretStore(path, passphrase=candidate).get("K")
+
+
+def test_rekey_restores_passphrase_on_save_failure(tmp_path, monkeypatch):
+    # If the atomic re-save fails after a successful decrypt, the on-disk store is left keyed to the
+    # OLD passphrase (unchanged) — so the in-memory object must NOT keep the new passphrase, or a
+    # later operation on the same reusable instance would raise a misleading SecretsError.
+    path = tmp_path / "secrets.enc"
+    store = SecretStore(path, passphrase="old-pass")
+    store.set("K", "v")
+
+    def _boom(*_a, **_k):
+        raise OSError("simulated write failure")
+
+    monkeypatch.setattr(store, "_save", _boom)
+    with pytest.raises(OSError):
+        store.rekey("new-pass")
+    # The same object still reads the untouched store — i.e. it kept the OLD passphrase.
+    assert store.get("K") == "v"
