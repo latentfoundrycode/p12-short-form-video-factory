@@ -1,7 +1,7 @@
 """Contract for the `smoke_higgsfield` workflow — the minimal attended-first-run vehicle.
 
 `smoke_higgsfield` is the smallest workflow that exercises the live Higgsfield path end to end (one
-`media.video.generate` call on a Kling text-to-video model, 9:16, one video) so the attended first
+`media.video.generate` call on a Kling text-to-video model, one video) so the attended first
 real run can validate the adapter + the budget breaker with a single generation. This test proves
 the workflow is well-formed WITHOUT any spend or network:
 
