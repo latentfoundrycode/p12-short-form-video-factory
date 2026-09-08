@@ -1,0 +1,10 @@
+[workflow]
+id = "smoke_higgsfield"
+name = "Higgsfield Smoke"
+version = "1.0.0"
+entrypoint = "main:run"
+sdk = "1"
+
+[[requires_keys]]
+name = "HIGGSFIELD_API_KEY"
+label = "Higgsfield"
