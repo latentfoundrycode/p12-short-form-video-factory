@@ -213,6 +213,19 @@ increments that logged them.
   non-idiomatic. Harden by requiring BOTH exit code 2 AND a recorded `reason:"budget"` error event before
   mapping (the runner already emits both together). Flagged by all three T2b-2c reviewers as non-blocking.
   _Source: T2b-2c review (diff-reviewer NOTED / security-auditor ADVISORY / review B Medium)._ Open.
+- **H25 — Higgsfield adapter body fields drifted from the real API.** Verified against the live
+  OpenAPI spec (2026-09) for `smoke_higgsfield`: (a) `media.video.generate` maps `duration_s` into the
+  body as a **float** (`5.0`), but the Kling/Seedance/etc. `duration` field is an **integer enum**
+  (`5`/`10`) — a non-5/10 or float value risks a 422; (b) Kling text-to-video defaults `aspect_ratio`
+  to `1:1`, so a vertical short-form call must pass `aspect_ratio:"9:16"`. The `smoke_higgsfield`
+  workflow sidesteps both by omitting `duration_s` (API defaults to int `5`) and passing
+  `aspect_ratio:"9:16"` through the adapter's existing `extra`, so no real call is affected today.
+  Fix when a workflow needs non-default duration/aspect via typed params: coerce `duration` to the int
+  enum and surface `aspect_ratio` as a first-class `generate(...)` arg. The frozen contract
+  `test_video_higgsfield.py::test_generate_real_passes_extra_and_duration` (asserts `duration == 8.0`)
+  is reversed as part of that fix. Also confirmed CORRECT and needing no change: base URL, `Key
+  id:secret` auth, submit→poll→download, success status `completed`, `video.url` result path, and the
+  `{failed,nsfw,canceled}` terminal set. _Source: Higgsfield API verification (step-4 prep)._ Open.
 
 ## Resolved
 

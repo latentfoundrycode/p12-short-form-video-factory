@@ -20,7 +20,10 @@ per_day = 2.00   # USD — hard ceiling across all runs in a UTC day
 estimate = 0.05  # USD — conservative amount reserved before each call
 
 [higgsfield]
-# Placeholders — confirm against real Higgsfield credit pricing BEFORE its attended run.
-per_run = 100    # credits
-per_day = 300    # credits
-estimate = 50    # credits reserved per video
+# Kling text-to-video (v2.5-turbo/pro), 5s / 9:16, video_count=1 — tight proof-of-breaker floors.
+# The API gives no per-call credit cost (H20: no reconcile), so the REAL per-video credits are
+# confirmed from the Higgsfield dashboard's balance delta at the attended stop and this estimate is
+# bumped if it turns out < real (H20: estimate must be >= real). Provisional until then.
+per_run = 15     # credits — one Kling-turbo 5s video (~a handful of credits); a 2nd is refused
+per_day = 45     # credits — ~3 videos/day headroom, refuses runaway
+estimate = 15    # credits reserved per video (conservative; >= expected real cost)
