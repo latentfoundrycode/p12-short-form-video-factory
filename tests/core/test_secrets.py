@@ -189,3 +189,21 @@ def test_cli_rekey_mismatched_confirmation_returns_nonzero_and_store_intact(tmp_
     for candidate in ("new-pass", "typo-different"):
         with pytest.raises(SecretsError):
             SecretStore(path, passphrase=candidate).get("K")
+
+
+def test_rekey_restores_passphrase_on_save_failure(tmp_path, monkeypatch):
+    # If the atomic re-save fails after a successful decrypt, the on-disk store is left keyed to the
+    # OLD passphrase (unchanged) — so the in-memory object must NOT keep the new passphrase, or a
+    # later operation on the same reusable instance would raise a misleading SecretsError.
+    path = tmp_path / "secrets.enc"
+    store = SecretStore(path, passphrase="old-pass")
+    store.set("K", "v")
+
+    def _boom(*_a, **_k):
+        raise OSError("simulated write failure")
+
+    monkeypatch.setattr(store, "_save", _boom)
+    with pytest.raises(OSError):
+        store.rekey("new-pass")
+    # The same object still reads the untouched store — i.e. it kept the OLD passphrase.
+    assert store.get("K") == "v"

@@ -69,8 +69,13 @@ class SecretStore:
         if not self._path.is_file() or self._path.stat().st_size == 0:
             raise SecretsError(f"no secret store to rekey at {self._path}")
         secrets = self._load()
+        old_passphrase = self._passphrase
         self._passphrase = new_passphrase
-        self._save(secrets)
+        try:
+            self._save(secrets)
+        except Exception:
+            self._passphrase = old_passphrase
+            raise
 
     def _fernet(self, salt: bytes, version: int) -> Fernet:
         params = _KDF_BY_VERSION.get(version)
