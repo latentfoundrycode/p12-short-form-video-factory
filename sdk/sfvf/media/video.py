@@ -70,12 +70,13 @@ def generate(
     if duration_s is not None:
         body["duration"] = duration_s
     body.update(extra or {})
+    auth = {"Authorization": f"Key {key}"}
 
     with _http_client() as client:
         with _LIMITER.slot("higgsfield"):
             resp = client.post(
                 "/" + model,
-                headers={"Authorization": f"Key {key}"},
+                headers=auth,
                 json=body,
             )
         if resp.status_code // 100 != 2:
@@ -92,7 +93,7 @@ def generate(
                     f"Higgsfield poll timed out after {_POLL_TIMEOUT_S:.0f}s "
                     f"(request_id={request_id})"
                 )
-            poll = client.get(status_url)
+            poll = client.get(status_url, headers=auth)
             if poll.status_code // 100 != 2:
                 raise RuntimeError(f"Higgsfield poll {poll.status_code}: {poll.text}")
             payload: dict[str, Any] = poll.json()

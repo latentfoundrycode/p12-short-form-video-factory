@@ -213,9 +213,34 @@ increments that logged them.
   non-idiomatic. Harden by requiring BOTH exit code 2 AND a recorded `reason:"budget"` error event before
   mapping (the runner already emits both together). Flagged by all three T2b-2c reviewers as non-blocking.
   _Source: T2b-2c review (diff-reviewer NOTED / security-auditor ADVISORY / review B Medium)._ Open.
+- **H25 — Higgsfield adapter body fields drifted from the real API (residuals).** Verified against
+  the live OpenAPI spec (2026-09). Two model-body drifts remain (the poll-auth bug found alongside
+  them was FIXED in the smoke_higgsfield increment — see Resolved):
+  (a) **duration is a float, not the int enum.** `media.video.generate` maps `duration_s` into the
+  body as a float (`5.0`), but the `duration` field is an integer enum (`5`/`10`) — a non-5/10 or
+  float value risks a 422. `smoke_higgsfield` sidesteps it by omitting `duration_s` (the API then uses
+  its int default `5`).
+  (b) **aspect_ratio is model-dependent.** `kling-video/v2.1/master` accepts `aspect_ratio`
+  (`1:1`/`16:9`/`9:16`, default `1:1`), but `kling-video/v2.5-turbo/pro` (the smoke's cheap model) does
+  NOT expose it at all — its body is only `{prompt, duration, cfg_scale, negative_prompt}`. So a
+  guaranteed-vertical short-form needs v2.1 master (or another model that exposes `aspect_ratio`); the
+  smoke runs v2.5-turbo/pro at the model's default ratio (cosmetic for a loop-validation smoke).
+  Fix when a real short-form workflow needs these via typed params: coerce `duration` to the int enum,
+  surface `aspect_ratio` as a first-class `generate(...)` arg, and pick a model that supports it. The
+  frozen contract `test_video_higgsfield.py::test_generate_real_passes_extra_and_duration` (asserts
+  `duration == 8.0`) is reversed as part of that fix. Confirmed CORRECT: base URL, `Key id:secret`
+  auth on submit AND poll, submit→poll→download, success status `completed`, `video.url` result path,
+  `{failed,nsfw,canceled}` terminal set. _Source: Higgsfield API verification (step-4 prep)._ Open.
 
 ## Resolved
 
+- **Higgsfield poll dropped auth** (resolved by the smoke_higgsfield increment). `media.video.generate`
+  polled `GET {status_url}` (`/requests/{id}/status`) with no `Authorization` header, but that endpoint
+  inherits the API's `Key id:secret` auth — so a PAID submit would succeed (credits spent) and every
+  poll would 401, wasting the spend. Found by decorrelated Review B against the live OpenAPI; fixed to
+  send `Authorization: Key <id:secret>` on the poll (submit already did; the result download stays
+  headerless — `video.url` is an external pre-signed URL). Covered by
+  `test_video_higgsfield.py::test_generate_real_poll_carries_auth`.
 - **H21 — fail-open-when-unset** (resolved by the H21 increment). A real (non-dry) paid provider call
   with no budget configured is now refused at `Context._budget_reserve` (raises `BudgetError`, mapped to
   `stopped-budget` by T2b-2c) instead of passing through ungated. Enforced at the reserve site (after the
