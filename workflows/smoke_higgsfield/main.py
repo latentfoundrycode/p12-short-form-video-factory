@@ -12,10 +12,10 @@ _MODEL = "kling-video/v2.5-turbo/pro/text-to-video"
 
 
 def run(ctx: Context) -> Result:
+    # v2.5-turbo/pro has no aspect_ratio (OpenAPI: prompt, duration, cfg_scale, negative_prompt).
     rel = media.video.generate(
         "A calm mountain lake at dawn, still water reflecting pine trees, gentle mist, no people.",
         model=_MODEL,
-        extra={"aspect_ratio": "9:16"},
     )
     return Result(
         video=ctx.video_dir / rel,

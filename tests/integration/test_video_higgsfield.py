@@ -148,6 +148,19 @@ def test_generate_real_submits_polls_and_downloads(
     assert any(r.method == "GET" and r.url.path == _DOWNLOAD_PATH for r in seen)
 
 
+def test_generate_real_poll_carries_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The status endpoint (/requests/{id}/status) inherits the API's `Key id:secret` auth (verified
+    # against the live OpenAPI). The poll GET MUST send Authorization — otherwise a PAID submit
+    # succeeds (credits are spent) and every poll 401s, so we pay and never retrieve the video.
+    seen = _install_mock(monkeypatch, _completed_handler(polls_before_done=2))
+    ctx = _ctx(tmp_path, dry_run=False)
+    _run(ctx, lambda: media.video.generate("a cat", model=_MODEL, duration_s=5.0))
+    polls = [r for r in seen if r.method == "GET" and "/requests/" in r.url.path]
+    assert polls, "expected at least one status poll"
+    for poll in polls:
+        assert poll.headers.get("authorization") == f"Key {_KEY}"
+
+
 def test_generate_real_heartbeats_while_polling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

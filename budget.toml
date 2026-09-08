@@ -20,7 +20,8 @@ per_day = 2.00   # USD — hard ceiling across all runs in a UTC day
 estimate = 0.05  # USD — conservative amount reserved before each call
 
 [higgsfield]
-# Kling text-to-video (v2.5-turbo/pro), 5s / 9:16, video_count=1 — tight proof-of-breaker floors.
+# Kling text-to-video (v2.5-turbo/pro), 5s, video_count=1 — tight proof-of-breaker floors.
+# (v2.5-turbo/pro has no aspect_ratio param, so the smoke runs at the model default ratio.)
 # The API gives no per-call credit cost (H20: no reconcile), so the REAL per-video credits are
 # confirmed from the Higgsfield dashboard's balance delta at the attended stop and this estimate is
 # bumped if it turns out < real (H20: estimate must be >= real). Provisional until then.
