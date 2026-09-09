@@ -7,7 +7,8 @@ import json
 import os
 import shutil
 import tempfile
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -86,10 +87,32 @@ def _copy_atomic(src: Path, dest: Path) -> None:
         raise
 
 
-class StepCache:
-    """Filesystem store for a step's JSON result and content-addressed files."""
+CHEAP = "cheap"
+PAID = "paid"
 
-    def __init__(self, root: Path) -> None:
+
+class StepCache:
+    """Filesystem store for a step's JSON result and content-addressed files.
+
+    A cache is split into two partitions with different deletion policies (§5.9): ``paid`` results
+    of paid generation (never auto-evicted) and ``cheap`` renders/research (LRU-evicted past a size
+    limit — see `evict_cheap`). Each partition is a self-contained ``<root>/<partition>/entries`` +
+    ``<root>/<partition>/blobs`` subtree so eviction of one can never touch the other's blobs.
+    """
+
+    def __init__(
+        self,
+        root: Path,
+        *,
+        partition: str = CHEAP,
+        now: Callable[[], float] = time.time,
+    ) -> None:
+        # SKELETON (C-6): the builder routes entries/blobs under `partition` and records/refreshes
+        # a `last_used` recency stamp using `now`. Until then the layout is unchanged so the
+        # existing single-partition behaviour holds.
+        self._root = root
+        self._partition = partition
+        self._now = now
         self._entries = root / "entries"
         self._blobs = root / "blobs"
 
@@ -142,3 +165,17 @@ class StepCache:
                     _copy_atomic(src, dest)
                 mapping[relative] = digest
         _write_json_atomic(self._entry_path(key), {"value": value, "files": mapping})
+
+
+def evict_cheap(root: Path, *, max_bytes: int) -> int:
+    """Least-recently-used eviction of the ``cheap`` partition under `root` (§5.9).
+
+    Computes the cheap partition's total size (entry files + blob files). If it is within
+    `max_bytes`, nothing is removed and 0 is returned. Otherwise the least-recently-used entries
+    (oldest `last_used` first) are removed until the total fits, and afterwards any blob no longer
+    referenced by a surviving cheap entry is deleted — so a blob shared by a surviving entry is
+    kept. The ``paid`` partition is never touched. Returns the number of entries removed.
+
+    SKELETON — the body is filled by the builder (C-6).
+    """
+    raise NotImplementedError

@@ -151,11 +151,15 @@ class _Step:
         family: str,
         inputs: dict[str, Any],
         label: str | None,
+        paid: bool = False,
     ) -> None:
         self._ctx = ctx
         self._family = family
         self._inputs = inputs
         self._label = family if label is None else label
+        # SKELETON (C-6): `paid` selects the cache partition — paid results are never auto-evicted,
+        # cheap ones are LRU-evicted (§5.9). The builder routes StepCache by this flag.
+        self._paid = paid
         self._key = ""
         self.cached = False
         self.value: Any = None
@@ -309,8 +313,9 @@ class Context:
         *,
         inputs: dict[str, Any],
         label: str | None = None,
+        paid: bool = False,
     ) -> _Step:
-        return _Step(self, family, inputs, label)
+        return _Step(self, family, inputs, label, paid)
 
     @overload
     def map(
