@@ -3,6 +3,7 @@ import type {
   RunDetail,
   RunList,
   StartRunResult,
+  Statistics,
   StopMode,
   StopRunResult,
   Workflow,
@@ -49,14 +50,16 @@ export async function startRun(id: string, body: LaunchBody): Promise<StartRunRe
 
   if (response.status === 409) {
     const data = (await response.json().catch(() => null)) as { detail?: unknown } | null;
-    const detail = typeof data?.detail === "string" ? data.detail : "workflow already has an active run";
+    const detail =
+      typeof data?.detail === "string" ? data.detail : "workflow already has an active run";
     return { error: detail, status: 409 };
   }
 
   if (response.status === 422) {
-    const data = (await response.json().catch(() => null)) as
-      | { reason?: unknown; detail?: unknown }
-      | null;
+    const data = (await response.json().catch(() => null)) as {
+      reason?: unknown;
+      detail?: unknown;
+    } | null;
     if (typeof data?.reason === "string" && data.reason.length > 0) {
       return { error: data.reason, status: 422 };
     }
@@ -69,11 +72,7 @@ export async function startRun(id: string, body: LaunchBody): Promise<StartRunRe
   return { error: `Could not start run (${response.status})`, status: response.status };
 }
 
-export async function stopRun(
-  id: string,
-  runId: string,
-  mode: StopMode,
-): Promise<StopRunResult> {
+export async function stopRun(id: string, runId: string, mode: StopMode): Promise<StopRunResult> {
   const response = await fetch(
     `/api/workflows/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/stop`,
     {
@@ -111,5 +110,14 @@ export async function fetchRuns(id: string): Promise<RunList> {
   if (!Array.isArray(data.runs)) {
     throw new Error("Unexpected response while trying to load runs");
   }
+  return data;
+}
+
+export async function fetchStatistics(months?: number): Promise<Statistics> {
+  const qs = months ? `?months=${encodeURIComponent(months)}` : "";
+  const response = await fetch(`/api/statistics${qs}`);
+  if (!response.ok) throw new Error(`Could not load statistics (${response.status})`);
+  const data = (await response.json()) as Statistics;
+  if (!Array.isArray(data.series)) throw new Error("Unexpected statistics response");
   return data;
 }

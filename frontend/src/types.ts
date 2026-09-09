@@ -18,12 +18,7 @@ export type WorkflowList = {
 };
 
 export type RequestStatus =
-  | "running"
-  | "complete"
-  | "partial"
-  | "stopped"
-  | "stopped-budget"
-  | "failed";
+  "running" | "complete" | "partial" | "stopped" | "stopped-budget" | "failed";
 
 export type VideoStatus = "pending" | "running" | "complete" | "failed" | "stopped";
 
@@ -69,6 +64,20 @@ export type RunSummary = {
 export type RunList = {
   runs: RunSummary[];
 };
+
+export type StatBucket = { month: string; amount: number };
+
+export type StatSeries = {
+  id: string;
+  kind: "fiat" | "credit";
+  label: string;
+  providers: string[];
+  unit: string;
+  total: number;
+  buckets: StatBucket[];
+};
+
+export type Statistics = { months: number; series: StatSeries[] };
 
 export type RunDetail = {
   run_id: string;

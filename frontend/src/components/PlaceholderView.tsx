@@ -1,20 +1,20 @@
 import type { TabId } from "../tabs";
 
-const LINES: Record<Exclude<TabId, "workflows">, string> = {
+type PlaceholderTab = Exclude<TabId, "workflows" | "statistics">;
+
+const LINES: Record<PlaceholderTab, string> = {
   schedule: "Arrives in a later stage",
   learning: "Arrives in a later stage",
-  statistics: "Arrives in a later stage",
   settings: "Arrives in a later stage",
 };
 
-const TITLES: Record<Exclude<TabId, "workflows">, string> = {
+const TITLES: Record<PlaceholderTab, string> = {
   schedule: "Schedule",
   learning: "Learning",
-  statistics: "Statistics",
   settings: "Settings",
 };
 
-export function PlaceholderView({ tab }: { tab: Exclude<TabId, "workflows"> }) {
+export function PlaceholderView({ tab }: { tab: PlaceholderTab }) {
   return (
     <section className="view on">
       <div className="page-head">
