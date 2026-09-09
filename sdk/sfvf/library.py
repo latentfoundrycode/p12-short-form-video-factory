@@ -6,22 +6,25 @@ named by the sha256 of its contents, with an authoritative descriptor sidecar be
 `aliases.json` is a mutable handle pointing at an id, so "the current Bertie" resolves to whichever
 sheet is current while a recorded id still resolves forever.
 
-This module is the content-addressed STORE: `put`/`get`/`resolve`, facet declaration +
-normalisation, atomic blob→sidecar writes, and the derived `catalog.json` index (`find()`,
-novelty, crash-recovery rescan). The `ctx.library` runtime API, describe/value/annotate,
-supersession and the dry-run overlay are D-3.
+This module is the content-addressed STORE: `put`/`put_value`/`get`/`value`/`resolve`/`annotate`,
+facet declaration + normalisation, atomic blob→sidecar writes, supersession status-flips, and the
+derived `catalog.json` index (`find()`, novelty, crash-recovery rescan). The `ctx.library` runtime
+API, describe(), and the dry-run overlay are D-3b.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import tempfile
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypedDict
 
-from .cache import _copy_atomic, _file_digest, _write_json_atomic
+from .cache import _canonical_json, _copy_atomic, _file_digest, _write_json_atomic
 
 _SHA256_HEX = frozenset("0123456789abcdef")
 
@@ -155,61 +158,18 @@ class LibraryStore:
         declared; a closed-set violation or undeclared key raises `LibraryError`; open values are
         normalised via `normalise_facet_value`.
         """
-        asset_id = _file_digest(source)
-        stored_facets = self._normalise_facets(facets)  # always validate, even on re-put
-        blob = self._items / asset_id
-        sidecar = self._items / f"{asset_id}.json"
-        # Content already stored: an asset is never replaced in place (§7.7), so keep its
-        # established descriptor (its accumulated caveats/provenance) and only (re)point the name
-        # below. To change metadata a caller uses annotate(); to change content, a new asset wins.
-        existing = self.get(asset_id) if sidecar.is_file() else None
-        if existing is not None:
-            asset = existing
-            # Self-heal: if a crash between the sidecar and catalogue writes left this described
-            # asset unindexed, a rescan recovers it (and any siblings) rather than leaving it
-            # invisible to find() until the next explicit rebuild.
-            catalog = self._try_read_catalog()
-            if catalog is None or asset_id not in catalog["assets"]:
-                self.rebuild_catalog()
-        else:
-            stored_tags = tuple(tags)
-            stored_provenance = dict(provenance) if provenance is not None else {}
-            created_utc = self._now().astimezone(UTC).isoformat().replace("+00:00", "Z")
-            if not blob.is_file():
-                _copy_atomic(source, blob)
-            _write_json_atomic(
-                sidecar,
-                {
-                    "id": asset_id,
-                    "kind": kind,
-                    "created_utc": created_utc,
-                    "status": "active",
-                    "supersedes": supersedes,
-                    "tags": list(stored_tags),
-                    "facets": stored_facets,
-                    "description": description,
-                    "caveats": caveats,
-                    "provenance": stored_provenance,
-                },
-            )
-            asset = Asset(
-                id=asset_id,
-                kind=kind,
-                status="active",
-                created_utc=created_utc,
-                supersedes=supersedes,
-                tags=stored_tags,
-                facets=stored_facets,
-                description=description,
-                caveats=caveats,
-                provenance=stored_provenance,
-            )
-            self._index_new_asset(asset)
-        if name is not None:
-            aliases = self._load_aliases()
-            aliases[name] = asset_id
-            _write_json_atomic(self._aliases, aliases)
-        return asset
+        return self._store_asset(
+            name,
+            _file_digest(source),
+            lambda dest: _copy_atomic(source, dest),
+            kind=kind,
+            tags=tags,
+            facets=facets,
+            description=description,
+            caveats=caveats,
+            supersedes=supersedes,
+            provenance=provenance,
+        )
 
     def get(self, name_or_id: str) -> Asset | None:
         """Resolve a name or id to its asset, or None if it does not resolve to a stored sidecar."""
@@ -372,11 +332,29 @@ class LibraryStore:
         declared-facet validation, mutable name alias, first-writer-wins on re-put, and supersession
         of `supersedes`. The stored `kind` marks it a value asset so `value()` can read it back.
         """
-        raise NotImplementedError
+        encoded = _canonical_json(data).encode("utf-8")
+        return self._store_asset(
+            name,
+            hashlib.sha256(encoded).hexdigest(),
+            lambda dest: _write_bytes_atomic(dest, encoded),
+            kind=kind,
+            tags=tags,
+            facets=facets,
+            description=description,
+            caveats=caveats,
+            supersedes=supersedes,
+            provenance=provenance,
+        )
 
     def value(self, name_or_id: str) -> Any | None:
         """Return the JSON value of a value asset (§7.6), or None if absent or not a value asset."""
-        raise NotImplementedError
+        asset = self.get(name_or_id)
+        if asset is None or asset.kind != "value":
+            return None
+        try:
+            return json.loads(self.blob_path(asset.id).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return None
 
     def annotate(
         self,
@@ -394,7 +372,111 @@ class LibraryStore:
         `facets` are validated + normalised and MERGED into the existing set (declared keys only).
         The catalogue entry is refreshed. Raises `LibraryError` if the asset is unknown.
         """
-        raise NotImplementedError
+        existing = self.get(asset_id)
+        if existing is None:
+            raise LibraryError("unknown asset")
+        merged = dict(existing.facets)
+        if facets is not None:
+            merged.update(self._normalise_facets(facets))
+        updated = replace(
+            existing,
+            caveats=existing.caveats if caveats is None else caveats,
+            facets=merged,
+        )
+        self._write_sidecar(updated)
+        self._index_new_asset(updated)
+        return updated
+
+    def _store_asset(
+        self,
+        name: str | None,
+        asset_id: str,
+        write_blob: Callable[[Path], None],
+        *,
+        kind: str,
+        tags: Sequence[str],
+        facets: Mapping[str, str] | None,
+        description: str,
+        caveats: str,
+        supersedes: str | None,
+        provenance: Mapping[str, Any] | None,
+    ) -> Asset:
+        stored_facets = self._normalise_facets(facets)  # always validate, even on re-put
+        blob = self._items / asset_id
+        sidecar = self._items / f"{asset_id}.json"
+        # Content already stored: an asset is never replaced in place (§7.7), so keep its
+        # established descriptor (its accumulated caveats/provenance) and only (re)point the name
+        # below. To change metadata a caller uses annotate(); to change content, a new asset wins.
+        existing = self.get(asset_id) if sidecar.is_file() else None
+        if existing is not None:
+            asset = existing
+            # Self-heal: if a crash between the sidecar and catalogue writes left this described
+            # asset unindexed, a rescan recovers it (and any siblings) rather than leaving it
+            # invisible to find() until the next explicit rebuild.
+            catalog = self._try_read_catalog()
+            if catalog is None or asset_id not in catalog["assets"]:
+                self.rebuild_catalog()
+        else:
+            stored_tags = tuple(tags)
+            stored_provenance = dict(provenance) if provenance is not None else {}
+            created_utc = self._now().astimezone(UTC).isoformat().replace("+00:00", "Z")
+            if not blob.is_file():
+                write_blob(blob)
+            asset = Asset(
+                id=asset_id,
+                kind=kind,
+                status="active",
+                created_utc=created_utc,
+                supersedes=supersedes,
+                tags=stored_tags,
+                facets=stored_facets,
+                description=description,
+                caveats=caveats,
+                provenance=stored_provenance,
+            )
+            self._write_sidecar(asset)
+            self._index_new_asset(asset)
+        # First-writer-wins still applies a supersession flip when `supersedes` is given (§7.7).
+        self._apply_supersession(supersedes)
+        if name is not None:
+            aliases = self._load_aliases()
+            aliases[name] = asset_id
+            _write_json_atomic(self._aliases, aliases)
+        return asset
+
+    def _apply_supersession(self, supersedes: str | None) -> None:
+        if supersedes is None:
+            return
+        old = self.get(supersedes)
+        if old is None:
+            return
+        flipped = replace(old, status="superseded")
+        self._write_sidecar(flipped)
+        catalog = self._try_read_catalog()
+        if catalog is None or flipped.id not in catalog["assets"]:
+            self.rebuild_catalog()
+            return
+        catalog["assets"][flipped.id] = _entry_from_asset(
+            flipped, catalog["assets"][flipped.id]["novel_facets"]
+        )
+        _write_json_atomic(self._catalog, catalog)
+
+    def _write_sidecar(self, asset: Asset) -> None:
+        _write_json_atomic(
+            self._items / f"{asset.id}.json",
+            {
+                "id": asset.id,
+                "kind": asset.kind,
+                "created_utc": asset.created_utc,
+                "status": asset.status,
+                "supersedes": asset.supersedes,
+                "tags": list(asset.tags),
+                "facets": dict(asset.facets),
+                "description": asset.description,
+                "caveats": asset.caveats,
+                "provenance": dict(asset.provenance),
+            },
+        )
 
     def _normalise_facets(self, facets: Mapping[str, str] | None) -> dict[str, str]:
         stored: dict[str, str] = {}
@@ -495,6 +577,21 @@ class LibraryStore:
     def _is_open_key(self, key: str) -> bool:
         spec = self._facets.get(key)
         return spec is not None and spec.values is None
+
+
+def _write_bytes_atomic(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)  # noqa: PTH105  # os.replace is atomic on Windows
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def _entry_from_asset(asset: Asset, novel: Sequence[str]) -> _CatalogEntry:
