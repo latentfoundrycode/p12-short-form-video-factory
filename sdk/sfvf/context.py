@@ -11,7 +11,7 @@ from typing import Any, Literal, TypeVar, cast, overload
 from pydantic import BaseModel, ConfigDict, Field
 
 from ._budget import BudgetError, BudgetGuard, Ceilings
-from .cache import StepCache, step_key
+from .cache import CHEAP, PAID, StepCache, step_key
 from .emit import decision, emit, forecast, heartbeat, log, stage
 
 _T = TypeVar("_T")
@@ -151,11 +151,13 @@ class _Step:
         family: str,
         inputs: dict[str, Any],
         label: str | None,
+        paid: bool = False,
     ) -> None:
         self._ctx = ctx
         self._family = family
         self._inputs = inputs
         self._label = family if label is None else label
+        self._paid = paid
         self._key = ""
         self.cached = False
         self.value: Any = None
@@ -166,12 +168,15 @@ class _Step:
         self._set_called = True
         return value
 
-    def __enter__(self) -> _Step:
+    def _step_cache(self) -> StepCache:
         cache_root = self._ctx.paths.cache
         if cache_root is None:
             raise RuntimeError("ctx.step requires paths.cache, the content-addressed cache root")
+        return StepCache(cache_root, partition=(PAID if self._paid else CHEAP))
+
+    def __enter__(self) -> _Step:
         self._key = step_key(self._ctx.workflow_version, self._family, self._inputs)
-        found = StepCache(cache_root).get(self._key, restore_into=self._ctx.paths.video)
+        found = self._step_cache().get(self._key, restore_into=self._ctx.paths.video)
         if found is not None:
             self.cached = True
             self.value = found
@@ -193,11 +198,8 @@ class _Step:
             return
         if not self._set_called:
             return
-        cache_root = self._ctx.paths.cache
-        if cache_root is None:
-            raise RuntimeError("ctx.step requires paths.cache, the content-addressed cache root")
         files = _video_files(self.value, self._ctx.paths.video)
-        StepCache(cache_root).put(self._key, self.value, files=files)
+        self._step_cache().put(self._key, self.value, files=files)
         self._emit("ok")
 
     def _emit(self, status: str) -> None:
@@ -309,8 +311,9 @@ class Context:
         *,
         inputs: dict[str, Any],
         label: str | None = None,
+        paid: bool = False,
     ) -> _Step:
-        return _Step(self, family, inputs, label)
+        return _Step(self, family, inputs, label, paid)
 
     @overload
     def map(
@@ -323,6 +326,7 @@ class Context:
         label: Callable[[_T], str] | None = None,
         concurrency: int = 1,
         on_error: Literal["raise"] = "raise",
+        paid: bool = False,
     ) -> list[_R]: ...
 
     @overload
@@ -336,6 +340,7 @@ class Context:
         label: Callable[[_T], str] | None = None,
         concurrency: int = 1,
         on_error: Literal["collect"],
+        paid: bool = False,
     ) -> list[Outcome]: ...
 
     def map(
@@ -348,12 +353,13 @@ class Context:
         label: Callable[[_T], str] | None = None,
         concurrency: int = 1,
         on_error: Literal["raise", "collect"] = "raise",
+        paid: bool = False,
     ) -> list[_R] | list[Outcome]:
         ordered = list(items)
 
         def run_item(item: _T) -> _R:
             step_label = family if label is None else label(item)
-            with self.step(family, inputs=inputs(item), label=step_label) as step:
+            with self.step(family, inputs=inputs(item), label=step_label, paid=paid) as step:
                 if not step.cached:
                     step.set(fn(item))
                 return cast(_R, step.value)
