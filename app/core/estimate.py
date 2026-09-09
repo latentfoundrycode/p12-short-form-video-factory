@@ -13,6 +13,7 @@ SKELETON — signatures frozen by tests/core/test_estimate.py; the builder fills
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -108,7 +109,12 @@ def _mean_uncached(pool: list[tuple[Path, RequestRecord]]) -> dict[str, float]:
         for meter, amount in _run_uncached(run_dir).items():
             sums[meter] = sums.get(meter, 0.0) + amount
             counts[meter] = counts.get(meter, 0) + 1
-    return {meter: sums[meter] / counts[meter] for meter in sums}
+    result: dict[str, float] = {}
+    for meter in sums:
+        mean = sums[meter] / counts[meter]
+        if math.isfinite(mean):
+            result[meter] = mean
+    return result
 
 
 def _run_uncached(run_dir: Path) -> dict[str, float]:
@@ -133,5 +139,14 @@ def _run_uncached(run_dir: Path) -> dict[str, float]:
         for meter, raw in uncached.items():
             if isinstance(raw, bool) or not isinstance(raw, int | float):
                 continue
-            totals[meter] = totals.get(meter, 0.0) + float(raw)
+            try:
+                amount = float(raw)
+            except (OverflowError, ValueError):
+                continue
+            if not math.isfinite(amount) or amount < 0.0:
+                continue
+            total = totals.get(meter, 0.0) + amount
+            if not math.isfinite(total):
+                continue
+            totals[meter] = total
     return totals
