@@ -83,6 +83,11 @@ def aggregate_statistics(
             continue
         for meter, amount in _run_actual(run_dir).items():
             info = meter_info(meter, registry)
+            # Quota meters (e.g. a monthly character allowance) are read from the provider, not
+            # summed as spend (§7.1); they must never appear in this spend view even if a record
+            # carried one in cost["actual"].
+            if info.kind == "quota":
+                continue
             series_id = "fiat" if info.kind == "fiat" else meter
             key = (series_id, month)
             total = totals.get(key, 0.0) + amount
@@ -223,12 +228,21 @@ def _build_series(
     totals: dict[tuple[str, str], float],
 ) -> Series:
     buckets = [Bucket(month=month, amount=totals.get((series_id, month), 0.0)) for month in window]
+    # Per-month sums are already finiteness-guarded, but their sum can still overflow to inf (which
+    # would serialise to invalid JSON). Accumulate defensively, dropping any term that would push
+    # the running total non-finite — the same tolerant-reading discipline used per meter (§8).
+    total = 0.0
+    for bucket in buckets:
+        running = total + bucket.amount
+        if not math.isfinite(running):
+            continue
+        total = running
     return Series(
         id=series_id,
         kind=kind,
         label=label,
         providers=providers,
         unit=unit,
-        total=sum(bucket.amount for bucket in buckets),
+        total=total,
         buckets=buckets,
     )
