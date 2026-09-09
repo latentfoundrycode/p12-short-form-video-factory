@@ -1,3 +1,4 @@
+import math
 import re
 import tomllib
 from typing import Annotated, Any, Literal, Self
@@ -123,6 +124,16 @@ class WorkflowSection(_ManifestModel):
     safety_factor: float | None = None
     requires_binaries: list[str] = Field(default_factory=list)
     requires_capabilities: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_safety_factor(self) -> Self:
+        # safety_factor multiplies a cost estimate to build in headroom, so it must be a finite
+        # number >= 1.0. A value below 1 (or non-finite) would silently deflate the estimate and
+        # let the atomic pre-flight under-refuse an unaffordable run (§5.4b).
+        sf = self.safety_factor
+        if sf is not None and (not math.isfinite(sf) or sf < 1.0):
+            raise ValueError("safety_factor must be a finite number >= 1.0")
+        return self
 
 
 class Manifest(_ManifestModel):

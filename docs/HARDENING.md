@@ -233,6 +233,30 @@ increments that logged them.
   concurrency; and "latest across independent concurrent video threads" is itself ill-defined. A
   strict fix would fold the forecast accumulator update into `record_event` under one lock hold; do
   that only if a real multi-video-same-meter forecasting workflow appears. _Source: C-2 review B._ Open.
+- **H27 — cost estimate is a per-run total, not per-video scaled by the requested count (C-4).**
+  `estimate_cost` averages each historical run's **summed-over-videos** uncached cost, and the atomic
+  pre-flight compares that to the budget without scaling by the run's requested `video_count`. Two
+  consequences: (a) a run requesting more videos than history typically produced is under-estimated
+  (and could be admitted over the per-run ceiling), and fewer is over-estimated; (b) including
+  `partial` runs (mandated by the C-4 contract) sums every video record in that run — `_run_uncached`
+  does not filter to `video.status == "complete"` — so cost from videos that did not finish leaks into
+  the average. Both are the same root: the estimator has no per-video unit. Backstopped by the live
+  BudgetGuard reservation, which still refuses each actual paid call past a ceiling mid-run, so this
+  cannot cause overspend beyond the ceilings — it only weakens the pre-flight's "don't even start"
+  guarantee for multi-video atomic runs (of which there are none in production today). Fix as a
+  deliberate estimator-semantics increment (also feeds the C-5 Statistics tab): estimate per-video
+  uncached cost over `complete` videos only, expose the per-video figure, and multiply by the
+  requested `video_count` in the pre-flight (scale `estimate.per_meter` before `check_atomic_budget`,
+  keeping its frozen signature). The frozen C-3/C-4 tests use one-video runs, so per-run == per-video
+  there and they remain valid. _Source: C-4 review B (P1 video_count + P2 partial-video cost)._ Open.
+- **H28 — atomic pre-flight raises on an unreadable ledger instead of a controlled refusal (C-4).**
+  `check_atomic_budget` calls `guard.run_total`/`day_total`, which today propagate a ledger-parse/IO
+  error rather than a `BudgetError`; on such an error the pre-flight would raise out of `run_request`
+  after the request was already written `running`, leaving it stuck. This is the same engine gap as
+  **H23** (make the `BudgetGuard` read methods uniformly fail-closed as `BudgetError`) now with the
+  pre-flight as an additional caller; resolving H23 resolves this. Until then the exposure is a
+  corrupt/permission-denied ledger file, which equally affects the reservation path. _Source: C-4
+  review B (P2); see H23._ Open.
 
 ## Resolved
 

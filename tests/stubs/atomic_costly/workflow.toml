@@ -1,0 +1,14 @@
+[workflow]
+id = "atomic-costly"
+name = "Atomic Costly"
+version = "1.0.0"
+entrypoint = "main:run"
+sdk = "1"
+atomic = true
+safety_factor = 1.0
+
+[[params]]
+key = "model"
+type = "text"
+label = "Model"
+affects_cost = true
