@@ -83,8 +83,8 @@ def _usage_cost(data: dict[str, Any]) -> float | None:
     """Return usage.cost when it is a finite non-negative number; otherwise None.
 
     A 200 may omit usage, set it to null, or put a non-number in cost. Treat those as
-    unusable so a paid success is not followed by AttributeError/ValueError; the
-    reservation then stands at the estimate.
+    unusable so a paid success is not followed by AttributeError/ValueError/OverflowError;
+    the reservation then stands at the estimate.
     """
     usage = data.get("usage")
     if not isinstance(usage, dict):
@@ -92,7 +92,10 @@ def _usage_cost(data: dict[str, Any]) -> float | None:
     cost = usage.get("cost")
     if isinstance(cost, bool) or not isinstance(cost, int | float):
         return None
-    amount = float(cost)
+    try:
+        amount = float(cost)
+    except OverflowError:
+        return None
     if not math.isfinite(amount) or amount < 0.0:
         return None
     return amount
@@ -130,6 +133,9 @@ def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
         data: dict[str, Any] = resp.json()
     cost = _usage_cost(data)
     if cost is not None:
+        ctx.emit(
+            {"t": "cost", "meter": "openrouter", "unit": "usd", "amount": cost, "cached": False}
+        )
         ctx._budget_reconcile(token, actual=cost)
     return data
 
