@@ -17,15 +17,24 @@ fills the bodies.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .cache import _copy_atomic, _file_digest, _write_json_atomic
+
+_SHA256_HEX = frozenset("0123456789abcdef")
+
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _is_sha256_id(value: str) -> bool:
+    return len(value) == 64 and all(char in _SHA256_HEX for char in value)
 
 
 class LibraryError(ValueError):
@@ -66,7 +75,7 @@ def normalise_facet_value(value: str) -> str:
     Lowercase, strip surrounding whitespace, and collapse any run of internal whitespace to a single
     hyphen — so "Rain Coat" and "  rain coat " both become "rain-coat".
     """
-    raise NotImplementedError
+    return "-".join(value.lower().split())
 
 
 class LibraryStore:
@@ -83,7 +92,19 @@ class LibraryStore:
         facets: Sequence[FacetSpec] = (),
         now: Callable[[], datetime] = _utcnow,
     ) -> None:
-        raise NotImplementedError
+        self._root = root
+        self._now = now
+        self._items = root / "items"
+        self._aliases = root / "aliases.json"
+        self._facets: dict[str, FacetSpec] = {}
+        for spec in facets:
+            if spec.values is None:
+                self._facets[spec.key] = spec
+            else:
+                self._facets[spec.key] = FacetSpec(
+                    spec.key,
+                    tuple(normalise_facet_value(value) for value in spec.values),
+                )
 
     def put(
         self,
@@ -107,16 +128,120 @@ class LibraryStore:
         declared; a closed-set violation or undeclared key raises `LibraryError`; open values are
         normalised via `normalise_facet_value`.
         """
-        raise NotImplementedError
+        asset_id = _file_digest(source)
+        stored_facets = self._normalise_facets(facets)
+        stored_tags = tuple(tags)
+        stored_provenance = dict(provenance) if provenance is not None else {}
+        created_utc = self._now().isoformat().replace("+00:00", "Z")
+        blob = self._items / asset_id
+        if not blob.is_file():
+            _copy_atomic(source, blob)
+        _write_json_atomic(
+            self._items / f"{asset_id}.json",
+            {
+                "id": asset_id,
+                "kind": kind,
+                "created_utc": created_utc,
+                "status": "active",
+                "supersedes": supersedes,
+                "tags": list(stored_tags),
+                "facets": stored_facets,
+                "description": description,
+                "caveats": caveats,
+                "provenance": stored_provenance,
+            },
+        )
+        if name is not None:
+            aliases = self._load_aliases()
+            aliases[name] = asset_id
+            _write_json_atomic(self._aliases, aliases)
+        return Asset(
+            id=asset_id,
+            kind=kind,
+            status="active",
+            created_utc=created_utc,
+            supersedes=supersedes,
+            tags=stored_tags,
+            facets=stored_facets,
+            description=description,
+            caveats=caveats,
+            provenance=stored_provenance,
+        )
 
     def get(self, name_or_id: str) -> Asset | None:
         """Resolve a name or id to its asset, or None if it does not resolve to a stored sidecar."""
-        raise NotImplementedError
+        asset_id = self.resolve(name_or_id)
+        if asset_id is None:
+            return None
+        path = self._items / f"{asset_id}.json"
+        if not path.is_file():
+            return None
+        raw: object = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise TypeError(f"library sidecar is not a JSON object: {path}")
+        tags_raw = raw.get("tags", [])
+        tags = tuple(str(item) for item in tags_raw) if isinstance(tags_raw, list) else ()
+        facets_raw = raw.get("facets") or {}
+        stored_facets = (
+            {str(key): str(value) for key, value in facets_raw.items()}
+            if isinstance(facets_raw, dict)
+            else {}
+        )
+        provenance_raw = raw.get("provenance") or {}
+        provenance: dict[str, Any] = (
+            {str(key): value for key, value in provenance_raw.items()}
+            if isinstance(provenance_raw, dict)
+            else {}
+        )
+        supersedes_raw = raw.get("supersedes")
+        return Asset(
+            id=str(raw.get("id", asset_id)),
+            kind=str(raw.get("kind", "file")),
+            status=str(raw.get("status", "active")),
+            created_utc=str(raw.get("created_utc", "")),
+            supersedes=supersedes_raw if isinstance(supersedes_raw, str) else None,
+            tags=tags,
+            facets=stored_facets,
+            description=str(raw.get("description", "")),
+            caveats=str(raw.get("caveats", "")),
+            provenance=provenance,
+        )
 
     def resolve(self, name_or_id: str) -> str | None:
         """Return the id a name or id resolves to (alias first, then a stored id), else None."""
-        raise NotImplementedError
+        aliases = self._load_aliases()
+        if name_or_id in aliases:
+            return aliases[name_or_id]
+        if _is_sha256_id(name_or_id) and (self._items / f"{name_or_id}.json").is_file():
+            return name_or_id
+        return None
 
     def blob_path(self, asset_id: str) -> Path:
         """The path of an asset's stored blob (`items/<id>`); may not exist for an unknown id."""
-        raise NotImplementedError
+        return self._items / asset_id
+
+    def _normalise_facets(self, facets: Mapping[str, str] | None) -> dict[str, str]:
+        stored: dict[str, str] = {}
+        for key, value in (facets or {}).items():
+            spec = self._facets.get(key)
+            if spec is None:
+                raise LibraryError(f"undeclared facet key: {key}")
+            normalised = normalise_facet_value(value)
+            allowed = spec.values
+            if allowed is not None and normalised not in allowed:
+                raise LibraryError(f"facet {key!r} value {normalised!r} is not in the closed set")
+            stored[key] = normalised
+        return stored
+
+    def _load_aliases(self) -> dict[str, str]:
+        path = self._aliases
+        if not path.is_file():
+            return {}
+        raw: object = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise TypeError(f"library aliases is not a JSON object: {path}")
+        aliases: dict[str, str] = {}
+        for key, value in raw.items():
+            if isinstance(key, str) and isinstance(value, str):
+                aliases[key] = value
+        return aliases
