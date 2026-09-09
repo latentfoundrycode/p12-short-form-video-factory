@@ -48,4 +48,7 @@ def meter_info(meter: str, registry: dict[str, MeterInfo] = METERS) -> MeterInfo
     An unknown meter must never be folded into the fiat total, so the fallback is a `credit` line
     labelled by the meter id itself (unit "credits").
     """
-    raise NotImplementedError
+    info = registry.get(meter)
+    if info is not None:
+        return info
+    return MeterInfo(kind="credit", provider=meter, unit="credits")

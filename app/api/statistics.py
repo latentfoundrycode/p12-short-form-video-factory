@@ -11,6 +11,8 @@ from typing import cast
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
+from app.core.ids import utc_now
+from app.core.statistics import aggregate_statistics
 from app.paths import RUNS_DIR
 
 router = APIRouter(prefix="/api")
@@ -53,4 +55,22 @@ def get_statistics(
 
     Delegates to `aggregate_statistics` with the app's runs dir and the current UTC time.
     """
-    raise NotImplementedError
+    clamped = min(MAX_MONTHS, max(1, months))
+    series = aggregate_statistics(_runs_dir(request), months=clamped, now=utc_now())
+    return StatisticsOut(
+        months=clamped,
+        series=[
+            SeriesOut(
+                id=item.id,
+                kind=item.kind,
+                label=item.label,
+                providers=item.providers,
+                unit=item.unit,
+                total=item.total,
+                buckets=[
+                    BucketOut(month=bucket.month, amount=bucket.amount) for bucket in item.buckets
+                ],
+            )
+            for item in series
+        ],
+    )

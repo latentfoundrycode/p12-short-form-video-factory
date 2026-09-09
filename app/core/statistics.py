@@ -14,11 +14,13 @@ tests/core/test_statistics.py; the builder fills the bodies.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from app.core.meters import METERS, MeterInfo
+from app.core.meters import METERS, MeterInfo, meter_info
+from app.core.records import RequestRecord, read_request, read_video
 
 
 @dataclass(frozen=True)
@@ -66,4 +68,167 @@ def aggregate_statistics(
     first (when present), then the rest sorted by label. Each series' `buckets` cover every month in
     the window in ascending order. Pure and read-only; tolerant of malformed records.
     """
-    raise NotImplementedError
+    window = _month_window(now, months)
+    window_set = set(window)
+    totals: dict[tuple[str, str], float] = {}
+    fiat_meters: set[str] = set()
+    other_meters: set[str] = set()
+
+    for run_dir in _iter_run_dirs(runs_dir):
+        record = _try_read_request(run_dir)
+        if record is None or record.dry_run:
+            continue
+        month = _month_key(record.started_utc)
+        if month is None or month not in window_set:
+            continue
+        for meter, amount in _run_actual(run_dir).items():
+            info = meter_info(meter, registry)
+            series_id = "fiat" if info.kind == "fiat" else meter
+            key = (series_id, month)
+            total = totals.get(key, 0.0) + amount
+            if not math.isfinite(total):
+                continue
+            totals[key] = total
+            if info.kind == "fiat":
+                fiat_meters.add(meter)
+            else:
+                other_meters.add(meter)
+
+    series: list[Series] = []
+    if fiat_meters:
+        first = sorted(fiat_meters)[0]
+        series.append(
+            _build_series(
+                series_id="fiat",
+                kind="fiat",
+                label="Fiat currency",
+                providers=sorted({meter_info(m, registry).provider for m in fiat_meters}),
+                unit=meter_info(first, registry).unit,
+                window=window,
+                totals=totals,
+            )
+        )
+    credit: list[Series] = []
+    for meter in other_meters:
+        info = meter_info(meter, registry)
+        credit.append(
+            _build_series(
+                series_id=meter,
+                kind=info.kind,
+                label=info.provider,
+                providers=[info.provider],
+                unit=info.unit,
+                window=window,
+                totals=totals,
+            )
+        )
+    credit.sort(key=lambda item: item.label)
+    series.extend(credit)
+    return series
+
+
+def _month_window(now: datetime, months: int) -> list[str]:
+    year = now.year
+    month = now.month
+    keys: list[str] = []
+    for _ in range(months):
+        keys.append(f"{year:04d}-{month:02d}")
+        month -= 1
+        if month == 0:
+            month = 12
+            year -= 1
+    keys.reverse()
+    return keys
+
+
+def _month_key(started_utc: str) -> str | None:
+    try:
+        parsed = datetime.strptime(started_utc[:7], "%Y-%m")
+    except ValueError:
+        return None
+    return f"{parsed.year:04d}-{parsed.month:02d}"
+
+
+def _try_read_request(run_dir: Path) -> RequestRecord | None:
+    try:
+        return read_request(run_dir)
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def _iter_run_dirs(runs_dir: Path) -> list[Path]:
+    if not runs_dir.is_dir():
+        return []
+    try:
+        workflows = list(runs_dir.iterdir())
+    except OSError:
+        return []
+    found: list[Path] = []
+    for workflow_dir in workflows:
+        if not workflow_dir.is_dir():
+            continue
+        try:
+            children = list(workflow_dir.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            if child.is_dir():
+                found.append(child)
+    return found
+
+
+def _run_actual(run_dir: Path) -> dict[str, float]:
+    totals: dict[str, float] = {}
+    try:
+        children = list(run_dir.iterdir())
+    except OSError:
+        return totals
+    for child in children:
+        if not child.is_dir() or not (child / "video.json").is_file():
+            continue
+        try:
+            video = read_video(child)
+        except (OSError, TypeError, ValueError):
+            continue
+        cost = video.cost
+        if not isinstance(cost, dict):
+            continue
+        actual = cost.get("actual")
+        if not isinstance(actual, dict):
+            continue
+        for meter, raw in actual.items():
+            if isinstance(raw, bool) or not isinstance(raw, int | float):
+                continue
+            try:
+                amount = float(raw)
+            except (OverflowError, ValueError):
+                continue
+            if not math.isfinite(amount) or amount < 0.0:
+                continue
+            total = totals.get(meter, 0.0) + amount
+            if not math.isfinite(total):
+                continue
+            totals[meter] = total
+    return totals
+
+
+def _build_series(
+    *,
+    series_id: str,
+    kind: str,
+    label: str,
+    providers: list[str],
+    unit: str,
+    window: list[str],
+    totals: dict[tuple[str, str], float],
+) -> Series:
+    buckets = [Bucket(month=month, amount=totals.get((series_id, month), 0.0)) for month in window]
+    return Series(
+        id=series_id,
+        kind=kind,
+        label=label,
+        providers=providers,
+        unit=unit,
+        total=sum(bucket.amount for bucket in buckets),
+        buckets=buckets,
+    )
