@@ -419,7 +419,7 @@ def run_request(
             atomic=workflow.atomic,
             dry_run=wiring.dry_run,
         )
-        if workflow.atomic and wiring.budget is not None:
+        if workflow.atomic and wiring.budget is not None and not wiring.dry_run:
             affects = frozenset(p.key for p in manifest.params if p.affects_cost)
             est = estimate_cost(run_dir.parent.parent, workflow_id, params, affects)
             factor = workflow.safety_factor if workflow.safety_factor is not None else 1.0

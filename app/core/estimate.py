@@ -3,8 +3,10 @@
 Before a run, estimate its cost per meter from the last comparable runs. Match on the params a
 workflow declares `affects_cost` (model, duration, shot count) — not free-text params like topic,
 which differ every time. Average the **`uncached`** figure (what the work costs fresh, ignoring
-cache reuse: a resumed run that reused cached steps says nothing about a fresh one). Exclude runs
-that skew the average: failed / stopped / stopped-budget runs (partial pay) and dry runs (free).
+cache reuse: a resumed run that reused cached steps says nothing about a fresh one). Only completed
+history feeds estimates — an allowlist of `complete` and `partial` runs: `partial` is
+success-with-attrition, its finished work is usable, whereas running/pending (including the current
+run at admission), failed/stopped/stopped-budget, and dry runs (free) are all excluded.
 The estimate states its own confidence: matched against N similar runs, a crude workflow-wide
 average, or no data.
 
