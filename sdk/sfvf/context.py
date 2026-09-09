@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+import shutil
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ._budget import BudgetError, BudgetGuard, Ceilings
 from .cache import CHEAP, PAID, StepCache, step_key
 from .emit import decision, emit, forecast, heartbeat, log, stage
+from .library import Asset, FacetSpec, LibraryStore
 
 _T = TypeVar("_T")
 _R = TypeVar("_R")
@@ -74,6 +76,21 @@ class ContextPaths(_ContextModel):
         default=None,
         description="The workflow's own folder (read-only).",
     )
+    library: Path | None = Field(
+        default=None,
+        description="The library namespace root (library/<namespace>); written in a real run.",
+    )
+    library_overlay: Path | None = Field(
+        default=None,
+        description="Dry-run overlay root: writes land here and are discarded at run end (§7.9).",
+    )
+
+
+class LibraryFacetDecl(_ContextModel):
+    """A declared library facet carried in context.json: key + open (None) or a closed value set."""
+
+    key: str
+    values: list[str] | None = None
 
 
 class ContextFile(_ContextModel):
@@ -117,6 +134,10 @@ class ContextFile(_ContextModel):
     budget: BudgetConfig | None = Field(
         default=None,
         description="Budget-guard config; when set, paid calls are gated before spending.",
+    )
+    library_facets: list[LibraryFacetDecl] = Field(
+        default_factory=list,
+        description="The workflow's declared library facet vocabulary (§7.4).",
     )
 
 
@@ -214,6 +235,187 @@ class _Step:
         )
 
 
+class Library:
+    """The `ctx.library` facade: the durable asset store as a workflow sees it (SDK §7).
+
+    Reads (find/get/value/describe) resolve against the real library. Writes (put/annotate) go to
+    the real library in a real run, but in a DRY run go to a per-run overlay discarded at the end,
+    so a rehearsal never leaves stubs behind and never mutates the real library (§7.9): reads see
+    the overlay layered over the real library. `put` accepts a file Path or JSON data; a novel
+    first-seen open facet value emits a `library` event.
+    """
+
+    def __init__(
+        self,
+        ctx: Context,
+        real_root: Path,
+        overlay_root: Path | None,
+        facets: Sequence[FacetSpec],
+    ) -> None:
+        self._ctx = ctx
+        self._facets = tuple(facets)
+        self._real_root = real_root
+        # An overlay is used only in a dry run; a real run writes straight to the real library.
+        self._overlay_root = overlay_root if ctx.dry_run else None
+        self._real = LibraryStore(self._real_root, facets=self._facets)
+        self._overlay = (
+            LibraryStore(self._overlay_root, facets=self._facets)
+            if self._overlay_root is not None
+            else None
+        )
+
+    def _write_store(self) -> LibraryStore:
+        # The load-bearing dry-run invariant (§7.9): a dry run must NEVER mutate the real library.
+        # If a dry run has no overlay (a wiring bug), fail closed rather than write the real store.
+        if self._ctx.dry_run:
+            if self._overlay is None:
+                raise RuntimeError(
+                    "dry run has no library overlay; refusing to write to the real library (§7.9)"
+                )
+            return self._overlay
+        return self._real
+
+    def find(
+        self,
+        *,
+        tags: Sequence[str] = (),
+        facets: Mapping[str, str] | None = None,
+        status: str | None = "active",
+    ) -> list[Asset]:
+        """Return matching assets — overlay layered over the real library in a dry run (§7.5)."""
+        if self._overlay is None:
+            return self._real.find(tags=tags, facets=facets, status=status)
+        # The overlay is authoritative for any id it holds (a dry-run write shadows the real one),
+        # so drop real matches whose id the overlay owns — otherwise an overlay edit that no longer
+        # matches the query would let the stale real descriptor back into the result.
+        overlay_ids = {asset.id for asset in self._overlay.find(status=None)}
+        by_id = {
+            asset.id: asset
+            for asset in self._real.find(tags=tags, facets=facets, status=status)
+            if asset.id not in overlay_ids
+        }
+        for asset in self._overlay.find(tags=tags, facets=facets, status=status):
+            by_id[asset.id] = asset
+        return sorted(by_id.values(), key=lambda asset: (asset.created_utc, asset.id))
+
+    def get(self, name_or_id: str) -> Asset | None:
+        """Resolve a name or id to its asset (overlay first in a dry run), else None."""
+        if self._overlay is not None:
+            return self._overlay.get(name_or_id) or self._real.get(name_or_id)
+        return self._real.get(name_or_id)
+
+    def value(self, name_or_id: str) -> Any | None:
+        """Return a value asset's JSON (overlay first in a dry run), else None (§7.6)."""
+        # Presence-check the overlay (a stored value may legitimately be falsey — 0, "", [], null),
+        # so a real value is only used when the overlay does not hold the asset at all.
+        if self._overlay is not None and self._overlay.get(name_or_id) is not None:
+            return self._overlay.value(name_or_id)
+        return self._real.value(name_or_id)
+
+    def describe(self, assets: Sequence[Asset]) -> str:
+        """Compact text describing the assets for an agent prompt — it does not choose (§7.5)."""
+        paragraphs: list[str] = []
+        for asset in assets:
+            tags = ", ".join(asset.tags) if asset.tags else "(none)"
+            facets = (
+                ", ".join(f"{key}={value}" for key, value in sorted(asset.facets.items()))
+                if asset.facets
+                else "(none)"
+            )
+            paragraphs.append(
+                "\n".join(
+                    (
+                        f"id: {asset.id}",
+                        f"tags: {tags}",
+                        f"facets: {facets}",
+                        f"description: {asset.description}",
+                        f"caveats: {asset.caveats}",
+                    )
+                )
+            )
+        return "\n\n".join(paragraphs)
+
+    def put(
+        self,
+        name: str | None,
+        source: Path | Any,
+        *,
+        kind: str | None = None,
+        tags: Sequence[str] = (),
+        facets: Mapping[str, str] | None = None,
+        description: str = "",
+        caveats: str = "",
+        supersedes: str | None = None,
+        provenance: Mapping[str, Any] | None = None,
+    ) -> Asset:
+        """Store a file (Path) or JSON data as an asset; emits a `library` event on a novel value.
+
+        Writes to the dry-run overlay when the run is dry, else to the real library.
+        """
+        store = self._write_store()
+        before_ids = {
+            asset.id for asset in store.find(status=None)
+        }  # to spot a genuinely new asset
+        if isinstance(source, Path):
+            asset = store.put(
+                name,
+                source,
+                kind=(kind or "file"),
+                tags=tags,
+                facets=facets,
+                description=description,
+                caveats=caveats,
+                supersedes=supersedes,
+                provenance=provenance,
+            )
+        else:
+            asset = store.put_value(
+                name,
+                source,
+                kind=(kind or "value"),
+                tags=tags,
+                facets=facets,
+                description=description,
+                caveats=caveats,
+                supersedes=supersedes,
+                provenance=provenance,
+            )
+        # The library event protocol is fixed by Architecture §3.3: a `put` event per put, and a
+        # `novel-facet` event per first-seen open value. Novelty is only introduced by a genuinely
+        # new asset — a re-put of existing content introduces nothing, so it emits no novel-facet.
+        self._ctx.emit({"t": "library", "event": "put", "id": asset.id, "name": name})
+        if asset.id not in before_ids:
+            for key in store.novel_facets(asset.id):
+                self._ctx.emit(
+                    {"t": "library", "event": "novel-facet", "key": key, "value": asset.facets[key]}
+                )
+        return asset
+
+    def annotate(
+        self,
+        asset_id: str,
+        *,
+        caveats: str | None = None,
+        facets: Mapping[str, str] | None = None,
+    ) -> Asset:
+        """Update an asset's caveats/facets (§7.5). In a dry run the change lands in the overlay
+        (copy-on-write from the real asset), leaving the real library untouched."""
+        if not self._ctx.dry_run:
+            return self._real.annotate(asset_id, caveats=caveats, facets=facets)
+        overlay = self._write_store()  # fail closed if a dry run somehow has no overlay
+        if overlay.get(asset_id) is None:
+            blob = self._real_root / "items" / asset_id
+            sidecar = self._real_root / "items" / f"{asset_id}.json"
+            overlay_root = self._overlay_root
+            if overlay_root is not None and blob.is_file() and sidecar.is_file():
+                dest_dir = overlay_root / "items"
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(blob, dest_dir / asset_id)
+                shutil.copyfile(sidecar, dest_dir / f"{asset_id}.json")
+                overlay.rebuild_catalog()
+        return overlay.annotate(asset_id, caveats=caveats, facets=facets)
+
+
 class Context:
     """Minimal runtime context passed to the workflow entrypoint as `func(ctx)`."""
 
@@ -236,6 +438,17 @@ class Context:
         self.shared_dir = file.paths.shared
         self.workflow_dir = file.paths.workflow
         self.artifacts = file.paths.artifacts
+        self.library = self._make_library()
+
+    def _make_library(self) -> Library | None:
+        root = self._file.paths.library
+        if root is None:
+            return None
+        facets = tuple(
+            FacetSpec(decl.key, tuple(decl.values) if decl.values is not None else None)
+            for decl in self._file.library_facets
+        )
+        return Library(self, root, self._file.paths.library_overlay, facets)
 
     def secret(self, name: str) -> str:
         """Return a permitted secret from the ambient context.
