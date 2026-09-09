@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from sfvf.context import BudgetConfig
 
 from app.api.runs import router as runs_router
+from app.api.statistics import router as statistics_router
 from app.api.workflows import RegistryHolder
 from app.api.workflows import router as workflows_router
 from app.core.budget_config import load_budget_config
@@ -40,6 +41,7 @@ def create_app(
     application.state.budget = budget if budget is not None else load_budget_config()
     application.include_router(workflows_router)
     application.include_router(runs_router)
+    application.include_router(statistics_router)
 
     @application.get("/api/health")
     def health() -> dict[str, bool]:
