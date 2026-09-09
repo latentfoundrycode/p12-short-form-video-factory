@@ -2,6 +2,7 @@ import { useState } from "react";
 import { PlaceholderView } from "./components/PlaceholderView";
 import { RunView } from "./components/RunView";
 import { Shell } from "./components/Shell";
+import { StatisticsView } from "./components/StatisticsView";
 import { WorkflowGrid } from "./components/WorkflowGrid";
 import type { TabId } from "./tabs";
 
@@ -32,6 +33,8 @@ function App() {
             setActiveRun({ workflowId, runId });
           }}
         />
+      ) : tab === "statistics" ? (
+        <StatisticsView />
       ) : (
         <PlaceholderView tab={tab} />
       )}
