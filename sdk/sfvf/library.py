@@ -129,44 +129,53 @@ class LibraryStore:
         normalised via `normalise_facet_value`.
         """
         asset_id = _file_digest(source)
-        stored_facets = self._normalise_facets(facets)
-        stored_tags = tuple(tags)
-        stored_provenance = dict(provenance) if provenance is not None else {}
-        created_utc = self._now().isoformat().replace("+00:00", "Z")
+        stored_facets = self._normalise_facets(facets)  # always validate, even on re-put
         blob = self._items / asset_id
-        if not blob.is_file():
-            _copy_atomic(source, blob)
-        _write_json_atomic(
-            self._items / f"{asset_id}.json",
-            {
-                "id": asset_id,
-                "kind": kind,
-                "created_utc": created_utc,
-                "status": "active",
-                "supersedes": supersedes,
-                "tags": list(stored_tags),
-                "facets": stored_facets,
-                "description": description,
-                "caveats": caveats,
-                "provenance": stored_provenance,
-            },
-        )
+        sidecar = self._items / f"{asset_id}.json"
+        # Content already stored: an asset is never replaced in place (§7.7), so keep its
+        # established descriptor (its accumulated caveats/provenance) and only (re)point the name
+        # below. To change metadata a caller uses annotate(); to change content, a new asset wins.
+        existing = self.get(asset_id) if sidecar.is_file() else None
+        if existing is not None:
+            asset = existing
+        else:
+            stored_tags = tuple(tags)
+            stored_provenance = dict(provenance) if provenance is not None else {}
+            created_utc = self._now().astimezone(UTC).isoformat().replace("+00:00", "Z")
+            if not blob.is_file():
+                _copy_atomic(source, blob)
+            _write_json_atomic(
+                sidecar,
+                {
+                    "id": asset_id,
+                    "kind": kind,
+                    "created_utc": created_utc,
+                    "status": "active",
+                    "supersedes": supersedes,
+                    "tags": list(stored_tags),
+                    "facets": stored_facets,
+                    "description": description,
+                    "caveats": caveats,
+                    "provenance": stored_provenance,
+                },
+            )
+            asset = Asset(
+                id=asset_id,
+                kind=kind,
+                status="active",
+                created_utc=created_utc,
+                supersedes=supersedes,
+                tags=stored_tags,
+                facets=stored_facets,
+                description=description,
+                caveats=caveats,
+                provenance=stored_provenance,
+            )
         if name is not None:
             aliases = self._load_aliases()
             aliases[name] = asset_id
             _write_json_atomic(self._aliases, aliases)
-        return Asset(
-            id=asset_id,
-            kind=kind,
-            status="active",
-            created_utc=created_utc,
-            supersedes=supersedes,
-            tags=stored_tags,
-            facets=stored_facets,
-            description=description,
-            caveats=caveats,
-            provenance=stored_provenance,
-        )
+        return asset
 
     def get(self, name_or_id: str) -> Asset | None:
         """Resolve a name or id to its asset, or None if it does not resolve to a stored sidecar."""
