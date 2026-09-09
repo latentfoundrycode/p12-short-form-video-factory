@@ -22,8 +22,8 @@ from app.core.records import RequestRecord, read_request, read_video
 
 # Estimates are drawn from at most this many most-recent comparable runs (PRD §7.3: "last ten").
 MAX_HISTORY = 10
-# Runs in these terminal states paid for only part of the work, so they must not feed estimates.
-EXCLUDED_STATUSES = frozenset({"failed", "stopped", "stopped-budget"})
+# Only completed history feeds estimates; running/pending (and failed/stopped/dry) are excluded.
+INCLUDED_STATUSES = frozenset({"complete", "partial"})
 
 
 @dataclass(frozen=True)
@@ -49,7 +49,7 @@ def estimate_cost(
 ) -> Estimate:
     """Estimate per-meter uncached cost for a prospective run of `workflow_id` with `params`.
 
-    Reads the workflow's prior runs under `runs_dir/workflow_id`, drops excluded and dry runs,
+    Reads the workflow's prior runs under `runs_dir/workflow_id`, keeps only completed non-dry runs,
     prefers those whose `affects_cost_keys` param values equal `params`, and averages their
     per-meter uncached cost over the most recent `MAX_HISTORY`. Falls back to a crude workflow-wide
     average, then to no data. Pure and read-only.
@@ -88,7 +88,7 @@ def _candidates(runs_dir: Path, workflow_id: str) -> list[tuple[Path, RequestRec
         record = _try_read_request(child)
         if record is None:
             continue
-        if record.status in EXCLUDED_STATUSES or record.dry_run:
+        if record.status not in INCLUDED_STATUSES or record.dry_run:
             continue
         found.append((child, record))
     found.sort(key=lambda item: item[0].name, reverse=True)

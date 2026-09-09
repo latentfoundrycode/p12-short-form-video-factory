@@ -19,9 +19,11 @@ from sfvf.runner import EXIT_BUDGET_DENIED
 
 from app.core.env import EnvBlocked, EnvReady, EnvResult
 from app.core.env import ensure_env as default_ensure_env
+from app.core.estimate import estimate_cost
 from app.core.events import to_event
 from app.core.ids import allocate_run, format_utc_z, utc_now
 from app.core.layout import create_run_skeleton, format_video_dir
+from app.core.preflight import check_atomic_budget
 from app.core.proc import kill_tree
 from app.core.records import (
     RequestRecord,
@@ -417,6 +419,25 @@ def run_request(
             atomic=workflow.atomic,
             dry_run=wiring.dry_run,
         )
+        if workflow.atomic and wiring.budget is not None:
+            affects = frozenset(p.key for p in manifest.params if p.affects_cost)
+            est = estimate_cost(run_dir.parent.parent, workflow_id, params, affects)
+            factor = workflow.safety_factor if workflow.safety_factor is not None else 1.0
+            refusal = check_atomic_budget(est, factor, wiring.budget, run_id)
+            if refusal is not None:
+                state.record_event(
+                    run_dir,
+                    {"t": "log", "level": "error", "msg": f"atomic pre-flight refused: {refusal}"},
+                    "prep",
+                )
+                state.mark_pending_stopped(run_dir, atomic=workflow.atomic)
+                return state.finish_request(
+                    run_dir,
+                    atomic=workflow.atomic,
+                    status="stopped-budget",
+                    ended_utc=format_utc_z(utc_now()),
+                    budget=_budget_report(wiring),
+                )
         if on_started is not None:
             on_started(run_id)
         shared: dict[str, Any] | None = None
