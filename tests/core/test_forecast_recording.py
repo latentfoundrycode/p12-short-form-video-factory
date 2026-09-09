@@ -9,6 +9,7 @@ it is C-3. No network, no spend.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -54,3 +55,22 @@ def test_no_forecast_events_records_no_forecast_block(tmp_path: Path) -> None:
     request = read_request(_run(STUBS / "succeeds", tmp_path))
     assert request.status == "complete"
     assert request.forecast is None
+
+
+def test_forecast_block_redacts_injected_secret(tmp_path: Path) -> None:
+    # request.json's forecast block is a write path: an injected secret surfacing in a forecast
+    # (here, in the meter) must be redacted, like every other write path (§8).
+    result = run_request(
+        STUBS / "leaks_forecast_secret",
+        params={},
+        video_count=1,
+        concurrency=1,
+        runs_dir=tmp_path / "runs",
+        ensure_env=_ready,
+        secrets={"OPENROUTER_API_KEY": "sk-secret-xyz"},
+    )
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    request = read_request(next(next((tmp_path / "runs").iterdir()).iterdir()))
+    dumped = json.dumps(request.forecast)
+    assert "sk-secret-xyz" not in dumped
+    assert "[REDACTED]" in dumped

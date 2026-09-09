@@ -1,0 +1,10 @@
+[workflow]
+id = "leaks-forecast-secret"
+name = "Leaks Forecast Secret"
+version = "1.0.0"
+entrypoint = "main:run"
+sdk = "1"
+
+[[requires_keys]]
+name = "OPENROUTER_API_KEY"
+label = "OpenRouter"
