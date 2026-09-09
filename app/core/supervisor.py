@@ -125,10 +125,20 @@ class _RunState:
     budget_denied: bool = False
     procs: dict[str, tuple[subprocess.Popen[str], Path]] = field(default_factory=dict)
     secret_values: frozenset[str] = frozenset()
+    forecasts: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def record_event(self, run_dir: Path, event: dict[str, Any], source: str) -> None:
         with self.lock:
             append_event(run_dir, _redact_secrets(event, self.secret_values), source=source)
+
+    def record_forecast(self, run_dir: Path, *, meter: str, unit: str, amount: float) -> None:
+        with self.lock:
+            self.forecasts[meter] = {
+                "unit": unit,
+                "amount": amount,
+                "at_utc": format_utc_z(utc_now()),
+            }
+            update_request(run_dir, forecast=dict(self.forecasts))
 
     def set_video(
         self,
@@ -611,6 +621,28 @@ def _parse_cost_event(event: Mapping[str, Any]) -> tuple[str, float, bool] | Non
     return meter, amount, cached
 
 
+def _parse_forecast_event(event: Mapping[str, Any]) -> tuple[str, str, float] | None:
+    """Return (meter, unit, amount) for a well-formed forecast event; else None."""
+    if event.get("t") != "forecast":
+        return None
+    meter = event.get("meter")
+    if not isinstance(meter, str) or not meter:
+        return None
+    unit = event.get("unit")
+    if not isinstance(unit, str):
+        return None
+    raw = event.get("amount")
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return None
+    try:
+        amount = float(raw)
+    except (OverflowError, ValueError):
+        return None
+    if not math.isfinite(amount) or amount < 0.0:
+        return None
+    return meter, unit, amount
+
+
 def _consume_stdout(
     proc: subprocess.Popen[str],
     run_dir: Path,
@@ -662,6 +694,10 @@ def _consume_stdout(
                     uncached[meter] = total
                     if not cached:
                         actual[meter] = actual.get(meter, 0.0) + amount
+            parsed_forecast = _parse_forecast_event(redacted)
+            if parsed_forecast is not None:
+                meter, unit, amount = parsed_forecast
+                state.record_forecast(run_dir, meter=meter, unit=unit, amount=amount)
     finally:
         stop.set()
         watcher.join(timeout=1)
