@@ -7,12 +7,9 @@ named by the sha256 of its contents, with an authoritative descriptor sidecar be
 sheet is current while a recorded id still resolves forever.
 
 This module is the content-addressed STORE: `put`/`get`/`resolve`, facet declaration +
-normalisation, and atomic blob→sidecar writes. The catalogue index, `find()`, novelty, and
-crash-recovery rescan are a later increment (D-2); the `ctx.library` runtime API,
-describe/value/annotate, supersession and the dry-run overlay are D-3.
-
-SKELETON — the public names/signatures are frozen by tests/sdk/test_library_store.py; the builder
-fills the bodies.
+normalisation, atomic blob→sidecar writes, and the derived `catalog.json` index (`find()`,
+novelty, crash-recovery rescan). The `ctx.library` runtime API, describe/value/annotate,
+supersession and the dry-run overlay are D-3.
 """
 
 from __future__ import annotations
@@ -22,7 +19,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from .cache import _copy_atomic, _file_digest, _write_json_atomic
 
@@ -35,6 +32,21 @@ def _utcnow() -> datetime:
 
 def _is_sha256_id(value: str) -> bool:
     return len(value) == 64 and all(char in _SHA256_HEX for char in value)
+
+
+class _CatalogEntry(TypedDict):
+    status: str
+    kind: str
+    tags: list[str]
+    facets: dict[str, str]
+    created_utc: str
+    novel_facets: list[str]
+
+
+class _CatalogDoc(TypedDict):
+    assets: dict[str, _CatalogEntry]
+    quarantined: list[str]
+    dropped: list[str]
 
 
 class LibraryError(ValueError):
@@ -110,6 +122,7 @@ class LibraryStore:
         self._now = now
         self._items = root / "items"
         self._aliases = root / "aliases.json"
+        self._catalog = root / "catalog.json"
         self._facets: dict[str, FacetSpec] = {}
         for spec in facets:
             if spec.values is None:
@@ -185,6 +198,7 @@ class LibraryStore:
                 caveats=caveats,
                 provenance=stored_provenance,
             )
+            self._index_new_asset(asset)
         if name is not None:
             aliases = self._load_aliases()
             aliases[name] = asset_id
@@ -259,7 +273,27 @@ class LibraryStore:
         ordered deterministically (by `created_utc`, then id). Free and pure — the cheap first tier
         of selection, before an agent reads descriptions.
         """
-        raise NotImplementedError
+        catalog = self._load_catalog_or_rebuild()
+        wanted_tags = tuple(tags)
+        wanted_facets = {key: normalise_facet_value(value) for key, value in (facets or {}).items()}
+        matched: list[tuple[str, str]] = []
+        for asset_id, entry in catalog["assets"].items():
+            if status is not None and entry["status"] != status:
+                continue
+            entry_tags = entry["tags"]
+            if any(tag not in entry_tags for tag in wanted_tags):
+                continue
+            entry_facets = entry["facets"]
+            if any(entry_facets.get(key) != value for key, value in wanted_facets.items()):
+                continue
+            matched.append((entry["created_utc"], asset_id))
+        matched.sort()
+        found: list[Asset] = []
+        for _, asset_id in matched:
+            asset = self.get(asset_id)
+            if asset is not None:
+                found.append(asset)
+        return found
 
     def rebuild_catalog(self) -> RebuildReport:
         """Rescan `items/` and rewrite `catalog.json`, returning what was found (§5.10).
@@ -269,7 +303,28 @@ class LibraryStore:
         indexed is indexed. Novelty (`novel_facets`) is recomputed: for each open facet key, the
         earliest asset (by created_utc, then id) to carry a given value is marked as introducing it.
         """
-        raise NotImplementedError
+        blobs, sidecars = self._scan_item_ids()
+        indexed_ids = blobs & sidecars
+        quarantined = tuple(sorted(blobs - sidecars))
+        dropped = tuple(sorted(sidecars - blobs))
+        loaded: list[Asset] = []
+        for asset_id in indexed_ids:
+            asset = self.get(asset_id)
+            if asset is not None:
+                loaded.append(asset)
+        loaded.sort(key=lambda asset: (asset.created_utc, asset.id))
+        seen: dict[str, set[str]] = {}
+        assets: dict[str, _CatalogEntry] = {}
+        for asset in loaded:
+            novel = self._novel_keys(asset.facets, seen)
+            assets[asset.id] = _entry_from_asset(asset, novel)
+        catalog: _CatalogDoc = {
+            "assets": assets,
+            "quarantined": list(quarantined),
+            "dropped": list(dropped),
+        }
+        _write_json_atomic(self._catalog, catalog)
+        return RebuildReport(indexed=len(assets), quarantined=quarantined, dropped=dropped)
 
     def novel_facets(self, asset_id: str) -> tuple[str, ...]:
         """The open-facet keys whose value this asset was the first to introduce (§7.4).
@@ -277,7 +332,11 @@ class LibraryStore:
         Read from the catalogue; empty when the asset introduced no new value or is unknown. The
         `library` event that surfaces novelty in the record is emitted by the ctx wrapper (D-3).
         """
-        raise NotImplementedError
+        catalog = self._load_catalog_or_rebuild()
+        entry = catalog["assets"].get(asset_id)
+        if entry is None:
+            return ()
+        return tuple(entry["novel_facets"])
 
     def _normalise_facets(self, facets: Mapping[str, str] | None) -> dict[str, str]:
         stored: dict[str, str] = {}
@@ -304,3 +363,130 @@ class LibraryStore:
             if isinstance(key, str) and isinstance(value, str):
                 aliases[key] = value
         return aliases
+
+    def _index_new_asset(self, asset: Asset) -> None:
+        catalog = self._try_read_catalog()
+        if catalog is None:
+            # Sidecar is already on disk; a full rescan recovers any siblings the missing
+            # index would have omitted, and records this asset's novelty.
+            self.rebuild_catalog()
+            return
+        catalog["assets"].pop(asset.id, None)
+        seen = self._seen_open_values(catalog["assets"])
+        novel = self._novel_keys(asset.facets, seen)
+        catalog["assets"][asset.id] = _entry_from_asset(asset, novel)
+        _write_json_atomic(self._catalog, catalog)
+
+    def _load_catalog_or_rebuild(self) -> _CatalogDoc:
+        catalog = self._try_read_catalog()
+        if catalog is not None:
+            return catalog
+        self.rebuild_catalog()
+        catalog = self._try_read_catalog()
+        if catalog is not None:
+            return catalog
+        return {"assets": {}, "quarantined": [], "dropped": []}
+
+    def _try_read_catalog(self) -> _CatalogDoc | None:
+        path = self._catalog
+        if not path.is_file():
+            return None
+        try:
+            raw: object = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        return _coerce_catalog(raw)
+
+    def _scan_item_ids(self) -> tuple[set[str], set[str]]:
+        blobs: set[str] = set()
+        sidecars: set[str] = set()
+        if not self._items.is_dir():
+            return blobs, sidecars
+        suffix = ".json"
+        for path in self._items.iterdir():
+            if not path.is_file():
+                continue
+            name = path.name
+            if name.endswith(suffix):
+                asset_id = name[: -len(suffix)]
+                if _is_sha256_id(asset_id):
+                    sidecars.add(asset_id)
+            elif _is_sha256_id(name):
+                blobs.add(name)
+        return blobs, sidecars
+
+    def _seen_open_values(self, assets: Mapping[str, _CatalogEntry]) -> dict[str, set[str]]:
+        seen: dict[str, set[str]] = {}
+        for entry in assets.values():
+            for key, value in entry["facets"].items():
+                if self._is_open_key(key):
+                    seen.setdefault(key, set()).add(value)
+        return seen
+
+    def _novel_keys(self, facets: Mapping[str, str], seen: dict[str, set[str]]) -> list[str]:
+        novel: list[str] = []
+        for key, value in facets.items():
+            if not self._is_open_key(key):
+                continue
+            known = seen.setdefault(key, set())
+            if value not in known:
+                novel.append(key)
+                known.add(value)
+        return novel
+
+    def _is_open_key(self, key: str) -> bool:
+        spec = self._facets.get(key)
+        return spec is not None and spec.values is None
+
+
+def _entry_from_asset(asset: Asset, novel: Sequence[str]) -> _CatalogEntry:
+    return {
+        "status": asset.status,
+        "kind": asset.kind,
+        "tags": list(asset.tags),
+        "facets": dict(asset.facets),
+        "created_utc": asset.created_utc,
+        "novel_facets": list(novel),
+    }
+
+
+def _coerce_catalog(raw: object) -> _CatalogDoc | None:
+    if not isinstance(raw, dict):
+        return None
+    assets_raw = raw.get("assets", {})
+    if not isinstance(assets_raw, dict):
+        return None
+    assets: dict[str, _CatalogEntry] = {}
+    for asset_id, entry_raw in assets_raw.items():
+        if isinstance(asset_id, str) and isinstance(entry_raw, dict):
+            assets[asset_id] = _coerce_entry(entry_raw)
+    quarantined = _string_list(raw.get("quarantined", []))
+    dropped = _string_list(raw.get("dropped", []))
+    return {"assets": assets, "quarantined": quarantined, "dropped": dropped}
+
+
+def _coerce_entry(raw: Mapping[Any, Any]) -> _CatalogEntry:
+    tags_raw = raw.get("tags", [])
+    tags = [str(item) for item in tags_raw] if isinstance(tags_raw, list) else []
+    facets_raw = raw.get("facets") or {}
+    facets = (
+        {str(key): str(value) for key, value in facets_raw.items()}
+        if isinstance(facets_raw, dict)
+        else {}
+    )
+    novel_raw = raw.get("novel_facets", [])
+    novel = [str(item) for item in novel_raw] if isinstance(novel_raw, list) else []
+    return {
+        "status": str(raw.get("status", "active")),
+        "kind": str(raw.get("kind", "file")),
+        "tags": tags,
+        "facets": facets,
+        "created_utc": str(raw.get("created_utc", "")),
+        "novel_facets": novel,
+    }
+
+
+def _string_list(raw: object) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw if isinstance(item, str)]
