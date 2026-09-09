@@ -186,19 +186,35 @@ def _last_used_stamp(raw: dict[str, Any]) -> float:
     return float(value)
 
 
-def _entry_files(raw: dict[str, Any]) -> dict[str, str]:
+def _entry_files(raw: dict[str, Any]) -> tuple[dict[str, str], bool]:
+    """Return an entry's (relative → digest) map and whether it was read cleanly.
+
+    `clean` is False if the stored `files` is not a str→str dict — a partially-corrupt entry whose
+    blob references cannot be fully trusted, so blob GC must not act on an incomplete picture.
+    """
     stored = raw.get("files", {})
-    mapping: dict[str, str] = {}
     if not isinstance(stored, dict):
-        return mapping
+        return {}, False
+    mapping: dict[str, str] = {}
+    clean = True
     for relative, digest in stored.items():
         if isinstance(relative, str) and isinstance(digest, str):
             mapping[relative] = digest
-    return mapping
+        else:
+            clean = False
+    return mapping, clean
 
 
-def _load_cheap_entries(entries_dir: Path) -> list[_CheapEntry]:
+def _load_cheap_entries(entries_dir: Path) -> tuple[list[_CheapEntry], bool]:
+    """Load the cheap entries and report whether the reference picture is COMPLETE.
+
+    `complete` is False if any entry could not be read (a transient OS lock or corrupt JSON) or had
+    a malformed `files` map. When incomplete, blob GC is unsafe: a blob referenced only by an
+    unreadable-but-live entry would be collateral-deleted, silently corrupting a cached result. The
+    caller keeps every blob in that case (see `evict_cheap`).
+    """
     loaded: list[_CheapEntry] = []
+    complete = True
     for path in entries_dir.iterdir():
         if not path.is_file():
             continue
@@ -206,18 +222,22 @@ def _load_cheap_entries(entries_dir: Path) -> list[_CheapEntry]:
             size = path.stat().st_size
             raw: object = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            complete = False  # unreadable now, but its blobs may belong to a live entry
             continue
         if not isinstance(raw, dict):
+            complete = False
             continue
+        files, files_clean = _entry_files(raw)
+        complete = complete and files_clean
         loaded.append(
             _CheapEntry(
                 path=path,
                 size=size,
                 last_used=_last_used_stamp(raw),
-                files=_entry_files(raw),
+                files=files,
             )
         )
-    return loaded
+    return loaded, complete
 
 
 def _blob_sizes(blobs_dir: Path) -> dict[str, int]:
@@ -259,7 +279,7 @@ def evict_cheap(root: Path, *, max_bytes: int) -> int:
     blobs_dir = cheap / "blobs"
     if not entries_dir.is_dir():
         return 0
-    entries = _load_cheap_entries(entries_dir)
+    entries, complete = _load_cheap_entries(entries_dir)
     blob_sizes = _blob_sizes(blobs_dir)
     total = sum(entry.size for entry in entries) + sum(blob_sizes.values())
     if total <= max_bytes:
@@ -276,7 +296,10 @@ def evict_cheap(root: Path, *, max_bytes: int) -> int:
     surviving_refs = _referenced_digests(surviving)
     for entry in evicted:
         entry.path.unlink(missing_ok=True)
-    if blobs_dir.is_dir():
+    # Blob GC only when the reference picture is complete. If any entry was unreadable or had a
+    # malformed files map, a blob it references could be live; deleting it would silently corrupt a
+    # cached result, so keep every blob this pass and let a later clean pass reclaim the space.
+    if complete and blobs_dir.is_dir():
         for blob in blobs_dir.iterdir():
             if blob.is_file() and blob.name not in surviving_refs:
                 blob.unlink(missing_ok=True)

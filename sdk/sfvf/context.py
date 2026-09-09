@@ -326,6 +326,7 @@ class Context:
         label: Callable[[_T], str] | None = None,
         concurrency: int = 1,
         on_error: Literal["raise"] = "raise",
+        paid: bool = False,
     ) -> list[_R]: ...
 
     @overload
@@ -339,6 +340,7 @@ class Context:
         label: Callable[[_T], str] | None = None,
         concurrency: int = 1,
         on_error: Literal["collect"],
+        paid: bool = False,
     ) -> list[Outcome]: ...
 
     def map(
@@ -351,12 +353,13 @@ class Context:
         label: Callable[[_T], str] | None = None,
         concurrency: int = 1,
         on_error: Literal["raise", "collect"] = "raise",
+        paid: bool = False,
     ) -> list[_R] | list[Outcome]:
         ordered = list(items)
 
         def run_item(item: _T) -> _R:
             step_label = family if label is None else label(item)
-            with self.step(family, inputs=inputs(item), label=step_label) as step:
+            with self.step(family, inputs=inputs(item), label=step_label, paid=paid) as step:
                 if not step.cached:
                     step.set(fn(item))
                 return cast(_R, step.value)

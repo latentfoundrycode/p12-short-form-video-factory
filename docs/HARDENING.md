@@ -257,6 +257,24 @@ increments that logged them.
   pre-flight as an additional caller; resolving H23 resolves this. Until then the exposure is a
   corrupt/permission-denied ledger file, which equally affects the reservation path. _Source: C-4
   review B (P2); see H23._ Open.
+- **H29 — the paid/cheap cache layout orphans pre-existing single-partition entries (C-6).** C-6
+  moved cache storage from `<root>/{entries,blobs}` to `<root>/{paid,cheap}/{entries,blobs}`. Any
+  cache written before C-6 is now unreachable (a one-time miss — recomputed on next use) and its
+  files sit under the old paths, which `evict_cheap` never scans, so they leak disk forever. Accepted
+  for now: the cache is DERIVED and safe to lose (§5.9), and negligible cache has accumulated in this
+  project; a mature deployment with real paid cache would want a one-time migration (or a legacy-path
+  fallback + cleanup) so pre-C-6 paid work is not silently re-purchased. Fix when a migration path is
+  warranted. _Source: C-6 review B (P1, de-scoped as derived-data-safe)._ Open.
+- **H30 — cheap-cache eviction is per cache root and its initial total counts orphan blobs (C-6).**
+  Two low-impact refinements to `evict_cheap`: (a) it bounds each `<workflow>/<mode>` cache root
+  independently, not a single global ceiling across all partitions (§8.7 wants one global size) — so
+  N workflows can hold up to N×ceiling; a global sweep can reuse the same size logic later. (b) The
+  initial over-ceiling check counts every blob present including orphans, while the per-eviction
+  recompute counts only referenced blobs, so a partition over-ceiling purely from an orphan blob (a
+  crash between blob-copy and entry-write) evicts one avoidable LRU entry before the orphan is
+  reclaimed at pass end — the partition still ends correctly sized. Also noted: the eviction loop is
+  O(n²) in entry count (fine for local caches). _Source: C-6 review (diff-reviewer + security-auditor
+  NOTES)._ Open.
 
 ## Resolved
 
