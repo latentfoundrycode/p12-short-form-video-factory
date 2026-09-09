@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from app.core.records import RequestRecord, read_request, read_video
+
 # Estimates are drawn from at most this many most-recent comparable runs (PRD §7.3: "last ten").
 MAX_HISTORY = 10
 # Runs in these terminal states paid for only part of the work, so they must not feed estimates.
@@ -51,4 +53,85 @@ def estimate_cost(
     per-meter uncached cost over the most recent `MAX_HISTORY`. Falls back to a crude workflow-wide
     average, then to no data. Pure and read-only.
     """
-    raise NotImplementedError
+    candidates = _candidates(runs_dir, workflow_id)
+    if not candidates:
+        return Estimate(per_meter={}, confidence="none", matches=0)
+
+    matched = [
+        item
+        for item in candidates
+        if all(item[1].params.get(key) == params.get(key) for key in affects_cost_keys)
+    ]
+    if matched:
+        pool = matched[:MAX_HISTORY]
+        confidence = "matched"
+    else:
+        pool = candidates[:MAX_HISTORY]
+        confidence = "crude"
+
+    return Estimate(per_meter=_mean_uncached(pool), confidence=confidence, matches=len(pool))
+
+
+def _candidates(runs_dir: Path, workflow_id: str) -> list[tuple[Path, RequestRecord]]:
+    root = runs_dir / workflow_id
+    if not root.is_dir():
+        return []
+    try:
+        children = list(root.iterdir())
+    except OSError:
+        return []
+    found: list[tuple[Path, RequestRecord]] = []
+    for child in children:
+        if not child.is_dir():
+            continue
+        record = _try_read_request(child)
+        if record is None:
+            continue
+        if record.status in EXCLUDED_STATUSES or record.dry_run:
+            continue
+        found.append((child, record))
+    found.sort(key=lambda item: item[0].name, reverse=True)
+    return found
+
+
+def _try_read_request(run_dir: Path) -> RequestRecord | None:
+    try:
+        return read_request(run_dir)
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def _mean_uncached(pool: list[tuple[Path, RequestRecord]]) -> dict[str, float]:
+    sums: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    for run_dir, _record in pool:
+        for meter, amount in _run_uncached(run_dir).items():
+            sums[meter] = sums.get(meter, 0.0) + amount
+            counts[meter] = counts.get(meter, 0) + 1
+    return {meter: sums[meter] / counts[meter] for meter in sums}
+
+
+def _run_uncached(run_dir: Path) -> dict[str, float]:
+    totals: dict[str, float] = {}
+    try:
+        children = list(run_dir.iterdir())
+    except OSError:
+        return totals
+    for child in children:
+        if not child.is_dir() or not (child / "video.json").is_file():
+            continue
+        try:
+            video = read_video(child)
+        except (OSError, TypeError, ValueError):
+            continue
+        cost = video.cost
+        if not isinstance(cost, dict):
+            continue
+        uncached = cost.get("uncached")
+        if not isinstance(uncached, dict):
+            continue
+        for meter, raw in uncached.items():
+            if isinstance(raw, bool) or not isinstance(raw, int | float):
+                continue
+            totals[meter] = totals.get(meter, 0.0) + float(raw)
+    return totals
