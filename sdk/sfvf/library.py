@@ -165,6 +165,12 @@ class LibraryStore:
         existing = self.get(asset_id) if sidecar.is_file() else None
         if existing is not None:
             asset = existing
+            # Self-heal: if a crash between the sidecar and catalogue writes left this described
+            # asset unindexed, a rescan recovers it (and any siblings) rather than leaving it
+            # invisible to find() until the next explicit rebuild.
+            catalog = self._try_read_catalog()
+            if catalog is None or asset_id not in catalog["assets"]:
+                self.rebuild_catalog()
         else:
             stored_tags = tuple(tags)
             stored_provenance = dict(provenance) if provenance is not None else {}
@@ -305,13 +311,21 @@ class LibraryStore:
         """
         blobs, sidecars = self._scan_item_ids()
         indexed_ids = blobs & sidecars
-        quarantined = tuple(sorted(blobs - sidecars))
         dropped = tuple(sorted(sidecars - blobs))
         loaded: list[Asset] = []
-        for asset_id in indexed_ids:
-            asset = self.get(asset_id)
-            if asset is not None:
-                loaded.append(asset)
+        corrupt: set[str] = set()
+        for asset_id in sorted(indexed_ids):
+            try:
+                asset = self.get(asset_id)
+            except (OSError, ValueError, TypeError):
+                asset = None
+            if asset is None:
+                # Sidecar unreadable/corrupt: flag it, keep the (paid) blob, do not index it. The
+                # rescan tolerates bad files by inspection rather than aborting (§5.10).
+                corrupt.add(asset_id)
+                continue
+            loaded.append(asset)
+        quarantined = tuple(sorted((blobs - sidecars) | corrupt))
         loaded.sort(key=lambda asset: (asset.created_utc, asset.id))
         seen: dict[str, set[str]] = {}
         assets: dict[str, _CatalogEntry] = {}
@@ -451,9 +465,13 @@ def _entry_from_asset(asset: Asset, novel: Sequence[str]) -> _CatalogEntry:
 
 
 def _coerce_catalog(raw: object) -> _CatalogDoc | None:
-    if not isinstance(raw, dict):
+    # A structurally-incomplete doc (missing "assets") is a torn/foreign catalogue, not a legitimate
+    # empty one — return None so the caller rebuilds from the authoritative sidecars rather than
+    # trusting an empty index (§5.10: the catalogue self-heals when doubted). A real empty library
+    # is written as {"assets": {}, ...} by rebuild_catalog, so the key is always present when valid.
+    if not isinstance(raw, dict) or "assets" not in raw:
         return None
-    assets_raw = raw.get("assets", {})
+    assets_raw = raw["assets"]
     if not isinstance(assets_raw, dict):
         return None
     assets: dict[str, _CatalogEntry] = {}
