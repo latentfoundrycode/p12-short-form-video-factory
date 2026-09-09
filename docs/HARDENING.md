@@ -275,6 +275,19 @@ increments that logged them.
   reclaimed at pass end — the partition still ends correctly sized. Also noted: the eviction loop is
   O(n²) in entry count (fine for local caches). _Source: C-6 review (diff-reviewer + security-auditor
   NOTES)._ Open.
+- **H31 — library store: unlocked alias RMW + hash-then-copy TOCTOU (D-1).** Two content-integrity
+  edges in `sdk/sfvf/library.py`, both accepted for v1: (a) `aliases.json` is a read-modify-write
+  with an atomic replace, so two workflows sharing a namespace and writing aliases at the same instant
+  can lose one update (torn JSON is prevented, lost updates are not). Architecture §5.10 explicitly
+  accepts **no locking in v1** (it names `catalog.json` as the contended object and says the fix, if
+  it ever bites, is a lock around rebuild, not a database); aliases are mutable handles and the id is
+  always recoverable, so impact is low. (b) `put` hashes the source, then copies it — if the caller
+  mutated its own just-written file between the two reads, the stored blob would not match its sha256
+  name. The identical hash-then-copy pattern lives in `sdk/sfvf/cache.py` and was accepted there;
+  realistic exposure is a caller bug. Fix both together if warranted: a lock (or last-writer-wins log)
+  around alias writes, and a copy-to-temp→digest-temp→rename fs util (promote the shared
+  `_copy_atomic`/`_file_digest`/`_write_json_atomic` out of `cache.py` into a non-underscore module at
+  the same time). _Source: D-1 review B (P1a + P1c, de-scoped as v1-accepted per §5.10)._ Open.
 
 ## Resolved
 
