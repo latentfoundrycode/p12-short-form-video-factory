@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from dataclasses import dataclass
@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ._budget import BudgetError, BudgetGuard, Ceilings
 from .cache import CHEAP, PAID, StepCache, step_key
 from .emit import decision, emit, forecast, heartbeat, log, stage
+from .library import Asset, FacetSpec
 
 _T = TypeVar("_T")
 _R = TypeVar("_R")
@@ -74,6 +75,21 @@ class ContextPaths(_ContextModel):
         default=None,
         description="The workflow's own folder (read-only).",
     )
+    library: Path | None = Field(
+        default=None,
+        description="The library namespace root (library/<namespace>); written in a real run.",
+    )
+    library_overlay: Path | None = Field(
+        default=None,
+        description="Dry-run overlay root: writes land here and are discarded at run end (§7.9).",
+    )
+
+
+class LibraryFacetDecl(_ContextModel):
+    """A declared library facet carried in context.json: key + open (None) or a closed value set."""
+
+    key: str
+    values: list[str] | None = None
 
 
 class ContextFile(_ContextModel):
@@ -117,6 +133,10 @@ class ContextFile(_ContextModel):
     budget: BudgetConfig | None = Field(
         default=None,
         description="Budget-guard config; when set, paid calls are gated before spending.",
+    )
+    library_facets: list[LibraryFacetDecl] = Field(
+        default_factory=list,
+        description="The workflow's declared library facet vocabulary (§7.4).",
     )
 
 
@@ -214,6 +234,85 @@ class _Step:
         )
 
 
+class Library:
+    """The `ctx.library` facade: the durable asset store as a workflow sees it (SDK §7).
+
+    Reads (find/get/value/describe) resolve against the real library. Writes (put/annotate) go to
+    the real library in a real run, but in a DRY run go to a per-run overlay discarded at the end,
+    so a rehearsal never leaves stubs behind and never mutates the real library (§7.9): reads see
+    the overlay layered over the real library. `put` accepts a file Path or JSON data; a novel
+    first-seen open facet value emits a `library` event.
+
+    SKELETON — the public method signatures are frozen by tests/sdk/test_ctx_library.py; the builder
+    fills the bodies (including the dry-run overlay read-through and copy-on-write).
+    """
+
+    def __init__(
+        self,
+        ctx: Context,
+        real_root: Path,
+        overlay_root: Path | None,
+        facets: Sequence[FacetSpec],
+    ) -> None:
+        self._ctx = ctx
+        self._facets = tuple(facets)
+        self._real_root = real_root
+        # An overlay is used only in a dry run; a real run writes straight to the real library.
+        self._overlay_root = overlay_root if ctx.dry_run else None
+
+    def find(
+        self,
+        *,
+        tags: Sequence[str] = (),
+        facets: Mapping[str, str] | None = None,
+        status: str | None = "active",
+    ) -> list[Asset]:
+        """Return matching assets — overlay layered over the real library in a dry run (§7.5)."""
+        raise NotImplementedError
+
+    def get(self, name_or_id: str) -> Asset | None:
+        """Resolve a name or id to its asset (overlay first in a dry run), else None."""
+        raise NotImplementedError
+
+    def value(self, name_or_id: str) -> Any | None:
+        """Return a value asset's JSON (overlay first in a dry run), else None (§7.6)."""
+        raise NotImplementedError
+
+    def describe(self, assets: Sequence[Asset]) -> str:
+        """Compact text describing the assets for an agent prompt — it does not choose (§7.5)."""
+        raise NotImplementedError
+
+    def put(
+        self,
+        name: str | None,
+        source: Path | Any,
+        *,
+        kind: str | None = None,
+        tags: Sequence[str] = (),
+        facets: Mapping[str, str] | None = None,
+        description: str = "",
+        caveats: str = "",
+        supersedes: str | None = None,
+        provenance: Mapping[str, Any] | None = None,
+    ) -> Asset:
+        """Store a file (Path) or JSON data as an asset; emits a `library` event on a novel value.
+
+        Writes to the dry-run overlay when the run is dry, else to the real library.
+        """
+        raise NotImplementedError
+
+    def annotate(
+        self,
+        asset_id: str,
+        *,
+        caveats: str | None = None,
+        facets: Mapping[str, str] | None = None,
+    ) -> Asset:
+        """Update an asset's caveats/facets (§7.5). In a dry run the change lands in the overlay
+        (copy-on-write from the real asset), leaving the real library untouched."""
+        raise NotImplementedError
+
+
 class Context:
     """Minimal runtime context passed to the workflow entrypoint as `func(ctx)`."""
 
@@ -236,6 +335,17 @@ class Context:
         self.shared_dir = file.paths.shared
         self.workflow_dir = file.paths.workflow
         self.artifacts = file.paths.artifacts
+        self.library = self._make_library()
+
+    def _make_library(self) -> Library | None:
+        root = self._file.paths.library
+        if root is None:
+            return None
+        facets = tuple(
+            FacetSpec(decl.key, tuple(decl.values) if decl.values is not None else None)
+            for decl in self._file.library_facets
+        )
+        return Library(self, root, self._file.paths.library_overlay, facets)
 
     def secret(self, name: str) -> str:
         """Return a permitted secret from the ambient context.
