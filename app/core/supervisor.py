@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import signal
 import subprocess
 import sys
@@ -588,6 +589,25 @@ def _watch_silence(
         return
 
 
+def _parse_cost_event(event: Mapping[str, Any]) -> tuple[str, float, bool] | None:
+    """Return (meter, amount, cached) for a well-formed cost event; else None."""
+    if event.get("t") != "cost":
+        return None
+    meter = event.get("meter")
+    if not isinstance(meter, str) or not meter:
+        return None
+    raw = event.get("amount")
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return None
+    amount = float(raw)
+    if not math.isfinite(amount) or amount < 0.0:
+        return None
+    cached = event.get("cached", False)
+    if not isinstance(cached, bool):
+        return None
+    return meter, amount, cached
+
+
 def _consume_stdout(
     proc: subprocess.Popen[str],
     run_dir: Path,
@@ -597,8 +617,10 @@ def _consume_stdout(
     silence: _SilenceState,
     limits: dict[str, float],
     silence_limit_default: float,
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     captured: dict[str, Any] | None = None
+    actual: dict[str, float] = {}
+    uncached: dict[str, float] = {}
     if proc.stdout is None:
         raise RuntimeError("runner stdout was not piped")
     stop = threading.Event()
@@ -629,10 +651,21 @@ def _consume_stdout(
             if event.get("t") == "result":
                 redacted = _redact_secrets(event, state.secret_values)
                 captured = {key: value for key, value in redacted.items() if key != "t"}
+            parsed = _parse_cost_event(event)
+            if parsed is not None:
+                meter, amount, cached = parsed
+                uncached[meter] = uncached.get(meter, 0.0) + amount
+                if not cached:
+                    actual[meter] = actual.get(meter, 0.0) + amount
     finally:
         stop.set()
         watcher.join(timeout=1)
-    return captured
+    if not uncached:
+        return captured, None
+    cost: dict[str, Any] = {"uncached": uncached}
+    if actual:
+        cost["actual"] = actual
+    return captured, cost
 
 
 def _run_prepare(
@@ -807,7 +840,7 @@ def _run_one_video(
         if pending is not None:
             _apply_stop(pending, proc, video_dir)
         try:
-            captured = _consume_stdout(
+            captured, cost = _consume_stdout(
                 proc,
                 run_dir,
                 source,
@@ -835,6 +868,7 @@ def _run_one_video(
                 started_utc=started,
                 ended_utc=ended,
                 result=captured if status == "complete" else None,
+                cost=cost if status == "complete" else None,
             ),
         )
         state.set_video(run_dir, index, status, atomic=atomic)

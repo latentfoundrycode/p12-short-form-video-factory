@@ -130,6 +130,9 @@ def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
         data: dict[str, Any] = resp.json()
     cost = _usage_cost(data)
     if cost is not None:
+        ctx.emit(
+            {"t": "cost", "meter": "openrouter", "unit": "usd", "amount": cost, "cached": False}
+        )
         ctx._budget_reconcile(token, actual=cost)
     return data
 

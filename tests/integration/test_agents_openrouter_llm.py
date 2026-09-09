@@ -4,8 +4,8 @@ No network call is ever made: the real path's httpx client is replaced with an
 `httpx2.MockTransport` that stands in for `https://openrouter.ai/api/v1/chat/completions`
 (auth header, success payload with `usage`, 402/429 + Retry-After). `dry_run` stays a genuine
 no-network stub. Per SDK §10 dry_run stubs PAID providers; the real path is what these mocks
-drive. Cost is parsed from `usage.cost` and surfaced (a log line), but NO cost event is emitted
-— the budget-engine cost/meter schema is Stage C's (see docs/HARDENING.md).
+drive. Cost is parsed from `usage.cost` and, since C-1 (which closed H10), emitted as a metered
+`cost` event `{"t":"cost","meter":"openrouter","unit":"usd",…}` as well as logged.
 
 Seams the adapter must expose for this (both patched here, never hitting the network):
   * `agents._http_client() -> httpx2.Client` — the real path builds its client through this.
@@ -208,7 +208,7 @@ def test_llm_real_402_raises_without_retry(tmp_path: Path, monkeypatch: pytest.M
     assert len(seen) == 1  # 402 is terminal, no retry
 
 
-def test_llm_real_surfaces_cost_without_emitting_cost_event(
+def test_llm_real_emits_cost_event_with_usage_cost(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     def handler(_request: httpx2.Request, _n: int) -> httpx2.Response:
@@ -231,10 +231,14 @@ def test_llm_real_surfaces_cost_without_emitting_cost_event(
                 events.append(json.loads(s))
             except ValueError:
                 continue
-    # NO cost event is emitted (Stage C owns the cost/meter schema).
-    assert not any(e.get("t") == "cost" for e in events)
-    # The real usage.cost IS surfaced somewhere in the event stream (a log line).
-    assert any("0.0012" in json.dumps(e) for e in events)
+    # C-1 (closes H10): the real usage.cost is emitted as a metered cost event.
+    cost_events = [e for e in events if e.get("t") == "cost"]
+    assert len(cost_events) == 1
+    c = cost_events[0]
+    assert c["meter"] == "openrouter"
+    assert c["unit"] == "usd"
+    assert c["amount"] == pytest.approx(0.0012)
+    assert c["cached"] is False
 
 
 def test_llm_real_missing_key_raises_before_any_call(
