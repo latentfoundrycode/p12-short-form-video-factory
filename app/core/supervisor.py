@@ -599,7 +599,10 @@ def _parse_cost_event(event: Mapping[str, Any]) -> tuple[str, float, bool] | Non
     raw = event.get("amount")
     if isinstance(raw, bool) or not isinstance(raw, int | float):
         return None
-    amount = float(raw)
+    try:
+        amount = float(raw)
+    except OverflowError:
+        return None
     if not math.isfinite(amount) or amount < 0.0:
         return None
     cached = event.get("cached", False)
@@ -648,15 +651,17 @@ def _consume_stdout(
             event = to_event(line)
             silence.note(event)
             state.record_event(run_dir, event, source)
+            redacted = _redact_secrets(event, state.secret_values)
             if event.get("t") == "result":
-                redacted = _redact_secrets(event, state.secret_values)
                 captured = {key: value for key, value in redacted.items() if key != "t"}
-            parsed = _parse_cost_event(event)
+            parsed = _parse_cost_event(redacted)
             if parsed is not None:
                 meter, amount, cached = parsed
-                uncached[meter] = uncached.get(meter, 0.0) + amount
-                if not cached:
-                    actual[meter] = actual.get(meter, 0.0) + amount
+                total = uncached.get(meter, 0.0) + amount
+                if math.isfinite(total):
+                    uncached[meter] = total
+                    if not cached:
+                        actual[meter] = actual.get(meter, 0.0) + amount
     finally:
         stop.set()
         watcher.join(timeout=1)
@@ -868,7 +873,7 @@ def _run_one_video(
                 started_utc=started,
                 ended_utc=ended,
                 result=captured if status == "complete" else None,
-                cost=cost if status == "complete" else None,
+                cost=cost,
             ),
         )
         state.set_video(run_dir, index, status, atomic=atomic)

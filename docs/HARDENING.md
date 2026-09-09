@@ -70,13 +70,6 @@ increments that logged them.
   combination as-is (per review A analysis); this is a refinement, not a defect. _Source: B-4b review A, note
   (PR #29)._ Open (low).
 
-- **H10 — OpenRouter `usage.cost` is surfaced but not metered.** `agents.llm` parses the real per-call
-  `usage.cost` (and will estimate in dry_run) and surfaces it via a `ctx.log` line, but emits **no** cost/meter
-  event — deliberately, because the budget-engine cost/meter schema is Stage C's and a provisional event now
-  would only have to be migrated. Stage C must wire `usage.cost` (and the dry_run estimate) into the budget
-  engine so spend is actually recorded/metered, not just logged. Applies to every priced provider adapter as
-  they land. _Source: B-4c, deferred by design (PR #30)._ Open.
-
 - **H11 — `agents.llm` trusts the OpenRouter 200 body shape.** `data.get("usage", {}).get("cost")` raises
   `AttributeError` if a 200 response carries `"usage": null` (key present, value null) rather than omitting it;
   likewise `data["choices"][0]["message"]["content"]` assumes a well-formed body. OpenRouter returns an object
@@ -234,6 +227,12 @@ increments that logged them.
 
 ## Resolved
 
+- **H10 — OpenRouter `usage.cost` is surfaced but not metered** (resolved by C-1). `_post_chat_completion`
+  emits a `cost` event `{t:cost, meter:openrouter, unit:usd, amount:<usage.cost>, cached:false}` when
+  `usage.cost` is a usable finite non-negative number, and the supervisor aggregates those events into
+  `video.json`'s `cost` block (`actual` = non-cached sums, `uncached` = all sums, per meter). Dry-run
+  still emits none (free, no network). Higgsfield per-video cost remains H20 (no per-call cost from its
+  API). _Source: B-4c, deferred by design (PR #30); closed by C-1._
 - **Higgsfield poll dropped auth** (resolved by the smoke_higgsfield increment). `media.video.generate`
   polled `GET {status_url}` (`/requests/{id}/status`) with no `Authorization` header, but that endpoint
   inherits the API's `Key id:secret` auth — so a PAID submit would succeed (credits spent) and every
