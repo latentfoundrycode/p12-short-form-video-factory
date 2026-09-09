@@ -14,9 +14,11 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from sfvf._budget import BudgetError, read_run_spend
+from sfvf.cache import evict_cheap
 from sfvf.context import BudgetConfig, ContextFile, ContextPaths
 from sfvf.runner import EXIT_BUDGET_DENIED
 
+from app.core.cache_config import cache_max_bytes
 from app.core.env import EnvBlocked, EnvReady, EnvResult
 from app.core.env import ensure_env as default_ensure_env
 from app.core.estimate import estimate_cost
@@ -377,6 +379,7 @@ def run_request(
             return RunBusy(workflow_id=workflow_id, run_id=_active[workflow_id])
         _active[workflow_id] = None
     run_id: str | None = None
+    cache_root: Path | None = None
     try:
         env = ensure_env(workflow_id, workflow_dir, workflow.python)
         if isinstance(env, EnvBlocked):
@@ -497,6 +500,11 @@ def run_request(
             wiring=wiring,
         )
     finally:
+        if cache_root is not None:
+            try:
+                evict_cheap(cache_root, max_bytes=cache_max_bytes())
+            except Exception as exc:
+                sys.stderr.write(f"cheap cache eviction failed: {exc}\n")
         with _lock:
             held = _active.get(workflow_id)
             if held is None or held == run_id:

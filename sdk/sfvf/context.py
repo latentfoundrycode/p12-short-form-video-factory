@@ -11,7 +11,7 @@ from typing import Any, Literal, TypeVar, cast, overload
 from pydantic import BaseModel, ConfigDict, Field
 
 from ._budget import BudgetError, BudgetGuard, Ceilings
-from .cache import StepCache, step_key
+from .cache import CHEAP, PAID, StepCache, step_key
 from .emit import decision, emit, forecast, heartbeat, log, stage
 
 _T = TypeVar("_T")
@@ -157,8 +157,6 @@ class _Step:
         self._family = family
         self._inputs = inputs
         self._label = family if label is None else label
-        # SKELETON (C-6): `paid` selects the cache partition — paid results are never auto-evicted,
-        # cheap ones are LRU-evicted (§5.9). The builder routes StepCache by this flag.
         self._paid = paid
         self._key = ""
         self.cached = False
@@ -170,12 +168,15 @@ class _Step:
         self._set_called = True
         return value
 
-    def __enter__(self) -> _Step:
+    def _step_cache(self) -> StepCache:
         cache_root = self._ctx.paths.cache
         if cache_root is None:
             raise RuntimeError("ctx.step requires paths.cache, the content-addressed cache root")
+        return StepCache(cache_root, partition=(PAID if self._paid else CHEAP))
+
+    def __enter__(self) -> _Step:
         self._key = step_key(self._ctx.workflow_version, self._family, self._inputs)
-        found = StepCache(cache_root).get(self._key, restore_into=self._ctx.paths.video)
+        found = self._step_cache().get(self._key, restore_into=self._ctx.paths.video)
         if found is not None:
             self.cached = True
             self.value = found
@@ -197,11 +198,8 @@ class _Step:
             return
         if not self._set_called:
             return
-        cache_root = self._ctx.paths.cache
-        if cache_root is None:
-            raise RuntimeError("ctx.step requires paths.cache, the content-addressed cache root")
         files = _video_files(self.value, self._ctx.paths.video)
-        StepCache(cache_root).put(self._key, self.value, files=files)
+        self._step_cache().put(self._key, self.value, files=files)
         self._emit("ok")
 
     def _emit(self, status: str) -> None:
