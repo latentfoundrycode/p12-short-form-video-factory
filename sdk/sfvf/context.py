@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
@@ -13,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ._budget import BudgetError, BudgetGuard, Ceilings
 from .cache import CHEAP, PAID, StepCache, step_key
 from .emit import decision, emit, forecast, heartbeat, log, stage
-from .library import Asset, FacetSpec
+from .library import Asset, FacetSpec, LibraryStore
 
 _T = TypeVar("_T")
 _R = TypeVar("_R")
@@ -242,9 +243,6 @@ class Library:
     so a rehearsal never leaves stubs behind and never mutates the real library (§7.9): reads see
     the overlay layered over the real library. `put` accepts a file Path or JSON data; a novel
     first-seen open facet value emits a `library` event.
-
-    SKELETON — the public method signatures are frozen by tests/sdk/test_ctx_library.py; the builder
-    fills the bodies (including the dry-run overlay read-through and copy-on-write).
     """
 
     def __init__(
@@ -259,6 +257,12 @@ class Library:
         self._real_root = real_root
         # An overlay is used only in a dry run; a real run writes straight to the real library.
         self._overlay_root = overlay_root if ctx.dry_run else None
+        self._real = LibraryStore(self._real_root, facets=self._facets)
+        self._overlay = (
+            LibraryStore(self._overlay_root, facets=self._facets)
+            if self._overlay_root is not None
+            else None
+        )
 
     def find(
         self,
@@ -268,19 +272,48 @@ class Library:
         status: str | None = "active",
     ) -> list[Asset]:
         """Return matching assets — overlay layered over the real library in a dry run (§7.5)."""
-        raise NotImplementedError
+        if self._overlay is None:
+            return self._real.find(tags=tags, facets=facets, status=status)
+        matched = self._real.find(tags=tags, facets=facets, status=status)
+        by_id = {asset.id: asset for asset in matched}
+        for asset in self._overlay.find(tags=tags, facets=facets, status=status):
+            by_id[asset.id] = asset
+        return sorted(by_id.values(), key=lambda asset: (asset.created_utc, asset.id))
 
     def get(self, name_or_id: str) -> Asset | None:
         """Resolve a name or id to its asset (overlay first in a dry run), else None."""
-        raise NotImplementedError
+        if self._overlay is not None:
+            return self._overlay.get(name_or_id) or self._real.get(name_or_id)
+        return self._real.get(name_or_id)
 
     def value(self, name_or_id: str) -> Any | None:
         """Return a value asset's JSON (overlay first in a dry run), else None (§7.6)."""
-        raise NotImplementedError
+        if self._overlay is not None:
+            return self._overlay.value(name_or_id) or self._real.value(name_or_id)
+        return self._real.value(name_or_id)
 
     def describe(self, assets: Sequence[Asset]) -> str:
         """Compact text describing the assets for an agent prompt — it does not choose (§7.5)."""
-        raise NotImplementedError
+        paragraphs: list[str] = []
+        for asset in assets:
+            tags = ", ".join(asset.tags) if asset.tags else "(none)"
+            facets = (
+                ", ".join(f"{key}={value}" for key, value in sorted(asset.facets.items()))
+                if asset.facets
+                else "(none)"
+            )
+            paragraphs.append(
+                "\n".join(
+                    (
+                        f"id: {asset.id}",
+                        f"tags: {tags}",
+                        f"facets: {facets}",
+                        f"description: {asset.description}",
+                        f"caveats: {asset.caveats}",
+                    )
+                )
+            )
+        return "\n\n".join(paragraphs)
 
     def put(
         self,
@@ -299,7 +332,41 @@ class Library:
 
         Writes to the dry-run overlay when the run is dry, else to the real library.
         """
-        raise NotImplementedError
+        store = self._overlay if self._overlay is not None else self._real
+        if isinstance(source, Path):
+            asset = store.put(
+                name,
+                source,
+                kind=(kind or "file"),
+                tags=tags,
+                facets=facets,
+                description=description,
+                caveats=caveats,
+                supersedes=supersedes,
+                provenance=provenance,
+            )
+        else:
+            asset = store.put_value(
+                name,
+                source,
+                kind=(kind or "value"),
+                tags=tags,
+                facets=facets,
+                description=description,
+                caveats=caveats,
+                supersedes=supersedes,
+                provenance=provenance,
+            )
+        novel = store.novel_facets(asset.id)
+        if novel:
+            self._ctx.emit(
+                {
+                    "t": "library",
+                    "asset": asset.id,
+                    "novel": {key: asset.facets[key] for key in novel},
+                }
+            )
+        return asset
 
     def annotate(
         self,
@@ -310,7 +377,19 @@ class Library:
     ) -> Asset:
         """Update an asset's caveats/facets (§7.5). In a dry run the change lands in the overlay
         (copy-on-write from the real asset), leaving the real library untouched."""
-        raise NotImplementedError
+        if self._overlay is None:
+            return self._real.annotate(asset_id, caveats=caveats, facets=facets)
+        if self._overlay.get(asset_id) is None:
+            blob = self._real_root / "items" / asset_id
+            sidecar = self._real_root / "items" / f"{asset_id}.json"
+            overlay_root = self._overlay_root
+            if overlay_root is not None and blob.is_file() and sidecar.is_file():
+                dest_dir = overlay_root / "items"
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(blob, dest_dir / asset_id)
+                shutil.copyfile(sidecar, dest_dir / f"{asset_id}.json")
+                self._overlay.rebuild_catalog()
+        return self._overlay.annotate(asset_id, caveats=caveats, facets=facets)
 
 
 class Context:
