@@ -69,6 +69,20 @@ class Asset:
     provenance: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class RebuildReport:
+    """Outcome of a catalogue rescan (§5.10 crash-recovery table). Nothing is ever deleted.
+
+    `indexed` counts assets in the rebuilt index. `quarantined` are ids of a blob with no sidecar
+    (crashed before describing — kept and flagged, never indexed). `dropped` are ids of a sidecar
+    with no blob (impossible under blob→sidecar ordering; removed from the index and flagged).
+    """
+
+    indexed: int
+    quarantined: tuple[str, ...]
+    dropped: tuple[str, ...]
+
+
 def normalise_facet_value(value: str) -> str:
     """Normalise an open facet value so trivial variants converge (§7.4).
 
@@ -228,6 +242,42 @@ class LibraryStore:
     def blob_path(self, asset_id: str) -> Path:
         """The path of an asset's stored blob (`items/<id>`); may not exist for an unknown id."""
         return self._items / asset_id
+
+    def find(
+        self,
+        *,
+        tags: Sequence[str] = (),
+        facets: Mapping[str, str] | None = None,
+        status: str | None = "active",
+    ) -> list[Asset]:
+        """Return assets matching every requested tag and facet, filtered by status (§7.5).
+
+        Reads the derived `catalog.json` (rebuilt from `items/` if absent). Matching is exact and
+        deterministic: an asset matches when it carries every requested tag and, for each requested
+        facet, holds exactly that (normalised) value — an absent facet never matches a query for it
+        (§7.4). `status` None means any status; otherwise only assets of that status. Results are
+        ordered deterministically (by `created_utc`, then id). Free and pure — the cheap first tier
+        of selection, before an agent reads descriptions.
+        """
+        raise NotImplementedError
+
+    def rebuild_catalog(self) -> RebuildReport:
+        """Rescan `items/` and rewrite `catalog.json`, returning what was found (§5.10).
+
+        Idempotent. A blob with no sidecar is quarantined and flagged (never deleted — it cost);
+        a sidecar with no blob is dropped from the index and flagged; a described asset not yet
+        indexed is indexed. Novelty (`novel_facets`) is recomputed: for each open facet key, the
+        earliest asset (by created_utc, then id) to carry a given value is marked as introducing it.
+        """
+        raise NotImplementedError
+
+    def novel_facets(self, asset_id: str) -> tuple[str, ...]:
+        """The open-facet keys whose value this asset was the first to introduce (§7.4).
+
+        Read from the catalogue; empty when the asset introduced no new value or is unknown. The
+        `library` event that surfaces novelty in the record is emitted by the ctx wrapper (D-3).
+        """
+        raise NotImplementedError
 
     def _normalise_facets(self, facets: Mapping[str, str] | None) -> dict[str, str]:
         stored: dict[str, str] = {}
