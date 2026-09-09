@@ -1,0 +1,13 @@
+[workflow]
+id = "library-user"
+name = "Library User"
+version = "1.0.0"
+entrypoint = "main:run"
+sdk = "1"
+
+[library]
+namespace = "cast"
+
+[[library.facets]]
+key = "subject"
+values = "open"

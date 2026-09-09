@@ -15,7 +15,7 @@ from typing import Any, Literal, cast
 
 from sfvf._budget import BudgetError, read_run_spend
 from sfvf.cache import evict_cheap
-from sfvf.context import BudgetConfig, ContextFile, ContextPaths
+from sfvf.context import BudgetConfig, ContextFile, ContextPaths, LibraryFacetDecl
 from sfvf.runner import EXIT_BUDGET_DENIED
 
 from app.core.cache_config import cache_max_bytes
@@ -92,6 +92,10 @@ class _ContextWiring:
     step_concurrency: int
     secrets: dict[str, str]
     budget: BudgetConfig | None = None
+    # SKELETON (D-3c): the library namespace root + declared facets are computed once per run and
+    # written into every context.json so `ctx.library` is live. Filled by the builder.
+    library_root: Path | None = None
+    library_facets: list[LibraryFacetDecl] = field(default_factory=list)
 
 
 def _redact_secrets[T](obj: T, values: frozenset[str]) -> T:
@@ -364,6 +368,7 @@ def run_request(
     silence_limit_default: float = DEFAULT_SILENCE_SECONDS,
     on_started: Callable[[str], None] | None = None,
     cache_dir: Path | None = None,
+    library_dir: Path | None = None,
     dry_run: bool = False,
     step_concurrency: int = 1,
     secrets: Mapping[str, str] | None = None,
