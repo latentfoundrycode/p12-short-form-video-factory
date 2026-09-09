@@ -352,6 +352,50 @@ class LibraryStore:
             return ()
         return tuple(entry["novel_facets"])
 
+    def put_value(
+        self,
+        name: str | None,
+        data: Any,
+        *,
+        kind: str = "value",
+        tags: Sequence[str] = (),
+        facets: Mapping[str, str] | None = None,
+        description: str = "",
+        caveats: str = "",
+        supersedes: str | None = None,
+        provenance: Mapping[str, Any] | None = None,
+    ) -> Asset:
+        """Store small JSON `data` as a value asset — series state and other non-file data (§7.6).
+
+        Identified by the sha256 of its canonical JSON encoding (sorted keys, compact separators),
+        so identical data is one blob. Otherwise exactly like `put`: atomic blob→sidecar→catalogue,
+        declared-facet validation, mutable name alias, first-writer-wins on re-put, and supersession
+        of `supersedes`. The stored `kind` marks it a value asset so `value()` can read it back.
+        """
+        raise NotImplementedError
+
+    def value(self, name_or_id: str) -> Any | None:
+        """Return the JSON value of a value asset (§7.6), or None if absent or not a value asset."""
+        raise NotImplementedError
+
+    def annotate(
+        self,
+        asset_id: str,
+        *,
+        caveats: str | None = None,
+        facets: Mapping[str, str] | None = None,
+    ) -> Asset:
+        """Update an asset's caveats and/or facets in place and return the new descriptor (§7.5).
+
+        This is the one place a descriptor changes without a new id: the content is unchanged, so
+        the id and blob are unchanged, and the authoritative sidecar is rewritten atomically.
+        `caveats`,
+        when given, replaces the caveats (the field you can only write after using the asset); any
+        `facets` are validated + normalised and MERGED into the existing set (declared keys only).
+        The catalogue entry is refreshed. Raises `LibraryError` if the asset is unknown.
+        """
+        raise NotImplementedError
+
     def _normalise_facets(self, facets: Mapping[str, str] | None) -> dict[str, str]:
         stored: dict[str, str] = {}
         for key, value in (facets or {}).items():
