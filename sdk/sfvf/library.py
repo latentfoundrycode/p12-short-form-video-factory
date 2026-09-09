@@ -176,6 +176,10 @@ class LibraryStore:
         asset_id = self.resolve(name_or_id)
         if asset_id is None:
             return None
+        return self._read_sidecar(asset_id)
+
+    def _read_sidecar(self, asset_id: str) -> Asset | None:
+        """Read an asset by its id directly (no alias resolution) — for id-targeted operations."""
         path = self._items / f"{asset_id}.json"
         if not path.is_file():
             return None
@@ -348,7 +352,10 @@ class LibraryStore:
 
     def value(self, name_or_id: str) -> Any | None:
         """Return the JSON value of a value asset (§7.6), or None if absent or not a value asset."""
-        asset = self.get(name_or_id)
+        try:
+            asset = self.get(name_or_id)
+        except (ValueError, TypeError):  # a corrupt/non-object sidecar is a read miss here
+            return None
         if asset is None or asset.kind != "value":
             return None
         try:
@@ -372,7 +379,7 @@ class LibraryStore:
         `facets` are validated + normalised and MERGED into the existing set (declared keys only).
         The catalogue entry is refreshed. Raises `LibraryError` if the asset is unknown.
         """
-        existing = self.get(asset_id)
+        existing = self._read_sidecar(asset_id)  # id-targeted: never alias-resolved
         if existing is None:
             raise LibraryError("unknown asset")
         merged = dict(existing.facets)
@@ -384,7 +391,10 @@ class LibraryStore:
             facets=merged,
         )
         self._write_sidecar(updated)
-        self._index_new_asset(updated)
+        # A full rescan keeps novelty consistent with the rebuild semantics (an annotate that adds a
+        # first-seen facet value marks it novel; a caveat-only annotate never disturbs any marker),
+        # avoiding the incremental-vs-rebuild divergence a per-entry reindex would cause here.
+        self.rebuild_catalog()
         return updated
 
     def _store_asset(
@@ -437,17 +447,20 @@ class LibraryStore:
             self._write_sidecar(asset)
             self._index_new_asset(asset)
         # First-writer-wins still applies a supersession flip when `supersedes` is given (§7.7).
-        self._apply_supersession(supersedes)
+        self._apply_supersession(supersedes, asset.id)
         if name is not None:
             aliases = self._load_aliases()
             aliases[name] = asset_id
             _write_json_atomic(self._aliases, aliases)
         return asset
 
-    def _apply_supersession(self, supersedes: str | None) -> None:
-        if supersedes is None:
+    def _apply_supersession(self, supersedes: str | None, new_asset_id: str) -> None:
+        # A supersedes id is an asset id (§7.1/§7.7), so resolve it directly — never via an alias.
+        # An asset never supersedes itself (a re-put naming its own id would otherwise flip the sole
+        # asset to superseded while the returned descriptor still reads active).
+        if supersedes is None or supersedes == new_asset_id:
             return
-        old = self.get(supersedes)
+        old = self._read_sidecar(supersedes)
         if old is None:
             return
         flipped = replace(old, status="superseded")
