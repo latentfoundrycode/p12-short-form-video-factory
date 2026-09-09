@@ -224,6 +224,15 @@ increments that logged them.
   `duration == 8.0`) is reversed as part of that fix. Confirmed CORRECT: base URL, `Key id:secret`
   auth on submit AND poll, submit→poll→download, success status `completed`, `video.url` result path,
   `{failed,nsfw,canceled}` terminal set. _Source: Higgsfield API verification (step-4 prep)._ Open.
+- **H26 — forecast latest-per-meter is not strictly event-ordered across concurrent videos (C-2).**
+  `record_event` (append) and `record_forecast` (accumulator + request.json write) take the run lock
+  separately, so if two videos in one request forecast the SAME meter concurrently, the durable
+  `request.forecast[meter]` may reflect the earlier-appended event rather than the last one. Accepted
+  as low-impact: forecasts are soft, non-blocking, informational reservations; the consumer (C-3
+  atomic pre-flight) applies to atomic single-episode workflows where there is no intra-request
+  concurrency; and "latest across independent concurrent video threads" is itself ill-defined. A
+  strict fix would fold the forecast accumulator update into `record_event` under one lock hold; do
+  that only if a real multi-video-same-meter forecasting workflow appears. _Source: C-2 review B._ Open.
 
 ## Resolved
 

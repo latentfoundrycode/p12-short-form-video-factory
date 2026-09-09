@@ -42,3 +42,10 @@ def decision(
     if reason is not None:
         event["reason"] = reason
     emit(event)
+
+
+def forecast(meter: str, unit: str, amount: float, *, note: str | None = None) -> None:
+    event: dict[str, Any] = {"t": "forecast", "meter": meter, "unit": unit, "amount": amount}
+    if note is not None:
+        event["note"] = note
+    emit(event)

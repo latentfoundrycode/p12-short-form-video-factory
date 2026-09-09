@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ._budget import BudgetError, BudgetGuard, Ceilings
 from .cache import StepCache, step_key
-from .emit import decision, emit, heartbeat, log, stage
+from .emit import decision, emit, forecast, heartbeat, log, stage
 
 _T = TypeVar("_T")
 _R = TypeVar("_R")
@@ -299,6 +299,9 @@ class Context:
         reason: str | None = None,
     ) -> None:
         decision(kind, chosen, alternatives=alternatives, reason=reason)
+
+    def forecast(self, meter: str, unit: str, amount: float, note: str | None = None) -> None:
+        forecast(meter, unit, amount, note=note)
 
     def step(
         self,
