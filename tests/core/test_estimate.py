@@ -167,6 +167,38 @@ def test_only_last_ten_comparable_runs_are_used(tmp_path: Path) -> None:
     assert est.per_meter["openrouter"] == pytest.approx(7.5)
 
 
+def test_running_and_incomplete_runs_are_excluded(tmp_path: Path) -> None:
+    # Only completed history feeds estimates: a still-`running` run (e.g. the current run at
+    # admission) has no final cost and must not be counted.
+    runs = tmp_path / "runs"
+    _run(runs, "20260909-000001", params={"model": "A"}, uncached={1: {"openrouter": 0.05}})
+    _run(
+        runs,
+        "20260909-000002",
+        params={"model": "A"},
+        uncached={1: {"openrouter": 9.0}},
+        status="running",
+    )
+    est = estimate_cost(runs, _WF, {"model": "A"}, _keys("model"))
+    assert est.matches == 1
+    assert est.per_meter["openrouter"] == pytest.approx(0.05)
+
+
+def test_partial_runs_are_included(tmp_path: Path) -> None:
+    # `partial` is success-with-attrition, not a failure — its completed work is usable history.
+    runs = tmp_path / "runs"
+    _run(
+        runs,
+        "20260909-000001",
+        params={"model": "A"},
+        uncached={1: {"openrouter": 0.05}},
+        status="partial",
+    )
+    est = estimate_cost(runs, _WF, {"model": "A"}, _keys("model"))
+    assert est.matches == 1
+    assert est.per_meter["openrouter"] == pytest.approx(0.05)
+
+
 def test_malformed_uncached_amounts_are_skipped(tmp_path: Path) -> None:
     # A hand-edited or corrupt record may carry an oversized-int / negative / non-finite uncached
     # amount. The estimator must skip those (not crash on float() overflow, not poison the average),
