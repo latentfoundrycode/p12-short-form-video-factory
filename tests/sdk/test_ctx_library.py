@@ -94,16 +94,21 @@ def test_describe_returns_text_mentioning_the_assets(tmp_path: Path) -> None:
     assert "bertie" in text
 
 
-def test_novel_open_value_emits_a_library_event(
+def test_put_emits_put_and_novel_facet_events(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    # The library event protocol is fixed by Architecture §3.3: a `put` event per put, and a
+    # `novel-facet` event per first-seen open value.
     ctx = _ctx(tmp_path, facets={"subject": None})
-    ctx.library.put("a", _file(tmp_path, "a", b"A"), facets={"subject": "bertie"})
+    a = ctx.library.put("a", _file(tmp_path, "a", b"A"), facets={"subject": "bertie"})
     events = _library_events(capsys)
-    assert len(events) == 1
-    # A reused value does not emit again.
+    assert {"t": "library", "event": "put", "id": a.id, "name": "a"} in events
+    assert {"t": "library", "event": "novel-facet", "key": "subject", "value": "bertie"} in events
+    assert len(events) == 2
+    # A reused open value emits the put event but no new novel-facet.
     ctx.library.put("b", _file(tmp_path, "b", b"B"), facets={"subject": "bertie"})
-    assert _library_events(capsys) == []
+    reused = _library_events(capsys)
+    assert [e["event"] for e in reused] == ["put"]
 
 
 def test_dry_run_put_does_not_touch_the_real_library(tmp_path: Path) -> None:

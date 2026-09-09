@@ -264,6 +264,17 @@ class Library:
             else None
         )
 
+    def _write_store(self) -> LibraryStore:
+        # The load-bearing dry-run invariant (§7.9): a dry run must NEVER mutate the real library.
+        # If a dry run has no overlay (a wiring bug), fail closed rather than write the real store.
+        if self._ctx.dry_run:
+            if self._overlay is None:
+                raise RuntimeError(
+                    "dry run has no library overlay; refusing to write to the real library (§7.9)"
+                )
+            return self._overlay
+        return self._real
+
     def find(
         self,
         *,
@@ -274,8 +285,15 @@ class Library:
         """Return matching assets — overlay layered over the real library in a dry run (§7.5)."""
         if self._overlay is None:
             return self._real.find(tags=tags, facets=facets, status=status)
-        matched = self._real.find(tags=tags, facets=facets, status=status)
-        by_id = {asset.id: asset for asset in matched}
+        # The overlay is authoritative for any id it holds (a dry-run write shadows the real one),
+        # so drop real matches whose id the overlay owns — otherwise an overlay edit that no longer
+        # matches the query would let the stale real descriptor back into the result.
+        overlay_ids = {asset.id for asset in self._overlay.find(status=None)}
+        by_id = {
+            asset.id: asset
+            for asset in self._real.find(tags=tags, facets=facets, status=status)
+            if asset.id not in overlay_ids
+        }
         for asset in self._overlay.find(tags=tags, facets=facets, status=status):
             by_id[asset.id] = asset
         return sorted(by_id.values(), key=lambda asset: (asset.created_utc, asset.id))
@@ -288,8 +306,10 @@ class Library:
 
     def value(self, name_or_id: str) -> Any | None:
         """Return a value asset's JSON (overlay first in a dry run), else None (§7.6)."""
-        if self._overlay is not None:
-            return self._overlay.value(name_or_id) or self._real.value(name_or_id)
+        # Presence-check the overlay (a stored value may legitimately be falsey — 0, "", [], null),
+        # so a real value is only used when the overlay does not hold the asset at all.
+        if self._overlay is not None and self._overlay.get(name_or_id) is not None:
+            return self._overlay.value(name_or_id)
         return self._real.value(name_or_id)
 
     def describe(self, assets: Sequence[Asset]) -> str:
@@ -332,7 +352,10 @@ class Library:
 
         Writes to the dry-run overlay when the run is dry, else to the real library.
         """
-        store = self._overlay if self._overlay is not None else self._real
+        store = self._write_store()
+        before_ids = {
+            asset.id for asset in store.find(status=None)
+        }  # to spot a genuinely new asset
         if isinstance(source, Path):
             asset = store.put(
                 name,
@@ -357,15 +380,15 @@ class Library:
                 supersedes=supersedes,
                 provenance=provenance,
             )
-        novel = store.novel_facets(asset.id)
-        if novel:
-            self._ctx.emit(
-                {
-                    "t": "library",
-                    "asset": asset.id,
-                    "novel": {key: asset.facets[key] for key in novel},
-                }
-            )
+        # The library event protocol is fixed by Architecture §3.3: a `put` event per put, and a
+        # `novel-facet` event per first-seen open value. Novelty is only introduced by a genuinely
+        # new asset — a re-put of existing content introduces nothing, so it emits no novel-facet.
+        self._ctx.emit({"t": "library", "event": "put", "id": asset.id, "name": name})
+        if asset.id not in before_ids:
+            for key in store.novel_facets(asset.id):
+                self._ctx.emit(
+                    {"t": "library", "event": "novel-facet", "key": key, "value": asset.facets[key]}
+                )
         return asset
 
     def annotate(
@@ -377,9 +400,10 @@ class Library:
     ) -> Asset:
         """Update an asset's caveats/facets (§7.5). In a dry run the change lands in the overlay
         (copy-on-write from the real asset), leaving the real library untouched."""
-        if self._overlay is None:
+        if not self._ctx.dry_run:
             return self._real.annotate(asset_id, caveats=caveats, facets=facets)
-        if self._overlay.get(asset_id) is None:
+        overlay = self._write_store()  # fail closed if a dry run somehow has no overlay
+        if overlay.get(asset_id) is None:
             blob = self._real_root / "items" / asset_id
             sidecar = self._real_root / "items" / f"{asset_id}.json"
             overlay_root = self._overlay_root
@@ -388,8 +412,8 @@ class Library:
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(blob, dest_dir / asset_id)
                 shutil.copyfile(sidecar, dest_dir / f"{asset_id}.json")
-                self._overlay.rebuild_catalog()
-        return self._overlay.annotate(asset_id, caveats=caveats, facets=facets)
+                overlay.rebuild_catalog()
+        return overlay.annotate(asset_id, caveats=caveats, facets=facets)
 
 
 class Context:
