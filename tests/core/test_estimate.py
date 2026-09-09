@@ -167,6 +167,25 @@ def test_only_last_ten_comparable_runs_are_used(tmp_path: Path) -> None:
     assert est.per_meter["openrouter"] == pytest.approx(7.5)
 
 
+def test_malformed_uncached_amounts_are_skipped(tmp_path: Path) -> None:
+    # A hand-edited or corrupt record may carry an oversized-int / negative / non-finite uncached
+    # amount. The estimator must skip those (not crash on float() overflow, not poison the average),
+    # while still using the good meters — tolerant reading (§8), the C-1/C-2 lesson.
+    runs = tmp_path / "runs"
+    _run(runs, "20260909-000001", params={"model": "A"}, uncached={1: {"openrouter": 0.05}})
+    _run(
+        runs,
+        "20260909-000002",
+        params={"model": "A"},
+        uncached={1: {"openrouter": 0.05, "bad_over": 10**400, "bad_neg": -3.0}},
+    )
+    est = estimate_cost(runs, _WF, {"model": "A"}, _keys("model"))
+    assert est.matches == 2
+    assert est.per_meter["openrouter"] == pytest.approx(0.05)
+    assert "bad_over" not in est.per_meter
+    assert "bad_neg" not in est.per_meter
+
+
 def test_create_request_records_dry_run(tmp_path: Path) -> None:
     # Production wiring: the run record must carry dry_run so the estimator can exclude dry runs.
     run_dir = tmp_path / "run"
