@@ -415,6 +415,7 @@ def run_request(
             params=params,
             videos=_video_refs(state.statuses),
             atomic=workflow.atomic,
+            dry_run=wiring.dry_run,
         )
         if on_started is not None:
             on_started(run_id)

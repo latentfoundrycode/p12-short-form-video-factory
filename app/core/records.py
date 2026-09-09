@@ -77,6 +77,7 @@ class RequestRecord(_RecordModel):
     params: dict[str, Any]
     params_locked_utc: str
     videos: list[VideoRef]
+    dry_run: bool = False
     budget: dict[str, Any] | None = None
     forecast: dict[str, Any] | None = None
 
@@ -145,6 +146,7 @@ def create_request(
     videos: Sequence[VideoRef | Mapping[str, Any]],
     atomic: bool = False,
     status: RequestStatus = "running",
+    dry_run: bool = False,
 ) -> RequestRecord:
     _reject_atomic_partial(status, atomic=atomic)
     stamp = clock.format_utc_z(clock.utc_now())
@@ -157,6 +159,7 @@ def create_request(
         params=params,
         params_locked_utc=stamp,
         videos=[VideoRef.model_validate(video) for video in videos],
+        dry_run=dry_run,
     )
     write_json_atomic(run_dir / "request.json", _dump_owned(record, REQUEST_OPTIONAL_FIELDS))
     return record
