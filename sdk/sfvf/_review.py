@@ -8,15 +8,15 @@ the assets are stubs (static, silent) so the content checks are skipped (structu
 
 Composition-DOM checks (§5.8 rows 6-8) and recording the measured results into `video.json` are
 later Stage-E increments.
-
-SKELETON — the `ContentReview`/`content_review` names and signature are frozen by
-tests/sdk/test_content_review.py; the builder fills the body.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
+
+from ._ffmpeg import _binary, _run, probe
 
 # House-format defaults. Thresholds calibrated to the declared `[output]` format are deferred until
 # `[output]` reaches the runtime Context (like the fixed house format); these are the vertical-short
@@ -24,6 +24,14 @@ from pathlib import Path
 SILENCE_MEAN_DBFS = -60.0  # mean level at or below this reads as silent
 CLIPPING_PEAK_DBFS = -0.1  # peak level at or above this reads as clipping
 SLIDESHOW_MOTION_MIN = 0.006  # mean inter-frame change below this reads as a slideshow
+# blackdetect `d` is a minimum interval; a share of the clip at or above this is non-trivial.
+_BLACK_FRACTION = 0.05
+_BLACKDETECT = "blackdetect=d=0.05"
+
+_BLACK_DURATION = re.compile(r"black_duration:\s*([0-9.]+)")
+_MEAN_VOLUME = re.compile(r"mean_volume:\s*(\S+)\s*dB")
+_MAX_VOLUME = re.compile(r"max_volume:\s*(\S+)\s*dB")
+_SCENE_SCORE = re.compile(r"lavfi\.scd\.score=([0-9.eE+-]+)")
 
 
 @dataclass(frozen=True)
@@ -65,4 +73,75 @@ def content_review(path: Path, *, expect_audio: bool) -> ContentReview:
     False and the levels None when `expect_audio` is False. Pure and read-only; does not raise on a
     normal file — the caller decides what a failure means.
     """
-    raise NotImplementedError
+    duration_s = probe(path).duration_s
+    black = _black_frames(path, duration_s)
+    motion_score = _motion_score(path)
+    if expect_audio:
+        mean_dbfs, peak_dbfs = _volume(path)
+        silent = mean_dbfs <= SILENCE_MEAN_DBFS
+        clipping = peak_dbfs >= CLIPPING_PEAK_DBFS
+    else:
+        mean_dbfs = None
+        peak_dbfs = None
+        silent = False
+        clipping = False
+    return ContentReview(
+        black=black,
+        silent=silent,
+        clipping=clipping,
+        slideshow=motion_score < SLIDESHOW_MOTION_MIN,
+        audio_mean_dbfs=mean_dbfs,
+        audio_peak_dbfs=peak_dbfs,
+        motion_score=motion_score,
+    )
+
+
+def _black_frames(path: Path, duration_s: float) -> bool:
+    log = _filter_log(path, "-vf", _BLACKDETECT, "-an")
+    black_s = sum(float(match) for match in _BLACK_DURATION.findall(log))
+    if duration_s <= 0:
+        return black_s > 0
+    return (black_s / duration_s) >= _BLACK_FRACTION
+
+
+def _motion_score(path: Path) -> float:
+    # `select='gte(scene,0)'` prints lavfi.scene_score, but its mean for gradual test
+    # patterns (and letterboxed house-format output) sits below SLIDESHOW_MOTION_MIN.
+    # scdet's scene score is the equivalent inter-frame measure in [0, 1].
+    log = _filter_log(path, "-vf", "scdet,metadata=print", "-an")
+    scores = [float(match) for match in _SCENE_SCORE.findall(log)]
+    if not scores:
+        return 0.0
+    return sum(scores) / len(scores)
+
+
+def _volume(path: Path) -> tuple[float, float]:
+    log = _filter_log(path, "-af", "volumedetect", "-vn")
+    return _parse_db(log, _MEAN_VOLUME), _parse_db(log, _MAX_VOLUME)
+
+
+def _parse_db(log: str, pattern: re.Pattern[str]) -> float:
+    match = pattern.search(log)
+    if match is None:
+        return float("-inf")
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return float("-inf")
+
+
+def _filter_log(path: Path, *args: str) -> str:
+    return _run(
+        [
+            _binary("ffmpeg"),
+            "-hide_banner",
+            "-nostdin",
+            "-i",
+            str(path),
+            *args,
+            "-f",
+            "null",
+            "-",
+        ],
+        capture_stderr=True,
+    )

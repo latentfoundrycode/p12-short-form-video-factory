@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from ._ffmpeg import _binary, _run, probe
+from ._review import content_review
 from ._runtime import current_context
 
 _HOUSE_WIDTH = 1080
@@ -32,6 +33,7 @@ def finalize(video: str, audio: str | None = None, captions: str | None = None) 
         dest,
         expect_audio=audio is not None,
         expect_captions=captions is not None,
+        dry_run=ctx.dry_run,
     )
     return _FINAL_NAME
 
@@ -82,7 +84,7 @@ def _apply_house_format(
     _run(command)
 
 
-def _self_review(dest: Path, *, expect_audio: bool, expect_captions: bool) -> None:
+def _self_review(dest: Path, *, expect_audio: bool, expect_captions: bool, dry_run: bool) -> None:
     if not dest.is_file():
         raise RuntimeError(f"finalize self-review failed: output missing: {dest}")
     probed = probe(dest)
@@ -101,6 +103,11 @@ def _self_review(dest: Path, *, expect_audio: bool, expect_captions: bool) -> No
     if _has_subtitle(dest) is not expect_captions:
         present = "missing" if expect_captions else "present unexpectedly"
         raise RuntimeError(f"finalize self-review failed: subtitle stream {present}")
+    if dry_run:
+        return
+    review = content_review(dest, expect_audio=expect_audio)
+    if review.failures:
+        raise RuntimeError("finalize self-review failed: " + "; ".join(review.failures))
 
 
 def _has_subtitle(path: Path) -> bool:
