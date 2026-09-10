@@ -95,8 +95,11 @@ class _ContextWiring:
     budget: BudgetConfig | None = None
     # Library namespace root + declared facets, computed once per run and written into every
     # context.json so `ctx.library` is live. Not mode-scoped: dry/real is the overlay, not the path.
+    # `library_overlay_root` is a single per-run overlay shared across prepare() and every video,
+    # so a dry-run asset provisioned in prepare() is visible to run() (§7.5/§7.9).
     library_root: Path | None = None
     library_facets: list[LibraryFacetDecl] = field(default_factory=list)
+    library_overlay_root: Path | None = None
 
 
 def _redact_secrets[T](obj: T, values: frozenset[str]) -> T:
@@ -267,7 +270,7 @@ def _make_context(
             cache=wiring.cache_root,
             workflow=wiring.workflow_dir,
             library=wiring.library_root,
-            library_overlay=(video / ".library-overlay"),
+            library_overlay=wiring.library_overlay_root,
         ),
         instructions=[],
         secrets=dict(wiring.secrets),
@@ -401,10 +404,15 @@ def run_request(
         mode = "dry" if dry_run else "real"
         cache_root = ((cache_dir or CACHE_DIR) / workflow_id / mode).resolve()
         cache_root.mkdir(parents=True, exist_ok=True)
-        # The manifest validator defaults namespace to the workflow id.
+        # The manifest validator defaults namespace to the workflow id and validates it as a safe
+        # path segment. The library is a durable store shared across runs (not mode-scoped); a dry
+        # run must not create real-library state, so only provision the real root in a real run.
         namespace = manifest.library.namespace
         library_root = ((library_dir or LIBRARY_DIR) / namespace).resolve()
-        library_root.mkdir(parents=True, exist_ok=True)
+        if not dry_run:
+            library_root.mkdir(parents=True, exist_ok=True)
+        # One overlay per run, shared by prepare() and every video, discarded at run end (§7.9).
+        library_overlay_root = (run_dir / ".library-overlay").resolve()
         library_facets = [
             LibraryFacetDecl(key=f.key, values=(None if f.values == "open" else list(f.values)))
             for f in manifest.library.facets
@@ -424,6 +432,7 @@ def run_request(
             budget=budget,
             library_root=library_root,
             library_facets=library_facets,
+            library_overlay_root=library_overlay_root,
         )
         with _lock:
             _active[workflow_id] = run_id
@@ -527,11 +536,8 @@ def run_request(
             except Exception as exc:
                 sys.stderr.write(f"cheap cache eviction failed: {exc}\n")
         if dry_run and overlay_run_dir is not None:
-            for index in range(1, video_count + 1):
-                shutil.rmtree(
-                    overlay_run_dir / format_video_dir(index, video_count) / ".library-overlay",
-                    ignore_errors=True,
-                )
+            # Discard the whole per-run overlay (prepare() + every video share it) — §7.9.
+            shutil.rmtree(overlay_run_dir / ".library-overlay", ignore_errors=True)
         with _lock:
             held = _active.get(workflow_id)
             if held is None or held == run_id:
