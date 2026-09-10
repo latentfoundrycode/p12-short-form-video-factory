@@ -24,8 +24,11 @@ from ._ffmpeg import _binary, _run, probe
 SILENCE_MEAN_DBFS = -60.0  # mean level at or below this reads as silent
 CLIPPING_PEAK_DBFS = -0.1  # peak level at or above this reads as clipping
 SLIDESHOW_MOTION_MIN = 0.006  # mean inter-frame change below this reads as a slideshow
-# blackdetect `d` is a minimum interval; a share of the clip at or above this is non-trivial.
-_BLACK_FRACTION = 0.05
+# A video is hard-failed as black only when the MAJORITY of it is black — an unambiguously broken
+# render (a generation that produced nothing). A brief fade-to-black or a short glitch never trips
+# this, so the check cannot fail a legitimate paid render. Finer partial-black calibration (an
+# absolute contiguous-black bound) is deferred with the per-`[output]` thresholds, like slideshow.
+_BLACK_FRACTION = 0.5
 _BLACKDETECT = "blackdetect=d=0.05"
 
 _BLACK_DURATION = re.compile(r"black_duration:\s*([0-9.]+)")
@@ -40,7 +43,13 @@ class ContentReview:
 
     Booleans are the verdicts; the measurements are kept so a borderline case is inspectable (and so
     a later increment can record them into `video.json`). `audio_*` are None when audio was not
-    expected/measured. `failures` names each failed check (empty means the video passed).
+    expected/measured. `failures` names each HARD failure (empty means the video passed).
+
+    `slideshow` is a recorded verdict but is NOT a hard failure yet: §5.8 says its threshold "cannot
+    be one number" and must follow the declared `[output]` format, which is not in the runtime
+    Context (house format is fixed). A single house-default threshold would false-fail legitimate
+    low-motion output (talking-head, product, clean AI renders) — worse than missing a slideshow —
+    so the hard gate is deferred to the `[output]`-calibration increment; the signal is recorded.
     """
 
     black: bool
@@ -53,6 +62,7 @@ class ContentReview:
 
     @property
     def failures(self) -> tuple[str, ...]:
+        # Hard failures only — unambiguous broken output. `slideshow` is recorded, not failed here.
         reasons: list[str] = []
         if self.black:
             reasons.append("black or broken frames")
@@ -60,8 +70,6 @@ class ContentReview:
             reasons.append("audio is silent")
         if self.clipping:
             reasons.append("audio is clipping")
-        if self.slideshow:
-            reasons.append("video is effectively a slideshow")
         return tuple(reasons)
 
 

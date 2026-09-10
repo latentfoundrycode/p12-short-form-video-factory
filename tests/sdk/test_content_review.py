@@ -55,10 +55,13 @@ def test_black_video_is_flagged(tmp_path: Path) -> None:
     assert "black or broken frames" in review.failures
 
 
-def test_static_video_is_a_slideshow(tmp_path: Path) -> None:
+def test_static_video_is_a_slideshow_but_not_a_hard_failure(tmp_path: Path) -> None:
+    # Slideshow is a recorded verdict, not a hard failure yet: §5.8's threshold needs the declared
+    # `[output]` (deferred); a single house-default would false-fail legitimate low-motion clips.
     review = content_review(_clip(tmp_path / "static.mp4", video=_STATIC), expect_audio=False)
     assert review.slideshow is True
-    assert "video is effectively a slideshow" in review.failures
+    assert "video is effectively a slideshow" not in review.failures
+    assert review.failures == ()
 
 
 def test_silent_audio_is_flagged(tmp_path: Path) -> None:
@@ -121,6 +124,20 @@ def test_finalize_real_run_accepts_good_output(tmp_path: Path) -> None:
     token = set_active(_ctx(video_dir, dry_run=False))
     try:
         out = sfvf.finalize("in.mp4", audio="in.mp4")
+    finally:
+        reset_active(token)
+    assert out == "final.mp4"
+
+
+def test_finalize_real_run_does_not_fail_low_motion_output(tmp_path: Path) -> None:
+    # A legitimate low-motion (static) real render must NOT be failed — slideshow is recorded, not
+    # a hard failure in E-1 (its hard gate awaits `[output]` calibration). Regression guard against
+    # discarding a paid render on the under-calibrated slideshow heuristic.
+    video_dir = tmp_path / "01"
+    _clip(video_dir / "in.mp4", video=_STATIC)
+    token = set_active(_ctx(video_dir, dry_run=False))
+    try:
+        out = sfvf.finalize("in.mp4")
     finally:
         reset_active(token)
     assert out == "final.mp4"
