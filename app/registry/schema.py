@@ -5,6 +5,8 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
+from app.paths import is_safe_path_segment
+
 type VideoSemantics = Literal["variants", "sequence"]
 type AspectRatio = Literal["9:16", "16:9", "1:1"]
 type SafeZone = Literal["tiktok", "none"]
@@ -149,10 +151,15 @@ class Manifest(_ManifestModel):
 
     @model_validator(mode="after")
     def default_library_namespace(self) -> Self:
-        if self.library.namespace:
+        # The namespace becomes a path segment (library/<namespace>), so it must be a safe segment —
+        # otherwise a manifest could redirect chassis writes outside the library (e.g. "../..").
+        namespace = self.library.namespace or self.workflow.id
+        if not is_safe_path_segment(namespace):
+            raise ValueError(f"library namespace is not a safe path segment: {namespace!r}")
+        if namespace == self.library.namespace:
             return self
         return self.model_copy(
-            update={"library": self.library.model_copy(update={"namespace": self.workflow.id})}
+            update={"library": self.library.model_copy(update={"namespace": namespace})}
         )
 
 
