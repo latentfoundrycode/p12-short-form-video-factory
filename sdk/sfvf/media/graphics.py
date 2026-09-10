@@ -65,13 +65,36 @@ def safe_zone_css() -> str:
 
 def check(composition_html: str, *, safe_zone: bool = True) -> list[Violation]:
     ctx = current_context()
-    if not ctx.dry_run:
-        raise NotImplementedError(
-            "media.graphics.check: the HyperFrames adapter arrives in Stage B; "
-            "run with dry_run=True"
+    entry = _hyperframes_entry()
+    script = Path(__file__).resolve().with_name("dom_check.mjs")
+    if not script.is_file():
+        raise RuntimeError(f"composition check script not found at {script}")
+    toolchain_pkg = entry.parents[3] / "package.json"
+    if not toolchain_pkg.is_file():
+        raise RuntimeError(f"HyperFrames toolchain package.json not found at {toolchain_pkg}.")
+    node = shutil.which("node")
+    if node is None:
+        raise RuntimeError("node is not on PATH")
+    project = Path(tempfile.mkdtemp())
+    try:
+        (project / "index.html").write_text(
+            _index_html(composition_html, 0.0),
+            encoding="utf-8",
         )
-    _ = composition_html, safe_zone
-    return []
+        if ctx.paths.artifacts.is_dir():
+            shutil.copytree(ctx.paths.artifacts, project / "artifacts")
+        output = _run(
+            [
+                node,
+                str(script),
+                toolchain_pkg.resolve().as_uri(),
+                str(project),
+                "true" if safe_zone else "false",
+            ]
+        )
+        return _parse_violations(output)
+    finally:
+        shutil.rmtree(project, ignore_errors=True)
 
 
 def _render_with_hyperframes(
@@ -119,6 +142,48 @@ def _render_with_hyperframes(
         )
     finally:
         shutil.rmtree(project, ignore_errors=True)
+
+
+def _parse_violations(raw: str) -> list[Violation]:
+    payload = _violations_payload(raw)
+    if not isinstance(payload, list):
+        raise RuntimeError(f"composition check returned unparseable output:\n{raw}")
+    violations: list[Violation] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            raise RuntimeError(f"composition check returned unparseable output:\n{raw}")
+        kind = item.get("kind")
+        detail = item.get("detail")
+        if not isinstance(kind, str) or not kind or not isinstance(detail, str) or not detail:
+            raise RuntimeError(f"composition check returned unparseable output:\n{raw}")
+        violations.append({"kind": kind, "detail": detail})
+    return violations
+
+
+def _violations_payload(raw: str) -> object:
+    text = raw.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    # `_run` merges Node stderr into stdout. Warnings often contain brackets
+    # (`[DEP0040]`, `[ExperimentalWarning]`), so a first-"[" / last-"]" slice
+    # would span the diagnostic and the JSON. The inspector prints one JSON
+    # array line last — accept the last complete line that is a JSON array.
+    found: object | None = None
+    for line in text.splitlines():
+        candidate = line.strip()
+        if not candidate.startswith("["):
+            continue
+        try:
+            parsed: object = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, list):
+            found = parsed
+    if found is None:
+        raise RuntimeError(f"composition check returned unparseable output:\n{raw}")
+    return found
 
 
 def _hyperframes_entry() -> Path:

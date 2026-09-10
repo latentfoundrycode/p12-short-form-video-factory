@@ -101,3 +101,37 @@ def test_safe_zone_css_uses_prd_margins(tmp_path: Path) -> None:
 # `check()` is a real headless-DOM inspection as of E-2a; its behavior (the four §6.5 checks,
 # a clean composition returning [], JSON-native violations) is covered in the toolchain-gated
 # tests/integration/test_composition_check.py. The A-5 dry-run no-op stub test is retired here.
+
+
+# --- _parse_violations: robust against the Node stderr that `_run` merges into stdout ---
+# `_run` sets stderr=STDOUT, so a Node deprecation/experimental warning (which contains
+# brackets, e.g. "(node:1) [DEP0040] DeprecationWarning") can precede the JSON on the merged
+# stream. A greedy first-"["/last-"]" slice would then fail to parse and RuntimeError on an
+# otherwise-clean composition — which E-2b would turn into a false-failed paid render. Parsing
+# must key on the JSON array line the script actually prints last.
+
+
+def test_parse_violations_ignores_leading_node_stderr_noise() -> None:
+    from sfvf.media.graphics import _parse_violations
+
+    raw = "(node:1234) [DEP0040] DeprecationWarning: punycode is deprecated\n[]\n"
+    assert _parse_violations(raw) == []
+
+
+def test_parse_violations_reads_the_json_array_after_noise() -> None:
+    from sfvf.media.graphics import _parse_violations
+
+    raw = (
+        "[ExperimentalWarning] VM Modules is experimental\n"
+        '[{"kind": "safe-zone", "detail": "h1 intersects the reserved safe zone"}]\n'
+    )
+    assert _parse_violations(raw) == [
+        {"kind": "safe-zone", "detail": "h1 intersects the reserved safe zone"}
+    ]
+
+
+def test_parse_violations_raises_when_no_json_array_present() -> None:
+    from sfvf.media.graphics import _parse_violations
+
+    with pytest.raises(RuntimeError):
+        _parse_violations("some fatal error text\nno array here\n")
