@@ -1,10 +1,10 @@
 """`sfvf.media.graphics` — the non-render surface (captions, safe_zone_css, check).
 
-`render` is exercised separately in tests/integration/test_graphics_render.py, since as of
-B-1b it renders real composed video via the HyperFrames toolchain (SDK §6.5). The functions
-here need no toolchain: `captions` writes an SRT from the word timings, `safe_zone_css`
-writes the PRD safe-zone CSS, `check` reports no violations in dry-run. File-producing
-results are video-relative path strings (JSON-native, per SDK §5.5).
+`render` is exercised separately in tests/integration/test_graphics_render.py, and `check` in
+tests/integration/test_composition_check.py, since as of B-1b/E-2a they drive the HyperFrames
+toolchain (SDK §6.5). The functions here need no toolchain: `captions` writes an SRT from the
+word timings, `safe_zone_css` writes the PRD safe-zone CSS. File-producing results are
+video-relative path strings (JSON-native, per SDK §5.5).
 """
 
 import json
@@ -98,13 +98,40 @@ def test_safe_zone_css_uses_prd_margins(tmp_path: Path) -> None:
     assert "padding-bottom: 15%" in css
 
 
-def test_check_dry_run_reports_no_violations(tmp_path: Path) -> None:
-    video_dir = tmp_path / "01"
-    video_dir.mkdir()
-    token = set_active(_ctx(video_dir, dry_run=True))
-    try:
-        violations = media.graphics.check("<h1>hi</h1>")
-    finally:
-        reset_active(token)
-    assert violations == []
-    json.dumps(violations)  # JSON-native
+# `check()` is a real headless-DOM inspection as of E-2a; its behavior (the four §6.5 checks,
+# a clean composition returning [], JSON-native violations) is covered in the toolchain-gated
+# tests/integration/test_composition_check.py. The A-5 dry-run no-op stub test is retired here.
+
+
+# --- _parse_violations: robust against the Node stderr that `_run` merges into stdout ---
+# `_run` sets stderr=STDOUT, so a Node deprecation/experimental warning (which contains
+# brackets, e.g. "(node:1) [DEP0040] DeprecationWarning") can precede the JSON on the merged
+# stream. A greedy first-"["/last-"]" slice would then fail to parse and RuntimeError on an
+# otherwise-clean composition — which E-2b would turn into a false-failed paid render. Parsing
+# must key on the JSON array line the script actually prints last.
+
+
+def test_parse_violations_ignores_leading_node_stderr_noise() -> None:
+    from sfvf.media.graphics import _parse_violations
+
+    raw = "(node:1234) [DEP0040] DeprecationWarning: punycode is deprecated\n[]\n"
+    assert _parse_violations(raw) == []
+
+
+def test_parse_violations_reads_the_json_array_after_noise() -> None:
+    from sfvf.media.graphics import _parse_violations
+
+    raw = (
+        "[ExperimentalWarning] VM Modules is experimental\n"
+        '[{"kind": "safe-zone", "detail": "h1 intersects the reserved safe zone"}]\n'
+    )
+    assert _parse_violations(raw) == [
+        {"kind": "safe-zone", "detail": "h1 intersects the reserved safe zone"}
+    ]
+
+
+def test_parse_violations_raises_when_no_json_array_present() -> None:
+    from sfvf.media.graphics import _parse_violations
+
+    with pytest.raises(RuntimeError):
+        _parse_violations("some fatal error text\nno array here\n")
