@@ -288,6 +288,21 @@ increments that logged them.
   around alias writes, and a copy-to-temp→digest-temp→rename fs util (promote the shared
   `_copy_atomic`/`_file_digest`/`_write_json_atomic` out of `cache.py` into a non-underscore module at
   the same time). _Source: D-1 review B (P1a + P1c, de-scoped as v1-accepted per §5.10)._ Open.
+- **H32 — self-review slideshow hard-gating + partial-black calibration deferred (E-1).** §5.8's
+  slideshow threshold "cannot be one number" and must follow the declared `[output]` format, which is
+  not yet in the runtime Context (house format is fixed, per A-6). So E-1 RECORDS the slideshow
+  verdict + `motion_score` but does NOT hard-fail on it — a single house-default threshold, made worse
+  by measuring `scdet` on the letterbox-padded finalize output, would false-fail legitimate low-motion
+  renders (talking-head/product/clean AI: measured 0.0006 padded vs 0.0235 native) and discard a paid
+  video, which is worse than missing a slideshow. Likewise black hard-fails only on a MAJORITY-black
+  output (unambiguously broken); finer partial-black gating (an absolute contiguous-black bound) is
+  deferred with the same calibration. When `[output]` reaches the Context, add per-format thresholds,
+  measure slideshow on the content region (crop the pad) or the pre-house-format source, and turn the
+  slideshow verdict into a hard failure. Broken-frame corruption beyond black is not detected (ffmpeg
+  conceals decode errors); blackdetect + ffprobe validity is E-1's coverage. Also NOTED: the clipping
+  check is largely inert on the real finalize path because `loudnorm` true-peak-limits before the
+  measurement (it still works when `content_review` is called directly). _Source: E-1 review
+  (Sol P1×2 + diff-reviewer SHOULD-FIX/NOTES)._ Open.
 
 ## Resolved
 
