@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 import signal
 import subprocess
 import sys
@@ -40,7 +41,7 @@ from app.core.records import (
     write_video,
 )
 from app.core.secrets import subprocess_env
-from app.paths import CACHE_DIR
+from app.paths import CACHE_DIR, LIBRARY_DIR
 from app.registry.schema import parse_manifest_toml
 
 type EnsureEnv = Callable[..., EnvResult]
@@ -92,8 +93,8 @@ class _ContextWiring:
     step_concurrency: int
     secrets: dict[str, str]
     budget: BudgetConfig | None = None
-    # SKELETON (D-3c): the library namespace root + declared facets are computed once per run and
-    # written into every context.json so `ctx.library` is live. Filled by the builder.
+    # Library namespace root + declared facets, computed once per run and written into every
+    # context.json so `ctx.library` is live. Not mode-scoped: dry/real is the overlay, not the path.
     library_root: Path | None = None
     library_facets: list[LibraryFacetDecl] = field(default_factory=list)
 
@@ -265,12 +266,15 @@ def _make_context(
             shared=shared,
             cache=wiring.cache_root,
             workflow=wiring.workflow_dir,
+            library=wiring.library_root,
+            library_overlay=(video / ".library-overlay"),
         ),
         instructions=[],
         secrets=dict(wiring.secrets),
         previous=previous,
         shared=shared_payload,
         budget=wiring.budget,
+        library_facets=wiring.library_facets,
     )
 
 
@@ -385,6 +389,7 @@ def run_request(
         _active[workflow_id] = None
     run_id: str | None = None
     cache_root: Path | None = None
+    overlay_run_dir: Path | None = None
     try:
         env = ensure_env(workflow_id, workflow_dir, workflow.python)
         if isinstance(env, EnvBlocked):
@@ -392,9 +397,18 @@ def run_request(
         if not isinstance(env, EnvReady):
             raise TypeError("ensure_env must return EnvReady or EnvBlocked")
         run_id, run_dir = allocate_run(workflow_id, runs_dir=runs_dir)
+        overlay_run_dir = run_dir
         mode = "dry" if dry_run else "real"
         cache_root = ((cache_dir or CACHE_DIR) / workflow_id / mode).resolve()
         cache_root.mkdir(parents=True, exist_ok=True)
+        # The manifest validator defaults namespace to the workflow id.
+        namespace = manifest.library.namespace
+        library_root = ((library_dir or LIBRARY_DIR) / namespace).resolve()
+        library_root.mkdir(parents=True, exist_ok=True)
+        library_facets = [
+            LibraryFacetDecl(key=f.key, values=(None if f.values == "open" else list(f.values)))
+            for f in manifest.library.facets
+        ]
         allowed = {rk.name for rk in manifest.requires_keys}
         injected = {k: v for k, v in (secrets or {}).items() if k in allowed}
         wiring = _ContextWiring(
@@ -408,6 +422,8 @@ def run_request(
             step_concurrency=step_concurrency,
             secrets=injected,
             budget=budget,
+            library_root=library_root,
+            library_facets=library_facets,
         )
         with _lock:
             _active[workflow_id] = run_id
@@ -510,6 +526,12 @@ def run_request(
                 evict_cheap(cache_root, max_bytes=cache_max_bytes())
             except Exception as exc:
                 sys.stderr.write(f"cheap cache eviction failed: {exc}\n")
+        if dry_run and overlay_run_dir is not None:
+            for index in range(1, video_count + 1):
+                shutil.rmtree(
+                    overlay_run_dir / format_video_dir(index, video_count) / ".library-overlay",
+                    ignore_errors=True,
+                )
         with _lock:
             held = _active.get(workflow_id)
             if held is None or held == run_id:
