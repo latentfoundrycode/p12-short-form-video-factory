@@ -130,7 +130,7 @@ def _binary(name: str) -> str:
     return found
 
 
-def _run(command: list[str]) -> str:
+def _run(command: list[str], *, capture_stderr: bool = False) -> str:
     try:
         completed = subprocess.run(  # noqa: S603
             command,
@@ -145,6 +145,8 @@ def _run(command: list[str]) -> str:
         raise RuntimeError(f"command failed: {command}\n{stderr}") from exc
     except OSError as exc:
         raise RuntimeError(f"command failed: {command}\n{exc}") from exc
+    if capture_stderr:
+        return completed.stderr or ""
     return completed.stdout
 
 
