@@ -1,0 +1,671 @@
+diff --git a/app/core/supervisor.py b/app/core/supervisor.py
+index da1a2e2..9df6d68 100644
+--- a/app/core/supervisor.py
++++ b/app/core/supervisor.py
+@@ -715,8 +715,9 @@ def _consume_stdout(
+     silence: _SilenceState,
+     limits: dict[str, float],
+     silence_limit_default: float,
+-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
++) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None]:
+     captured: dict[str, Any] | None = None
++    self_review: dict[str, Any] | None = None
+     actual: dict[str, float] = {}
+     uncached: dict[str, float] = {}
+     if proc.stdout is None:
+@@ -749,6 +750,8 @@ def _consume_stdout(
+             redacted = _redact_secrets(event, state.secret_values)
+             if event.get("t") == "result":
+                 captured = {key: value for key, value in redacted.items() if key != "t"}
++            if event.get("t") == "self_review":
++                self_review = {key: value for key, value in redacted.items() if key != "t"}
+             parsed = _parse_cost_event(redacted)
+             if parsed is not None:
+                 meter, amount, cached = parsed
+@@ -765,11 +768,11 @@ def _consume_stdout(
+         stop.set()
+         watcher.join(timeout=1)
+     if not uncached:
+-        return captured, None
++        return captured, None, self_review
+     cost: dict[str, Any] = {"uncached": uncached}
+     if actual:
+         cost["actual"] = actual
+-    return captured, cost
++    return captured, cost, self_review
+ 
+ 
+ def _run_prepare(
+@@ -813,7 +816,7 @@ def _run_prepare(
+         pending = state.register_proc("prep", proc, shared_dir)
+         if pending is not None:
+             _apply_stop(pending, proc, shared_dir)
+-        _consume_stdout(
++        _, _, _ = _consume_stdout(
+             proc,
+             run_dir,
+             "prep",
+@@ -944,7 +947,7 @@ def _run_one_video(
+         if pending is not None:
+             _apply_stop(pending, proc, video_dir)
+         try:
+-            captured, cost = _consume_stdout(
++            captured, cost, self_review = _consume_stdout(
+                 proc,
+                 run_dir,
+                 source,
+@@ -973,6 +976,7 @@ def _run_one_video(
+                 ended_utc=ended,
+                 result=captured if status == "complete" else None,
+                 cost=cost,
++                self_review=self_review,
+             ),
+         )
+         state.set_video(run_dir, index, status, atomic=atomic)
+diff --git a/docs/HARDENING.md b/docs/HARDENING.md
+index d1a9fb7..9fe2cd6 100644
+--- a/docs/HARDENING.md
++++ b/docs/HARDENING.md
+@@ -322,6 +322,13 @@ increments that logged them.
+   (4) **`check()` copies the whole `artifacts/` tree per call** (incl. every `render-*.mp4`); O(N ×
+   artifact size) for a multi-composition run — fine for the common single-composition case.
+   _Source: E-2a review (diff-reviewer NOTES) + E-2b review (diff-reviewer + Sol Review B)._ Open.
++- **H34 — self-review record embeds the absolute output path on the fatal probe-error path (E-3).**
++  In `finalize._self_review`, the "output missing" / "no video stream" branches put the absolute
++  `dest` path into the `self_review` `structural`/`failures` written to `video.json`. Secret *values*
++  are redacted, but the host filesystem layout (workspace/home path) is not a secret and passes
++  through verbatim. Not a live hole — the record lives inside the run tree — so defence-in-depth:
++  emit a run-relative path (e.g. `dest.name`) on those branches so a shared record does not disclose
++  absolute host paths. _Source: E-3 security-auditor ADVISORY._ Open.
+ 
+ ## Resolved
+ 
+diff --git a/docs/LESSONS.md b/docs/LESSONS.md
+new file mode 100644
+index 0000000..eebc84e
+--- /dev/null
++++ b/docs/LESSONS.md
+@@ -0,0 +1,20 @@
++# Lessons
++
++Running record of misconceptions or mistakes the build loop made and what it learned. One entry
++each: what was wrong, how it surfaced, the correction. Generalizable entries are candidates for
++promotion into the cross-project pitfalls catalogue.
++
++- **A secret-leak test stub read the injected secret from `os.environ`, not `ctx.secret()` (E-3).**
++  What was wrong: the supervisor-authored contract stub `tests/stubs/leaks_self_review_secret` read
++  `os.environ.get("OPENROUTER_API_KEY", "")` and declared no `[[requires_keys]]`. Secrets are
++  injected into a workflow only via the `ctx.secret(NAME)` path with the key declared in
++  `[[requires_keys]]` (the mechanism that also registers the value into the supervisor's redaction
++  set), so the stub's `leaked` would have been empty — the redaction test would have been vacuous
++  (nothing to redact), silently passing without exercising the write-path redaction it claimed to.
++  How it surfaced: the builder corrected the stub to match the existing `leaks_cost_secret` template
++  (`ctx.secret(...)` + `[[requires_keys]]`), and the deterministic `scope-check.py` flagged the
++  out-of-scope stub edit so it was reviewed rather than passing silently — both gates working.
++  Correction: any test that exercises secret injection/redaction must read the value via
++  `ctx.secret(NAME)` and declare the key under `[[requires_keys]]`, mirroring `leaks_cost_secret`;
++  never `os.environ`. The supervisor's own frozen contracts get the same scrutiny as the builder's
++  code — a wrong stub makes a real check vacuous.
+diff --git a/handoff/TASK-E3-video-json-self-review.md b/handoff/TASK-E3-video-json-self-review.md
+new file mode 100644
+index 0000000..985febd
+--- /dev/null
++++ b/handoff/TASK-E3-video-json-self-review.md
+@@ -0,0 +1,94 @@
++# TASK E-3 — record the self-review into video.json (§5.8)
++
++## Goal (one sentence)
++Make `finalize` gather all its §5.8 self-review results into one `self_review` event and emit it
++(before raising on any failure), and make the supervisor capture that event into
++`VideoRecord.self_review` — so every run's review, pass or fail, is inspectable in `video.json`.
++
++## Governing spec (verbatim — Architecture §5.8)
++> Failure marks the video failed rather than presenting it. All results are written into
++> `video.json`, so a borderline case can be inspected afterwards.
++
++## Frozen contract (already committed — do NOT edit any test or stub)
++- `tests/sdk/test_finalize_self_review.py` — finalize emits exactly one `{"t":"self_review", …}`
++  event with the shape below, on success AND before raising on failure; `content` is null in a dry run.
++- `tests/core/test_self_review_recording.py` (+ stubs `tests/stubs/emits_self_review`,
++  `tests/stubs/leaks_self_review_secret`) — the supervisor records the event into
++  `VideoRecord.self_review` (the event minus its `t` tag), records no block when none is emitted, and
++  redacts an injected secret in the block.
++
++The `VideoRecord.self_review: dict | None` field and `"self_review"` in `VIDEO_OPTIONAL_FIELDS`
++already exist in `app/core/records.py` — do NOT change records.py.
++
++## The self_review event shape (freeze exactly)
++```json
++{
++  "t": "self_review",
++  "passed": <bool>,                          // true iff failures == []
++  "structural": {"duration_s": <float>, "width": <int>, "height": <int>,
++                 "has_audio": <bool>, "has_captions": <bool>},
++  "content": {"black": <bool>, "silent": <bool>, "clipping": <bool>, "slideshow": <bool>,
++              "audio_mean_dbfs": <float|null>, "audio_peak_dbfs": <float|null>,
++              "motion_score": <float>} | null,   // null in a dry run (content review skipped)
++  "composition": {"checked": <int>, "violations": [{"kind": <str>, "detail": <str>}, ...]},
++  "failures": [<str>, ...]                   // the hard failures that fail the video
++}
++```
++
++## What to implement
++
++### 1. `finalize` gathers + emits the self-review (`sdk/sfvf/finalize.py`)
++Restructure `_self_review` so it COLLECTS results and failures instead of raising per check, then
++emits once and raises once:
++- **structural**: probe `dest` → `duration_s`, `width`, `height`, `has_audio`; `has_captions` from
++  the existing `_has_subtitle`. The existing structural mismatches (wrong resolution, duration ≤ 0,
++  audio/subtitle stream present/absent vs expected) become entries appended to `failures` rather than
++  immediate raises. If `dest` is missing or has no video stream (cannot be probed at all), emit a
++  minimal self_review (`passed:false`, the failure in `failures`, `structural`/`content`/`composition`
++  best-effort) and then raise — do not skip the emit on that path.
++- **content**: on a real run, run the existing `content_review(dest, expect_audio=expect_audio)` and
++  fill `content` from its fields (`black`/`silent`/`clipping`/`slideshow`/`audio_mean_dbfs`/
++  `audio_peak_dbfs`/`motion_score`); append its `failures` to the failures list. In a **dry run**,
++  set `content` to `null` and run no content review (unchanged E-1 behavior).
++- **composition**: reuse the existing composition-review discovery (glob `artifacts/render-*.html`,
++  run `media.graphics.check(html, safe_zone=True)` on each — the E-2b behavior, both modes). Set
++  `composition = {"checked": <#sidecars>, "violations": [<every violation dict>]}` and append each
++  as a `f"composition: {kind}: {detail}"` entry to `failures`.
++- Build the event dict, set `passed = not failures`, and `current_context().emit({"t": "self_review",
++  **payload})` — **before** any `raise`. Then, if `failures` is non-empty, raise `RuntimeError` as
++  today (keep the existing "finalize self-review failed: …" / "finalize composition self-review
++  failed: …" messages; the frozen finalize/composition tests still match on them).
++- Keep the house-format step and `finalize`'s return value unchanged.
++
++### 2. The supervisor captures it (`app/core/supervisor.py`)
++In `_consume_stdout`, alongside the `result` capture, capture the self_review from the **redacted**
++event: `if event.get("t") == "self_review": self_review = {k: v for k, v in redacted.items() if k !=
++"t"}` (so it is secret-redacted for free, like `cost`/`result`). Return it as an added element of the
++tuple. Update BOTH call sites of `_consume_stdout` for the new arity (the prepare/shared call ignores
++it; the per-video call uses it). In the per-video `write_video(... VideoRecord(...))`, add
++`self_review=<captured>` — recorded **regardless of status** (a *failed* video's review is exactly
++what §5.8 wants inspectable, so do NOT gate it on `status == "complete"` the way `result` is).
++
++## Constraints / do-nots
++- Do NOT edit any test or stub, change the frozen event shape, or change `app/core/records.py`.
++- Do NOT change `finalize`'s signature/return, the house-format step, or E-1/E-2 verdict logic —
++  only gather their results and emit before raising.
++- No new dependencies. Keep `ruff`, `ruff format`, and `mypy --strict` clean; match the surrounding
++  style.
++
++## Scope
++- `sdk/sfvf/finalize.py`
++- `app/core/supervisor.py`
++- `tests/stubs/leaks_self_review_secret/`
++
++Note (scope widened post-hoc): the original contract stub read the injected secret via
++`os.environ.get(...)` with no `[[requires_keys]]`, which would leave it empty (secrets are injected
++via `ctx.secret()` + a declared key, per the `leaks_cost_secret` template). The builder's correction
++to `ctx.secret("OPENROUTER_API_KEY")` + `[[requires_keys]]` fixes a defect in the frozen contract
++itself and is adopted. See `docs/LESSONS.md`.
++
++## Verify (from the worktree, `./.venv/Scripts/python.exe`)
++- `-m pytest tests/sdk/test_finalize_self_review.py tests/core/test_self_review_recording.py -q` → all pass.
++- `-m pytest tests/sdk/test_finalize.py tests/sdk/test_content_review.py tests/core/test_cost_recording.py tests/core/test_result_persistence.py tests/integration/test_finalize_composition_check.py -q` → green.
++- `-m pytest -q` (full) → green.
++- `-m ruff check .`, `-m ruff format --check .`, `-m mypy sdk app` → clean.
+diff --git a/sdk/sfvf/finalize.py b/sdk/sfvf/finalize.py
+index 8ee983c..6b82cd6 100644
+--- a/sdk/sfvf/finalize.py
++++ b/sdk/sfvf/finalize.py
+@@ -2,6 +2,7 @@ from __future__ import annotations
+ 
+ import json
+ from pathlib import Path
++from typing import Any
+ 
+ from ._ffmpeg import _binary, _run, probe
+ from ._review import content_review
+@@ -85,33 +86,97 @@ def _apply_house_format(
+ 
+ 
+ def _self_review(dest: Path, *, expect_audio: bool, expect_captions: bool, dry_run: bool) -> None:
++    failures: list[str] = []
++    structural: dict[str, Any] = {}
++    content: dict[str, Any] | None = None
++    probe_error: str | None = None
++    structural_messages: list[str] = []
++    content_messages: list[str] = []
++
+     if not dest.is_file():
+-        raise RuntimeError(f"finalize self-review failed: output missing: {dest}")
+-    probed = probe(dest)
+-    if probed.width is None or probed.height is None:
+-        raise RuntimeError("finalize self-review failed: output has no video stream")
+-    if (probed.width, probed.height) != (_HOUSE_WIDTH, _HOUSE_HEIGHT):
++        detail = f"output missing: {dest}"
++        failures.append(detail)
++        probe_error = f"finalize self-review failed: {detail}"
++    else:
++        probed = probe(dest)
++        has_captions = _has_subtitle(dest)
++        if probed.width is None or probed.height is None:
++            detail = "output has no video stream"
++            failures.append(detail)
++            probe_error = f"finalize self-review failed: {detail}"
++            structural = {
++                "duration_s": probed.duration_s,
++                "has_audio": probed.has_audio,
++                "has_captions": has_captions,
++            }
++        else:
++            structural = {
++                "duration_s": probed.duration_s,
++                "width": probed.width,
++                "height": probed.height,
++                "has_audio": probed.has_audio,
++                "has_captions": has_captions,
++            }
++            if (probed.width, probed.height) != (_HOUSE_WIDTH, _HOUSE_HEIGHT):
++                detail = (
++                    f"expected {_HOUSE_WIDTH}x{_HOUSE_HEIGHT}, got {probed.width}x{probed.height}"
++                )
++                failures.append(detail)
++                structural_messages.append(detail)
++            if probed.duration_s <= 0:
++                detail = "duration is not > 0"
++                failures.append(detail)
++                structural_messages.append(detail)
++            if probed.has_audio is not expect_audio:
++                present = "present unexpectedly" if probed.has_audio else "missing"
++                detail = f"audio stream {present}"
++                failures.append(detail)
++                structural_messages.append(detail)
++            if has_captions is not expect_captions:
++                present = "missing" if expect_captions else "present unexpectedly"
++                detail = f"subtitle stream {present}"
++                failures.append(detail)
++                structural_messages.append(detail)
++            if not dry_run:
++                review = content_review(dest, expect_audio=expect_audio)
++                content = {
++                    "black": review.black,
++                    "silent": review.silent,
++                    "clipping": review.clipping,
++                    "slideshow": review.slideshow,
++                    "audio_mean_dbfs": review.audio_mean_dbfs,
++                    "audio_peak_dbfs": review.audio_peak_dbfs,
++                    "motion_score": review.motion_score,
++                }
++                content_messages.extend(review.failures)
++                failures.extend(review.failures)
++
++    checked, violations = _composition_review()
++    composition_messages = [f"{item['kind']}: {item['detail']}" for item in violations]
++    failures.extend(f"composition: {message}" for message in composition_messages)
++
++    payload: dict[str, Any] = {
++        "passed": not failures,
++        "structural": structural,
++        "content": content,
++        "composition": {"checked": checked, "violations": violations},
++        "failures": failures,
++    }
++    current_context().emit({"t": "self_review", **payload})
++
++    if probe_error is not None:
++        raise RuntimeError(probe_error)
++    if structural_messages:
++        raise RuntimeError("finalize self-review failed: " + "; ".join(structural_messages))
++    if composition_messages:
+         raise RuntimeError(
+-            "finalize self-review failed: expected "
+-            f"{_HOUSE_WIDTH}x{_HOUSE_HEIGHT}, got {probed.width}x{probed.height}"
++            "finalize composition self-review failed: " + "; ".join(composition_messages)
+         )
+-    if probed.duration_s <= 0:
+-        raise RuntimeError("finalize self-review failed: duration is not > 0")
+-    if probed.has_audio is not expect_audio:
+-        present = "present unexpectedly" if probed.has_audio else "missing"
+-        raise RuntimeError(f"finalize self-review failed: audio stream {present}")
+-    if _has_subtitle(dest) is not expect_captions:
+-        present = "missing" if expect_captions else "present unexpectedly"
+-        raise RuntimeError(f"finalize self-review failed: subtitle stream {present}")
+-    _composition_review()
+-    if dry_run:
+-        return
+-    review = content_review(dest, expect_audio=expect_audio)
+-    if review.failures:
+-        raise RuntimeError("finalize self-review failed: " + "; ".join(review.failures))
+-
+-
+-def _composition_review() -> None:
++    if content_messages:
++        raise RuntimeError("finalize self-review failed: " + "; ".join(content_messages))
++
++
++def _composition_review() -> tuple[int, list[dict[str, str]]]:
+     # Runs whenever a composition render is among finalize's inputs (§6.5), in both dry and real
+     # mode — the composition HTML is real even in a dry run. safe_zone follows the declared
+     # `[output]` ("tiktok" | "none", §5.8/§6.5). `[output]` is not yet in the runtime Context, so
+@@ -121,14 +186,14 @@ def _composition_review() -> None:
+ 
+     artifacts = current_context().paths.artifacts
+     if not artifacts.is_dir():
+-        return
+-    messages: list[str] = []
+-    for sidecar in sorted(artifacts.glob("render-*.html")):
++        return 0, []
++    sidecars = sorted(artifacts.glob("render-*.html"))
++    violations: list[dict[str, str]] = []
++    for sidecar in sidecars:
+         html = sidecar.read_text(encoding="utf-8")
+         for violation in check(html, safe_zone=True):
+-            messages.append(f"{violation['kind']}: {violation['detail']}")
+-    if messages:
+-        raise RuntimeError("finalize composition self-review failed: " + "; ".join(messages))
++            violations.append({"kind": violation["kind"], "detail": violation["detail"]})
++    return len(sidecars), violations
+ 
+ 
+ def _has_subtitle(path: Path) -> bool:
+diff --git a/tests/core/test_self_review_recording.py b/tests/core/test_self_review_recording.py
+new file mode 100644
+index 0000000..74c29d0
+--- /dev/null
++++ b/tests/core/test_self_review_recording.py
+@@ -0,0 +1,79 @@
++"""E-3 contract: the supervisor records the self-review into video.json (Architecture §5.8).
++
++§5.8: "All results are written into `video.json`, so a borderline case can be inspected afterwards."
++`finalize` emits a `self_review` event carrying every check's result (structural, content, and
++composition); the supervisor captures it — as it captures the `result` and `cost` events — and
++writes it to `video.json` as `VideoRecord.self_review` (the event minus its `t` tag). A run that
++emits no `self_review` records no block. As a write path it is secret-redacted, like `cost`.
++"""
++
++from __future__ import annotations
++
++import json
++import sys
++from pathlib import Path
++
++from app.core.env import EnvBlocked, EnvReady
++from app.core.records import read_video
++from app.core.supervisor import RunBusy, run_request
++
++STUBS = Path(__file__).resolve().parent.parent / "stubs"
++
++
++def _ready(*_args: object, **_kwargs: object) -> EnvReady:
++    return EnvReady(python=Path(sys.executable))
++
++
++def _run(workflow: Path, tmp_path: Path, **kwargs: object) -> Path:
++    result = run_request(
++        workflow,
++        params={},
++        video_count=1,
++        concurrency=1,
++        runs_dir=tmp_path / "runs",
++        ensure_env=_ready,
++        **kwargs,
++    )
++    assert not isinstance(result, EnvBlocked | RunBusy)
++    workflow_dir = next((tmp_path / "runs").iterdir())
++    return next(workflow_dir.iterdir())
++
++
++def test_self_review_event_is_recorded_into_video_json(tmp_path: Path) -> None:
++    run_dir = _run(STUBS / "emits_self_review", tmp_path)
++    video = read_video(run_dir / "01")
++    assert video.status == "complete"
++    assert video.self_review is not None
++    sr = video.self_review
++    # The recorded block is the emitted event minus its "t" tag.
++    assert "t" not in sr
++    assert sr["passed"] is True
++    assert sr["structural"]["width"] == 1080
++    assert sr["structural"]["height"] == 1920
++    assert sr["content"]["black"] is False
++    assert sr["content"]["motion_score"] == 0.05
++    assert sr["composition"] == {"checked": 1, "violations": []}
++    assert sr["failures"] == []
++
++
++def test_no_self_review_event_records_no_block(tmp_path: Path) -> None:
++    run_dir = _run(STUBS / "succeeds", tmp_path)
++    video = read_video(run_dir / "01")
++    assert video.status == "complete"
++    assert video.self_review is None
++
++
++def test_self_review_block_redacts_injected_secret(tmp_path: Path) -> None:
++    # The self_review block is a write path, so an injected secret that surfaces in it (here in a
++    # composition violation detail) must be redacted — matching events.jsonl, result, and cost (§8).
++    run_dir = _run(
++        STUBS / "leaks_self_review_secret",
++        tmp_path,
++        secrets={"OPENROUTER_API_KEY": "sk-secret-xyz"},
++    )
++    video = read_video(run_dir / "01")
++    assert video.status == "complete"
++    assert video.self_review is not None
++    dumped = json.dumps(video.self_review)
++    assert "sk-secret-xyz" not in dumped
++    assert "[REDACTED]" in dumped
+diff --git a/tests/sdk/test_finalize_self_review.py b/tests/sdk/test_finalize_self_review.py
+new file mode 100644
+index 0000000..964bac2
+--- /dev/null
++++ b/tests/sdk/test_finalize_self_review.py
+@@ -0,0 +1,126 @@
++"""E-3 contract: `finalize` emits a `self_review` event carrying every §5.8 check result.
++
++Per §5.8 "All results are written into `video.json`": `finalize` gathers the structural checks, the
++E-1 content review, and the E-2 composition review into one `{"t":"self_review", ...}` event and
++emits it — and it emits it BEFORE raising on a hard failure, so a failed video's review is recorded
++for inspection too. `passed` is true iff `failures` is empty; `content` is null in a dry run (the
++content review is skipped, as in E-1). FFmpeg lavfi fixtures, no real spend; the composition part is
++toolchain-gated (it drives the real headless renderer/check).
++"""
++
++from __future__ import annotations
++
++import json
++from pathlib import Path
++
++import pytest
++import sfvf
++from sfvf._ffmpeg import _binary, _run
++from sfvf._runtime import reset_active, set_active
++from sfvf.context import Context, ContextFile, ContextPaths
++
++_MOVING = "testsrc2=size=320x240:rate=30"
++_BLACK = "color=c=black:s=320x240:r=30"
++_NORMAL_AUDIO = "sine=frequency=440:sample_rate=44100,volume=0.3"
++
++
++def _clip(path: Path, *, video: str, audio: str | None = None, dur: float = 1.0) -> Path:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    command = [_binary("ffmpeg"), "-y", "-fflags", "+bitexact", "-f", "lavfi", "-i", video]
++    if audio is not None:
++        command += ["-f", "lavfi", "-i", audio, "-c:a", "aac", "-shortest"]
++    command += ["-t", str(dur), "-pix_fmt", "yuv420p", str(path)]
++    _run(command)
++    return path
++
++
++def _ctx(video_dir: Path, *, dry_run: bool) -> Context:
++    return Context(
++        ContextFile(
++            settings={},
++            dry_run=dry_run,
++            paths=ContextPaths(
++                video=video_dir,
++                artifacts=video_dir / "artifacts",
++                steps=video_dir / ".steps",
++                shared=video_dir,
++            ),
++        )
++    )
++
++
++def _self_review_event(capsys: pytest.CaptureFixture[str]) -> dict:
++    events = []
++    for line in capsys.readouterr().out.splitlines():
++        stripped = line.strip()
++        if stripped.startswith("{"):
++            try:
++                events.append(json.loads(stripped))
++            except ValueError:
++                continue
++    reviews = [e for e in events if e.get("t") == "self_review"]
++    assert len(reviews) == 1, f"expected exactly one self_review event, got {len(reviews)}"
++    return reviews[0]
++
++
++def test_finalize_emits_self_review_on_success(
++    tmp_path: Path, capsys: pytest.CaptureFixture[str]
++) -> None:
++    video_dir = tmp_path / "01"
++    _clip(video_dir / "in.mp4", video=_MOVING, audio=_NORMAL_AUDIO)
++    token = set_active(_ctx(video_dir, dry_run=False))
++    try:
++        sfvf.finalize("in.mp4", audio="in.mp4")
++    finally:
++        reset_active(token)
++    sr = _self_review_event(capsys)
++    assert sr["passed"] is True
++    assert sr["failures"] == []
++    assert sr["structural"]["width"] == 1080
++    assert sr["structural"]["height"] == 1920
++    assert sr["structural"]["has_audio"] is True
++    assert sr["structural"]["has_captions"] is False
++    # content present on a real run, with the E-1 measurements.
++    assert sr["content"]["black"] is False
++    assert sr["content"]["silent"] is False
++    assert sr["content"]["clipping"] is False
++    assert isinstance(sr["content"]["motion_score"], int | float)
++    assert isinstance(sr["content"]["audio_mean_dbfs"], int | float)
++    # no composition render among the inputs → nothing checked.
++    assert sr["composition"] == {"checked": 0, "violations": []}
++
++
++def test_finalize_emits_self_review_before_raising_on_failure(
++    tmp_path: Path, capsys: pytest.CaptureFixture[str]
++) -> None:
++    video_dir = tmp_path / "01"
++    _clip(video_dir / "in.mp4", video=_BLACK)
++    token = set_active(_ctx(video_dir, dry_run=False))
++    try:
++        with pytest.raises(RuntimeError):
++            sfvf.finalize("in.mp4")
++    finally:
++        reset_active(token)
++    # The self_review must have been emitted BEFORE the raise, recording the failure.
++    sr = _self_review_event(capsys)
++    assert sr["passed"] is False
++    assert sr["content"]["black"] is True
++    assert any("black" in f for f in sr["failures"])
++
++
++def test_finalize_self_review_content_is_null_in_dry_run(
++    tmp_path: Path, capsys: pytest.CaptureFixture[str]
++) -> None:
++    video_dir = tmp_path / "01"
++    _clip(video_dir / "in.mp4", video=_MOVING)
++    token = set_active(_ctx(video_dir, dry_run=True))
++    try:
++        sfvf.finalize("in.mp4")
++    finally:
++        reset_active(token)
++    sr = _self_review_event(capsys)
++    # A dry run skips the content review (stub media is static/silent), so content is null; the
++    # event is still emitted with the structural (and any composition) results.
++    assert sr["content"] is None
++    assert sr["passed"] is True
++    assert sr["structural"]["width"] == 1080
+diff --git a/tests/stubs/emits_self_review/main.py b/tests/stubs/emits_self_review/main.py
+new file mode 100644
+index 0000000..c72b303
+--- /dev/null
++++ b/tests/stubs/emits_self_review/main.py
+@@ -0,0 +1,27 @@
++def run(ctx) -> None:
++    # Mimics finalize's §5.8 self-review event: all check results, then the result.
++    ctx.emit(
++        {
++            "t": "self_review",
++            "passed": True,
++            "structural": {
++                "duration_s": 30.0,
++                "width": 1080,
++                "height": 1920,
++                "has_audio": True,
++                "has_captions": True,
++            },
++            "content": {
++                "black": False,
++                "silent": False,
++                "clipping": False,
++                "slideshow": False,
++                "audio_mean_dbfs": -18.0,
++                "audio_peak_dbfs": -1.5,
++                "motion_score": 0.05,
++            },
++            "composition": {"checked": 1, "violations": []},
++            "failures": [],
++        }
++    )
++    ctx.emit({"t": "result", "video": "final.mp4", "caption": "self-review stub"})
+diff --git a/tests/stubs/emits_self_review/workflow.toml b/tests/stubs/emits_self_review/workflow.toml
+new file mode 100644
+index 0000000..ffae41b
+--- /dev/null
++++ b/tests/stubs/emits_self_review/workflow.toml
+@@ -0,0 +1,6 @@
++[workflow]
++id = "emits-self-review"
++name = "Emits Self Review"
++version = "1.0.0"
++entrypoint = "main:run"
++sdk = "1"
+diff --git a/tests/stubs/leaks_self_review_secret/main.py b/tests/stubs/leaks_self_review_secret/main.py
+new file mode 100644
+index 0000000..83b07cd
+--- /dev/null
++++ b/tests/stubs/leaks_self_review_secret/main.py
+@@ -0,0 +1,24 @@
++def run(ctx) -> None:
++    # An injected secret surfacing in a self_review field (a composition violation detail) must be
++    # redacted in video.json — the self_review block is a write path, like cost and the result.
++    leaked = ctx.secret("OPENROUTER_API_KEY")
++    ctx.emit(
++        {
++            "t": "self_review",
++            "passed": False,
++            "structural": {
++                "duration_s": 5.0,
++                "width": 1080,
++                "height": 1920,
++                "has_audio": False,
++                "has_captions": False,
++            },
++            "content": None,
++            "composition": {
++                "checked": 1,
++                "violations": [{"kind": "missing-font", "detail": f"font url {leaked} failed"}],
++            },
++            "failures": [f"composition: missing-font: font url {leaked} failed"],
++        }
++    )
++    ctx.emit({"t": "result", "video": "final.mp4"})
+diff --git a/tests/stubs/leaks_self_review_secret/workflow.toml b/tests/stubs/leaks_self_review_secret/workflow.toml
+new file mode 100644
+index 0000000..58bfc5a
+--- /dev/null
++++ b/tests/stubs/leaks_self_review_secret/workflow.toml
+@@ -0,0 +1,10 @@
++[workflow]
++id = "leaks-self-review-secret"
++name = "Leaks Self Review Secret"
++version = "1.0.0"
++entrypoint = "main:run"
++sdk = "1"
++
++[[requires_keys]]
++name = "OPENROUTER_API_KEY"
++label = "OpenRouter"
