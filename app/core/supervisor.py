@@ -715,8 +715,9 @@ def _consume_stdout(
     silence: _SilenceState,
     limits: dict[str, float],
     silence_limit_default: float,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None]:
     captured: dict[str, Any] | None = None
+    self_review: dict[str, Any] | None = None
     actual: dict[str, float] = {}
     uncached: dict[str, float] = {}
     if proc.stdout is None:
@@ -749,6 +750,8 @@ def _consume_stdout(
             redacted = _redact_secrets(event, state.secret_values)
             if event.get("t") == "result":
                 captured = {key: value for key, value in redacted.items() if key != "t"}
+            if event.get("t") == "self_review":
+                self_review = {key: value for key, value in redacted.items() if key != "t"}
             parsed = _parse_cost_event(redacted)
             if parsed is not None:
                 meter, amount, cached = parsed
@@ -765,11 +768,11 @@ def _consume_stdout(
         stop.set()
         watcher.join(timeout=1)
     if not uncached:
-        return captured, None
+        return captured, None, self_review
     cost: dict[str, Any] = {"uncached": uncached}
     if actual:
         cost["actual"] = actual
-    return captured, cost
+    return captured, cost, self_review
 
 
 def _run_prepare(
@@ -813,7 +816,7 @@ def _run_prepare(
         pending = state.register_proc("prep", proc, shared_dir)
         if pending is not None:
             _apply_stop(pending, proc, shared_dir)
-        _consume_stdout(
+        _, _, _ = _consume_stdout(
             proc,
             run_dir,
             "prep",
@@ -944,7 +947,7 @@ def _run_one_video(
         if pending is not None:
             _apply_stop(pending, proc, video_dir)
         try:
-            captured, cost = _consume_stdout(
+            captured, cost, self_review = _consume_stdout(
                 proc,
                 run_dir,
                 source,
@@ -973,6 +976,7 @@ def _run_one_video(
                 ended_utc=ended,
                 result=captured if status == "complete" else None,
                 cost=cost,
+                self_review=self_review,
             ),
         )
         state.set_video(run_dir, index, status, atomic=atomic)

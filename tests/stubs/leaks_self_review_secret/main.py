@@ -1,10 +1,7 @@
-import os
-
-
 def run(ctx) -> None:
     # An injected secret surfacing in a self_review field (a composition violation detail) must be
     # redacted in video.json — the self_review block is a write path, like cost and the result.
-    leaked = os.environ.get("OPENROUTER_API_KEY", "")
+    leaked = ctx.secret("OPENROUTER_API_KEY")
     ctx.emit(
         {
             "t": "self_review",

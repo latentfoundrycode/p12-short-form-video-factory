@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from ._ffmpeg import _binary, _run, probe
 from ._review import content_review
@@ -85,33 +86,97 @@ def _apply_house_format(
 
 
 def _self_review(dest: Path, *, expect_audio: bool, expect_captions: bool, dry_run: bool) -> None:
+    failures: list[str] = []
+    structural: dict[str, Any] = {}
+    content: dict[str, Any] | None = None
+    probe_error: str | None = None
+    structural_messages: list[str] = []
+    content_messages: list[str] = []
+
     if not dest.is_file():
-        raise RuntimeError(f"finalize self-review failed: output missing: {dest}")
-    probed = probe(dest)
-    if probed.width is None or probed.height is None:
-        raise RuntimeError("finalize self-review failed: output has no video stream")
-    if (probed.width, probed.height) != (_HOUSE_WIDTH, _HOUSE_HEIGHT):
+        detail = f"output missing: {dest}"
+        failures.append(detail)
+        probe_error = f"finalize self-review failed: {detail}"
+    else:
+        probed = probe(dest)
+        has_captions = _has_subtitle(dest)
+        if probed.width is None or probed.height is None:
+            detail = "output has no video stream"
+            failures.append(detail)
+            probe_error = f"finalize self-review failed: {detail}"
+            structural = {
+                "duration_s": probed.duration_s,
+                "has_audio": probed.has_audio,
+                "has_captions": has_captions,
+            }
+        else:
+            structural = {
+                "duration_s": probed.duration_s,
+                "width": probed.width,
+                "height": probed.height,
+                "has_audio": probed.has_audio,
+                "has_captions": has_captions,
+            }
+            if (probed.width, probed.height) != (_HOUSE_WIDTH, _HOUSE_HEIGHT):
+                detail = (
+                    f"expected {_HOUSE_WIDTH}x{_HOUSE_HEIGHT}, got {probed.width}x{probed.height}"
+                )
+                failures.append(detail)
+                structural_messages.append(detail)
+            if probed.duration_s <= 0:
+                detail = "duration is not > 0"
+                failures.append(detail)
+                structural_messages.append(detail)
+            if probed.has_audio is not expect_audio:
+                present = "present unexpectedly" if probed.has_audio else "missing"
+                detail = f"audio stream {present}"
+                failures.append(detail)
+                structural_messages.append(detail)
+            if has_captions is not expect_captions:
+                present = "missing" if expect_captions else "present unexpectedly"
+                detail = f"subtitle stream {present}"
+                failures.append(detail)
+                structural_messages.append(detail)
+            if not dry_run:
+                review = content_review(dest, expect_audio=expect_audio)
+                content = {
+                    "black": review.black,
+                    "silent": review.silent,
+                    "clipping": review.clipping,
+                    "slideshow": review.slideshow,
+                    "audio_mean_dbfs": review.audio_mean_dbfs,
+                    "audio_peak_dbfs": review.audio_peak_dbfs,
+                    "motion_score": review.motion_score,
+                }
+                content_messages.extend(review.failures)
+                failures.extend(review.failures)
+
+    checked, violations = _composition_review()
+    composition_messages = [f"{item['kind']}: {item['detail']}" for item in violations]
+    failures.extend(f"composition: {message}" for message in composition_messages)
+
+    payload: dict[str, Any] = {
+        "passed": not failures,
+        "structural": structural,
+        "content": content,
+        "composition": {"checked": checked, "violations": violations},
+        "failures": failures,
+    }
+    current_context().emit({"t": "self_review", **payload})
+
+    if probe_error is not None:
+        raise RuntimeError(probe_error)
+    if structural_messages:
+        raise RuntimeError("finalize self-review failed: " + "; ".join(structural_messages))
+    if composition_messages:
         raise RuntimeError(
-            "finalize self-review failed: expected "
-            f"{_HOUSE_WIDTH}x{_HOUSE_HEIGHT}, got {probed.width}x{probed.height}"
+            "finalize composition self-review failed: " + "; ".join(composition_messages)
         )
-    if probed.duration_s <= 0:
-        raise RuntimeError("finalize self-review failed: duration is not > 0")
-    if probed.has_audio is not expect_audio:
-        present = "present unexpectedly" if probed.has_audio else "missing"
-        raise RuntimeError(f"finalize self-review failed: audio stream {present}")
-    if _has_subtitle(dest) is not expect_captions:
-        present = "missing" if expect_captions else "present unexpectedly"
-        raise RuntimeError(f"finalize self-review failed: subtitle stream {present}")
-    _composition_review()
-    if dry_run:
-        return
-    review = content_review(dest, expect_audio=expect_audio)
-    if review.failures:
-        raise RuntimeError("finalize self-review failed: " + "; ".join(review.failures))
+    if content_messages:
+        raise RuntimeError("finalize self-review failed: " + "; ".join(content_messages))
 
 
-def _composition_review() -> None:
+def _composition_review() -> tuple[int, list[dict[str, str]]]:
     # Runs whenever a composition render is among finalize's inputs (§6.5), in both dry and real
     # mode — the composition HTML is real even in a dry run. safe_zone follows the declared
     # `[output]` ("tiktok" | "none", §5.8/§6.5). `[output]` is not yet in the runtime Context, so
@@ -121,14 +186,14 @@ def _composition_review() -> None:
 
     artifacts = current_context().paths.artifacts
     if not artifacts.is_dir():
-        return
-    messages: list[str] = []
-    for sidecar in sorted(artifacts.glob("render-*.html")):
+        return 0, []
+    sidecars = sorted(artifacts.glob("render-*.html"))
+    violations: list[dict[str, str]] = []
+    for sidecar in sidecars:
         html = sidecar.read_text(encoding="utf-8")
         for violation in check(html, safe_zone=True):
-            messages.append(f"{violation['kind']}: {violation['detail']}")
-    if messages:
-        raise RuntimeError("finalize composition self-review failed: " + "; ".join(messages))
+            violations.append({"kind": violation["kind"], "detail": violation["detail"]})
+    return len(sidecars), violations
 
 
 def _has_subtitle(path: Path) -> bool:
