@@ -163,6 +163,23 @@ def _video_files(value: object, video: Path) -> dict[str, Path]:
     return found
 
 
+def _add_composition_sidecars(files: dict[str, Path], video: Path) -> None:
+    """Include a render's composition-HTML sidecar (``render-<sha>.html``) with its cached ``.mp4``.
+
+    ``media.graphics.render`` writes the composition sidecar next to its ``.mp4`` but it is not
+    named in the step's return value, so it is not captured by ``_video_files``. Without this, a
+    cache hit restores only the ``.mp4`` and ``finalize``'s §6.5 composition check is silently
+    bypassed. For each captured ``.mp4``, add its same-stem ``.html`` sidecar when present so both
+    are cached and restored together.
+    """
+    for relative in list(files):
+        if relative.endswith(".mp4"):
+            sidecar = f"{relative[:-4]}.html"
+            candidate = video / sidecar
+            if candidate.is_file():
+                files[sidecar] = candidate
+
+
 class _Step:
     """Handle yielded by `Context.step`; cache lookup on enter, store on exit."""
 
@@ -220,6 +237,7 @@ class _Step:
         if not self._set_called:
             return
         files = _video_files(self.value, self._ctx.paths.video)
+        _add_composition_sidecars(files, self._ctx.paths.video)
         self._step_cache().put(self._key, self.value, files=files)
         self._emit("ok")
 

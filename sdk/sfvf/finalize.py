@@ -103,11 +103,32 @@ def _self_review(dest: Path, *, expect_audio: bool, expect_captions: bool, dry_r
     if _has_subtitle(dest) is not expect_captions:
         present = "missing" if expect_captions else "present unexpectedly"
         raise RuntimeError(f"finalize self-review failed: subtitle stream {present}")
+    _composition_review()
     if dry_run:
         return
     review = content_review(dest, expect_audio=expect_audio)
     if review.failures:
         raise RuntimeError("finalize self-review failed: " + "; ".join(review.failures))
+
+
+def _composition_review() -> None:
+    # Runs whenever a composition render is among finalize's inputs (§6.5), in both dry and real
+    # mode — the composition HTML is real even in a dry run. safe_zone follows the declared
+    # `[output]` ("tiktok" | "none", §5.8/§6.5). `[output]` is not yet in the runtime Context, so
+    # this uses the fixed house default (tiktok → safe_zone=True); when `[output]` is plumbed, pass
+    # the workflow's declared safe_zone here instead of the hardcoded default.
+    from .media.graphics import check
+
+    artifacts = current_context().paths.artifacts
+    if not artifacts.is_dir():
+        return
+    messages: list[str] = []
+    for sidecar in sorted(artifacts.glob("render-*.html")):
+        html = sidecar.read_text(encoding="utf-8")
+        for violation in check(html, safe_zone=True):
+            messages.append(f"{violation['kind']}: {violation['detail']}")
+    if messages:
+        raise RuntimeError("finalize composition self-review failed: " + "; ".join(messages))
 
 
 def _has_subtitle(path: Path) -> bool:
