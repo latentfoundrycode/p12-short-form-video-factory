@@ -1,0 +1,6 @@
+[workflow]
+id = "emits-self-review"
+name = "Emits Self Review"
+version = "1.0.0"
+entrypoint = "main:run"
+sdk = "1"

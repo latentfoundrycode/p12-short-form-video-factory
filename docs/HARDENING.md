@@ -322,6 +322,13 @@ increments that logged them.
   (4) **`check()` copies the whole `artifacts/` tree per call** (incl. every `render-*.mp4`); O(N ×
   artifact size) for a multi-composition run — fine for the common single-composition case.
   _Source: E-2a review (diff-reviewer NOTES) + E-2b review (diff-reviewer + Sol Review B)._ Open.
+- **H34 — self-review record embeds the absolute output path on the fatal probe-error path (E-3).**
+  In `finalize._self_review`, the "output missing" / "no video stream" branches put the absolute
+  `dest` path into the `self_review` `structural`/`failures` written to `video.json`. Secret *values*
+  are redacted, but the host filesystem layout (workspace/home path) is not a secret and passes
+  through verbatim. Not a live hole — the record lives inside the run tree — so defence-in-depth:
+  emit a run-relative path (e.g. `dest.name`) on those branches so a shared record does not disclose
+  absolute host paths. _Source: E-3 security-auditor ADVISORY._ Open.
 
 ## Resolved
 
