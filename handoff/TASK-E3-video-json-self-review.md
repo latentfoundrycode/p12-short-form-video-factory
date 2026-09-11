@@ -79,6 +79,11 @@ what §5.8 wants inspectable, so do NOT gate it on `status == "complete"` the wa
 ## Scope
 - `sdk/sfvf/finalize.py`
 - `app/core/supervisor.py`
+- `tests/stubs/leaks_self_review_secret/` — scope widened post-hoc: the supervisor's contract author's
+  original stub read the injected secret via `os.environ.get(...)` with no `[[requires_keys]]`, which
+  would leave it empty (secrets are injected via `ctx.secret()` + a declared key, per the
+  `leaks_cost_secret` template). The builder's correction to `ctx.secret("OPENROUTER_API_KEY")` +
+  `[[requires_keys]]` fixes a defect in the frozen contract itself and is adopted. See LESSONS.md.
 
 ## Verify (from the worktree, `./.venv/Scripts/python.exe`)
 - `-m pytest tests/sdk/test_finalize_self_review.py tests/core/test_self_review_recording.py -q` → all pass.
