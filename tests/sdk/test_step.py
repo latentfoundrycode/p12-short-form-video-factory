@@ -135,3 +135,25 @@ def test_step_body_that_raises_is_not_cached(tmp_path: Path) -> None:
     ctx2 = _make_ctx(tmp_path)
     with ctx2.step("gen", inputs={"n": 1}) as step:
         assert step.cached is False
+
+
+def test_step_caches_and_restores_composition_sidecar(tmp_path: Path) -> None:
+    # E-2b: a render's composition-HTML sidecar (render-{sha}.html) must travel with its cached
+    # .mp4 so finalize's §6.5 composition check is not bypassed on a cache hit — the sidecar is how
+    # finalize recovers the composition to re-check, and only the .mp4 appears in the step value.
+    ctx = _make_ctx(tmp_path)
+    (ctx.artifacts / "render-abc.mp4").write_bytes(b"FRAMES")
+    (ctx.artifacts / "render-abc.html").write_text("<h1>composition</h1>", encoding="utf-8")
+    with ctx.step("render", inputs={"shot": 1}) as step:
+        step.set("artifacts/render-abc.mp4")
+
+    # Fresh run: both files gone; a cache hit must restore the .mp4 AND its .html sidecar.
+    ctx2 = _make_ctx(tmp_path)
+    (ctx2.artifacts / "render-abc.mp4").unlink()
+    (ctx2.artifacts / "render-abc.html").unlink()
+    with ctx2.step("render", inputs={"shot": 1}) as step:
+        assert step.cached is True
+    assert (ctx2.paths.video / "artifacts" / "render-abc.mp4").is_file()
+    restored = ctx2.paths.video / "artifacts" / "render-abc.html"
+    assert restored.is_file()
+    assert restored.read_text(encoding="utf-8") == "<h1>composition</h1>"

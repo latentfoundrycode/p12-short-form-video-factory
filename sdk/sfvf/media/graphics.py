@@ -44,6 +44,7 @@ def render(composition_html: str, *, duration_s: float) -> str:
     sha = _sha8([composition_html, duration_s])
     dest, rel = _artifact(ctx, f"render-{sha}.mp4")
     _render_with_hyperframes(ctx, dest, composition_html, duration_s)
+    (ctx.paths.artifacts / f"render-{sha}.html").write_text(composition_html, encoding="utf-8")
     return rel
 
 

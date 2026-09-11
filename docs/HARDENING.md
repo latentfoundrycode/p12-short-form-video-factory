@@ -303,6 +303,25 @@ increments that logged them.
   check is largely inert on the real finalize path because `loudnorm` true-peak-limits before the
   measurement (it still works when `content_review` is called directly). _Source: E-1 review
   (Sol P1×2 + diff-reviewer SHOULD-FIX/NOTES)._ Open.
+- **H33 — composition self-review (§6.5) v1 calibration + `[output]` plumbing (E-2a/E-2b).**
+  `media.graphics.check()` gates outside-viewport / safe-zone / text-clipped / missing-font, and
+  `finalize` auto-runs it on every composition rendered in a run. Deferred/limited in v1:
+  (1) **safe-zone follows `[output]`** — `safe_zone` is `"tiktok" | "none"` per the declared
+  `[output]`, which is not yet in the runtime Context, so `finalize` uses the fixed house default
+  (tiktok → `safe_zone=True`); when `[output]` is plumbed, pass the workflow's declared `safe_zone`
+  instead of the hardcoded default (a `safe_zone="none"` workflow must not be margin-gated).
+  (2) **missing-font is environment-sensitive** — it flags a text element whose primary family is a
+  loaded-`@font-face` family that errored; a remote font (e.g. the explainer's Google-Fonts
+  `@import`) that fails to load in a headless environment without network would flag as missing even
+  though the render falls back to a legible system font. Consider self-hosting/embedding brand fonts,
+  or downgrading missing-font to a recorded signal, when this bites. Also the E-2a-noted global
+  family match: an unused weight/style that 404s flags every element using that family.
+  (3) **discarded-candidate renders are still checked** — `finalize` checks every composition
+  rendered in the run (via `render-*.html` sidecars), not only the one(s) that fed the final video;
+  a violation in a rendered-but-unused composition fails the run. No provenance tracking in v1.
+  (4) **`check()` copies the whole `artifacts/` tree per call** (incl. every `render-*.mp4`); O(N ×
+  artifact size) for a multi-composition run — fine for the common single-composition case.
+  _Source: E-2a review (diff-reviewer NOTES) + E-2b review (diff-reviewer + Sol Review B)._ Open.
 
 ## Resolved
 

@@ -95,13 +95,14 @@ def _composition_html(script: str, timings: object, css_path: str) -> str:
 #captions {{
   position:absolute; left:0; right:0; bottom:22%;
   display:flex; flex-wrap:wrap; justify-content:center; align-items:flex-end;
-  gap:10px; padding:0 90px;
+  gap:10px; padding:0 162px;
 }}
 .cap-word {{
   font-family:"Montserrat",sans-serif; font-weight:800; font-size:76px;
   text-transform:uppercase; color:#ffffff; letter-spacing:0.02em; line-height:1.05;
   position:relative; isolation:isolate; display:inline-block; padding:6px 14px;
   text-shadow:0 6px 20px rgba(0,0,0,0.5);
+  max-width:100%; overflow-wrap:anywhere;
 }}
 .cap-word .bg {{
   position:absolute; inset:0; z-index:-1; border-radius:12px;
@@ -111,7 +112,7 @@ def _composition_html(script: str, timings: object, css_path: str) -> str:
 .cap-group {{
   position:absolute; left:0; right:0; bottom:0;
   display:flex; flex-wrap:wrap; justify-content:center; align-items:flex-end;
-  gap:10px; padding:0 90px;
+  gap:10px; padding:0 162px;
   opacity:0; visibility:hidden;
 }}
 </style>

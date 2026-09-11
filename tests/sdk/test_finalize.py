@@ -70,7 +70,11 @@ def test_finalize_full_produces_house_format_with_streams(tmp_path: Path) -> Non
     video_dir.mkdir()
     token = set_active(_ctx(video_dir))
     try:
-        clip = media.graphics.render("<h1>hi</h1>", duration_s=2.0)
+        # Positioned inside the tiktok safe area: finalize's E-2b composition check enforces the
+        # house-default safe zone, so a bare <h1> at the frame's top edge would (correctly) fail it.
+        clip = media.graphics.render(
+            '<h1 style="position:absolute;left:100px;top:400px;width:700px">hi</h1>', duration_s=2.0
+        )
         speech = media.speech.speak("one two three", voice="v", model="m")
         caps = media.graphics.captions(speech["audio"], speech["timings"], "bold")
         out = sfvf.finalize(clip, audio=speech["audio"], captions=caps)
@@ -92,7 +96,10 @@ def test_finalize_video_only(tmp_path: Path) -> None:
     video_dir.mkdir()
     token = set_active(_ctx(video_dir))
     try:
-        clip = media.graphics.render("<h1>solo</h1>", duration_s=1.5)
+        clip = media.graphics.render(
+            '<h1 style="position:absolute;left:100px;top:400px;width:700px">solo</h1>',
+            duration_s=1.5,
+        )
         out = sfvf.finalize(clip)
     finally:
         reset_active(token)
