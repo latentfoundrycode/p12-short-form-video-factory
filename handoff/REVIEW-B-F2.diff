@@ -1,0 +1,344 @@
+diff --git a/app/core/scheduler.py b/app/core/scheduler.py
+new file mode 100644
+index 0000000..31c6464
+--- /dev/null
++++ b/app/core/scheduler.py
+@@ -0,0 +1,95 @@
++"""Scheduler engine: which schedule entries fire at a given moment (Architecture §5.7).
++
++Reads schedules.json via the schedules data layer. An entry is due when its weekday matches, the
++current time is inside a short grace window after ``time_of_day``, and the slot has not already
++fired. Missed slots (the app was down through the window) are skipped, never queued. Each due
++entry is handed to an injected ``start`` callable; scheduled runs default to a free dry run
++unless the entry opts into real spend.
++"""
++
++from __future__ import annotations
++
++from collections.abc import Callable
++from dataclasses import dataclass, field
++from datetime import datetime, timedelta
++from pathlib import Path
++
++from app.core.schedules import ScheduleEntry, read_schedules
++
++# Window after a slot's time within which it still fires. Past this, the slot is missed.
++DEFAULT_GRACE = timedelta(minutes=5)
++
++type StartFn = Callable[[ScheduleEntry, bool], object]
++
++
++@dataclass
++class SchedulerState:
++    """Already-fired slot keys across ticks. Constructible with no args."""
++
++    fired: set[str] = field(default_factory=set)
++
++
++@dataclass(frozen=True)
++class TickResult:
++    """Outcome of firing one due schedule entry during a tick."""
++
++    entry_id: str
++    dry_run: bool
++    outcome: object
++
++
++def slot_key(entry: ScheduleEntry, now: datetime) -> str:
++    """Stable identity for one entry's slot on one calendar day."""
++    return f"{entry.id}|{now.date().isoformat()}|{entry.time_of_day}"
++
++
++def _slot_time(entry: ScheduleEntry, now: datetime) -> datetime:
++    hour_s, minute_s = entry.time_of_day.split(":")
++    return now.replace(hour=int(hour_s), minute=int(minute_s), second=0, microsecond=0)
++
++
++def due_entries(
++    entries: list[ScheduleEntry],
++    now: datetime,
++    fired: set[str],
++    *,
++    grace: timedelta = DEFAULT_GRACE,
++) -> list[ScheduleEntry]:
++    """Return entries whose slot is in-window at ``now`` and has not already fired.
++
++    Order of ``entries`` is preserved. A ``now`` before the slot time, on a non-matching weekday,
++    past the grace window, or whose ``slot_key`` is already in ``fired`` is not due.
++    """
++    matching: list[ScheduleEntry] = []
++    for entry in entries:
++        if now.weekday() not in entry.days:
++            continue
++        due = _slot_time(entry, now)
++        if not (due <= now < due + grace):
++            continue
++        if slot_key(entry, now) in fired:
++            continue
++        matching.append(entry)
++    return matching
++
++
++def tick(
++    now: datetime,
++    *,
++    schedules_path: Path,
++    state: SchedulerState,
++    start: StartFn,
++    grace: timedelta = DEFAULT_GRACE,
++) -> list[TickResult]:
++    """Fire each due entry through ``start`` and record the slot as fired.
++
++    ``start`` is called as ``start(entry, dry_run)`` with ``dry_run = not entry.allow_real_spend``.
++    A missing schedules file yields no entries, so the tick does nothing.
++    """
++    results: list[TickResult] = []
++    for entry in due_entries(read_schedules(schedules_path), now, state.fired, grace=grace):
++        dry_run = not entry.allow_real_spend
++        outcome = start(entry, dry_run)
++        state.fired.add(slot_key(entry, now))
++        results.append(TickResult(entry_id=entry.id, dry_run=dry_run, outcome=outcome))
++    return results
+diff --git a/docs/HARDENING.md b/docs/HARDENING.md
+index 8e16a2a..26f2e79 100644
+--- a/docs/HARDENING.md
++++ b/docs/HARDENING.md
+@@ -344,6 +344,16 @@ increments that logged them.
+   `request.json` — tightening the listing to require `request.json` makes it a true "is this a real
+   run" check and aligns the two. (4) the serving endpoint could also reject dotfiles (the listing
+   already hides them). _Source: E-4a diff-reviewer + security-auditor ADVISORY/NOTED._ Open.
++- **H36 — scheduler engine uses naive local `datetime`: DST + near-midnight grace edges (F-2).**
++  `app/core/scheduler.py` computes a slot's fire window with `now.replace(...)` on `now.date()` (no
++  timezone math, per the F-2 brief's "naive local datetime" allowance). Two edges for the follow-on
++  runner-wiring increment to account for: (1) on a DST spring-forward/fall-back day the wall-clock
++  window can shift by an hour; (2) a near-midnight slot (e.g. `time_of_day="23:58"` with the 5-min
++  `DEFAULT_GRACE`) silently loses the post-midnight portion of its grace — after 00:00 the date and
++  weekday roll over and `due` recomputes to the far-future same day, so the window is shortened, not
++  doubled (confirmed it cannot re-fire). Both are consistent with "missed slots are skipped." When
++  the runner + timer land, either widen the window computation across the day boundary or accept the
++  clip explicitly. _Source: F-2 diff-reviewer NOTED._ Open.
+ 
+ ## Resolved
+ 
+diff --git a/handoff/TASK-F2-scheduler-engine.md b/handoff/TASK-F2-scheduler-engine.md
+new file mode 100644
+index 0000000..cd3c662
+--- /dev/null
++++ b/handoff/TASK-F2-scheduler-engine.md
+@@ -0,0 +1,81 @@
++# TASK F-2 — scheduler engine (§5.7)
++
++## Goal (one sentence)
++Create `app/core/scheduler.py` — the pure engine that decides which `ScheduleEntry` fire at a given
++moment (skipping missed slots) and fires each due entry through an injected `start` callable, running
++it dry unless the entry opted into real spend.
++
++## Governing spec (verbatim — Architecture §5.7)
++> Reads `schedules.json`. When an entry is due it checks two conditions and acts accordingly: if that
++> workflow already has an active run, the slot is skipped; if the budget is insufficient, the slot is
++> skipped. Otherwise the Generation Request starts with the saved settings.
++>
++> Missed slots are skipped rather than queued, because a queue would silently accumulate runs and
++> then execute several at once …
++>
++> Each entry carries the flag determining whether approval gates pause or pass automatically.
++
++Owner decision (2026-09-12): scheduled runs default to a free **dry run**; the engine derives
++`dry_run = not entry.allow_real_spend`. The two skip conditions (active run / insufficient budget)
++are the RUNNER's existing gates — this engine delegates firing to an injected `start` callable and
++records the outcome; wiring `start` to the real runner and running the engine on a timer is a
++follow-on increment (do NOT build the background thread or touch the API/runner here).
++
++## Frozen contract (already committed — do NOT edit)
++`tests/core/test_scheduler.py`. It imports and pins this exact surface from `app.core.scheduler`:
++- `DEFAULT_GRACE` — a `datetime.timedelta` (the window after a slot's time within which it still
++  fires; pick a small default, e.g. 5 minutes — the contract uses `DEFAULT_GRACE` symbolically).
++- `class SchedulerState` — holds the set of already-fired slot keys across ticks (an in-memory
++  `fired: set[str]`; constructible with no args).
++- `slot_key(entry: ScheduleEntry, now: datetime) -> str` — stable within one slot, distinct across
++  days (e.g. `f"{entry.id}|{now.date().isoformat()}|{entry.time_of_day}"`).
++- `due_entries(entries: list[ScheduleEntry], now: datetime, fired: set[str], *, grace: timedelta =
++  DEFAULT_GRACE) -> list[ScheduleEntry]`.
++- `tick(now: datetime, *, schedules_path: Path, state: SchedulerState, start: StartFn, grace:
++  timedelta = DEFAULT_GRACE) -> <list of per-entry results>` where `StartFn` is
++  `Callable[[ScheduleEntry, bool], object]` called as `start(entry, dry_run)`.
++
++## What to implement (`app/core/scheduler.py` only)
++
++### `due_entries`
++An entry is due at `now` when ALL hold:
++- `now.weekday()` (Monday=0 … Sunday=6) is in `entry.days`.
++- The slot time today has arrived but not long passed: with `due = now` at `entry.time_of_day`
++  (parse `"HH:MM"`), `due <= now < due + grace`. So a `now` before the slot time is NOT due, and a
++  `now` past the grace window (the app was down through it) is NOT due — a MISSED slot is skipped,
++  never fired late or queued.
++- `slot_key(entry, now)` is NOT in `fired`.
++Return the matching entries (order preserved).
++
++### `slot_key`
++Return a stable per-slot identity so a slot fires once: include the entry id, the date, and the
++`time_of_day`. Two `now`s within the same slot/day give the same key; the next week's slot gives a
++different key.
++
++### `tick`
++- `entries = read_schedules(schedules_path)` (from `app.core.schedules`; a missing file → `[]`, so a
++  no-schedules tick does nothing).
++- `for entry in due_entries(entries, now, state.fired, grace=grace):`
++  - `dry_run = not entry.allow_real_spend` (owner decision).
++  - `result = start(entry, dry_run)` — delegate the actual launch to the injected callable.
++  - `state.fired.add(slot_key(entry, now))` — so the slot does not re-fire on a later in-window tick.
++  - collect a per-entry result (e.g. a small frozen dataclass `TickResult(entry_id, dry_run,
++    outcome)` where `outcome` is derived from/echoes `result`, or a tuple) — the contract only
++    checks the `start` calls and fire-once behaviour, so keep the return simple and typed.
++- Return the collected results.
++
++## Constraints / do-nots
++- Only create `app/core/scheduler.py`. Do NOT edit any test, `app/core/schedules.py`,
++  `app/core/supervisor.py`, `app/api/*`, or the frontend. Do NOT build the background timer/thread,
++  wire a real `start` to `admit_run`/`run_request`, or thread `dry_run` through `admit_run` — that is
++  the follow-on wiring increment. Do NOT add a dependency (stdlib + the existing model only).
++- Keep `ruff check`, `ruff format`, and `mypy --strict` clean; match the surrounding style. Use
++  naive local `datetime` (schedules are wall-clock `HH:MM`); do not introduce timezone handling.
++
++## Scope
++- `app/core/scheduler.py`
++
++## Verify (from the worktree, `./.venv/Scripts/python.exe`)
++- `-m pytest tests/core/test_scheduler.py -q` → all pass.
++- `-m pytest -q` (full) → green.
++- `-m ruff check .`, `-m ruff format --check .`, `-m mypy sdk app` → clean.
+diff --git a/tests/core/test_scheduler.py b/tests/core/test_scheduler.py
+new file mode 100644
+index 0000000..fc7f5b7
+--- /dev/null
++++ b/tests/core/test_scheduler.py
+@@ -0,0 +1,129 @@
++"""F-2 contract: the scheduler engine (Architecture §5.7).
++
++§5.7: "When an entry is due it checks two conditions … if that workflow already has an active run,
++the slot is skipped; if the budget is insufficient, the slot is skipped. Otherwise the Generation
++Request starts with the saved settings. Missed slots are skipped rather than queued."
++
++The engine is pure + injectable: `due_entries` decides which entries fire at a given `now` (weekday
++match, within a short grace window after `time_of_day`, not already fired this slot) — so a slot the
++app was down for is simply never in-window again and is skipped, never queued. `tick` fires each due
++entry through an injected `start(entry, dry_run)` and records the outcome; per the owner decision
++it derives `dry_run = not entry.allow_real_spend`, so a default entry runs as a free dry run. The
++active/budget skips are the runner's existing gates (AdmissionBusy / AdmissionBlocked) via `start`.
++No real runs are started here (start is injected).
++"""
++
++from __future__ import annotations
++
++from datetime import datetime, timedelta
++
++from app.core.scheduler import DEFAULT_GRACE, SchedulerState, due_entries, slot_key, tick
++from app.core.schedules import ScheduleEntry, write_schedules
++
++# 2026-01-05 is a Monday (weekday 0).
++MON_0700 = datetime(2026, 1, 5, 7, 0, 0)
++
++
++def _entry(**overrides: object) -> ScheduleEntry:
++    base: dict[str, object] = {
++        "id": "sch-1",
++        "workflow_id": "explainer",
++        "days": [0],  # Monday
++        "time_of_day": "07:00",
++        "video_count": 2,
++        "params": {},
++        "gates_auto": True,
++    }
++    base.update(overrides)
++    return ScheduleEntry.model_validate(base)
++
++
++# --- due_entries: weekday / time-of-day / grace window / already-fired ---
++
++
++def test_due_at_the_slot_time_on_a_matching_weekday() -> None:
++    assert due_entries([_entry()], MON_0700, set()) == [_entry()]
++
++
++def test_due_within_the_grace_window() -> None:
++    within = MON_0700 + DEFAULT_GRACE - timedelta(seconds=1)
++    assert due_entries([_entry()], within, set()) == [_entry()]
++
++
++def test_not_due_before_the_slot_time() -> None:
++    assert due_entries([_entry()], MON_0700 - timedelta(minutes=1), set()) == []
++
++
++def test_missed_slot_past_the_grace_window_is_skipped() -> None:
++    # App was down through the window and ticks late — the slot is NOT fired (not queued).
++    late = MON_0700 + DEFAULT_GRACE + timedelta(minutes=1)
++    assert due_entries([_entry()], late, set()) == []
++
++
++def test_not_due_on_a_non_matching_weekday() -> None:
++    tue_0700 = MON_0700 + timedelta(days=1)  # Tuesday, weekday 1, not in days=[0]
++    assert due_entries([_entry()], tue_0700, set()) == []
++
++
++def test_already_fired_slot_is_not_due_again() -> None:
++    fired = {slot_key(_entry(), MON_0700)}
++    assert due_entries([_entry()], MON_0700, fired) == []
++
++
++def test_slot_key_is_stable_within_a_slot_and_distinct_across_days() -> None:
++    e = _entry()
++    assert slot_key(e, MON_0700) == slot_key(e, MON_0700 + timedelta(seconds=30))
++    assert slot_key(e, MON_0700) != slot_key(e, MON_0700 + timedelta(days=7))  # next Monday
++
++
++# --- tick: dry_run derivation (OWNER decision), fire-once, outcome recording ---
++
++
++def _calls() -> list[tuple[str, bool]]:
++    return []
++
++
++def test_tick_default_entry_fires_dry_run(tmp_path) -> None:
++    # Owner decision: allow_real_spend defaults False → the scheduled run is a free dry run.
++    path = tmp_path / "schedules.json"
++    write_schedules(path, [_entry()])
++    state = SchedulerState()
++    calls: list[tuple[str, bool]] = []
++    tick(MON_0700, schedules_path=path, state=state, start=_recorder(calls))
++    assert calls == [("sch-1", True)]
++
++
++def test_tick_opted_in_entry_fires_real(tmp_path) -> None:
++    path = tmp_path / "schedules.json"
++    write_schedules(path, [_entry(allow_real_spend=True)])
++    state = SchedulerState()
++    calls: list[tuple[str, bool]] = []
++    tick(MON_0700, schedules_path=path, state=state, start=_recorder(calls))
++    assert calls == [("sch-1", False)]  # dry_run False == real spend
++
++
++def test_tick_fires_a_slot_only_once(tmp_path) -> None:
++    path = tmp_path / "schedules.json"
++    write_schedules(path, [_entry()])
++    state = SchedulerState()
++    calls: list[tuple[str, bool]] = []
++    start = _recorder(calls)
++    tick(MON_0700, schedules_path=path, state=state, start=start)
++    # A second tick still inside the grace window must NOT re-fire the same slot.
++    tick(MON_0700 + timedelta(seconds=30), schedules_path=path, state=state, start=start)
++    assert calls == [("sch-1", True)]
++
++
++def test_tick_with_no_schedules_file_does_nothing(tmp_path) -> None:
++    state = SchedulerState()
++    calls: list[tuple[str, bool]] = []
++    tick(MON_0700, schedules_path=tmp_path / "none.json", state=state, start=_recorder(calls))
++    assert calls == []
++
++
++def _recorder(calls: list[tuple[str, bool]]):
++    def start(entry: ScheduleEntry, dry_run: bool) -> str:
++        calls.append((entry.id, dry_run))
++        return "started"
++
++    return start

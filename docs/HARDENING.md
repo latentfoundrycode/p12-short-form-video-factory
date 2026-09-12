@@ -344,6 +344,16 @@ increments that logged them.
   `request.json` — tightening the listing to require `request.json` makes it a true "is this a real
   run" check and aligns the two. (4) the serving endpoint could also reject dotfiles (the listing
   already hides them). _Source: E-4a diff-reviewer + security-auditor ADVISORY/NOTED._ Open.
+- **H36 — scheduler engine uses naive local `datetime`: DST + near-midnight grace edges (F-2).**
+  `app/core/scheduler.py` computes a slot's fire window with `now.replace(...)` on `now.date()` (no
+  timezone math, per the F-2 brief's "naive local datetime" allowance). Two edges for the follow-on
+  runner-wiring increment to account for: (1) on a DST spring-forward/fall-back day the wall-clock
+  window can shift by an hour; (2) a near-midnight slot (e.g. `time_of_day="23:58"` with the 5-min
+  `DEFAULT_GRACE`) silently loses the post-midnight portion of its grace — after 00:00 the date and
+  weekday roll over and `due` recomputes to the far-future same day, so the window is shortened, not
+  doubled (confirmed it cannot re-fire). Both are consistent with "missed slots are skipped." When
+  the runner + timer land, either widen the window computation across the day boundary or accept the
+  clip explicitly. _Source: F-2 diff-reviewer NOTED._ Open.
 
 ## Resolved
 
