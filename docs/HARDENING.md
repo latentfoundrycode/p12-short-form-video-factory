@@ -354,6 +354,15 @@ increments that logged them.
   doubled (confirmed it cannot re-fire). Both are consistent with "missed slots are skipped." When
   the runner + timer land, either widen the window computation across the day boundary or accept the
   clip explicitly. _Source: F-2 diff-reviewer NOTED._ Open.
+- **H37 — schedules CRUD write-serialisation is process-local + malformed-file surfaces as 500 (F-3).**
+  `app/api/schedules.py` serialises every read-modify-write of `schedules.json` under a module-level
+  `threading.Lock`, which holds only within one process — correct for the current single-process
+  uvicorn model, but two workers on separate processes could still lose an update (last atomic
+  `os.replace` wins). If the app is ever served multi-worker, close it with a cross-process file lock.
+  Separately, a corrupt on-disk `schedules.json` makes `read_schedules` raise `ScheduleError`, which
+  surfaces as an unhandled 500 on `GET /api/schedules` (an availability nit, not a security hole, and
+  the file is only ever written atomically by this same API); a follow-on may map it to a clear 422.
+  _Source: F-3 security-auditor ADVISORY._ Open.
 
 ## Resolved
 
