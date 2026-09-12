@@ -48,6 +48,7 @@ export function RunsListView({ workflowId, onOpenRun, onBack }: RunsListViewProp
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,23 +71,12 @@ export function RunsListView({ workflowId, onOpenRun, onBack }: RunsListViewProp
     return () => {
       cancelled = true;
     };
-  }, [workflowId]);
+  }, [workflowId, reload]);
 
   function onRetry() {
     setStatus("loading");
     setError(null);
-    void fetchRuns(workflowId).then(
-      (data) => {
-        setRuns(data.runs);
-        setStatus("ready");
-        setError(null);
-      },
-      (err: unknown) => {
-        setRuns([]);
-        setStatus("error");
-        setError(messageOf(err, "Could not load runs"));
-      },
-    );
+    setReload((n) => n + 1);
   }
 
   return (

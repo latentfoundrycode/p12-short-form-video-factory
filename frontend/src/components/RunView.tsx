@@ -290,6 +290,19 @@ export function RunView({ workflowId, runId, onClose, onReplay }: RunViewProps) 
                       void onReplayClick();
                     }}
                   >
+                    <span className="ico">
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                      >
+                        <path d="M2 8a6 6 0 1 0 1.8-4.3" />
+                        <path d="M2 1.6V4.4h2.8" />
+                      </svg>
+                    </span>
                     {replaying ? "Replaying…" : "Replay run"}
                   </button>
                 ) : (
