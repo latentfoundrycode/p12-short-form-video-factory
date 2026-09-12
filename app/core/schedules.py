@@ -25,7 +25,7 @@ _TIME_OF_DAY = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
 class ScheduleError(Exception):
-    """schedules.json is missing-as-malformed, not a list, or contains an invalid entry."""
+    """schedules.json is malformed JSON, not a list, or contains an invalid entry."""
 
 
 class ScheduleEntry(BaseModel):
@@ -82,7 +82,7 @@ def _write_json_list_atomic(path: Path, payload: list[dict[str, Any]]) -> None:
 
 def read_schedules(path: Path) -> list[ScheduleEntry]:
     try:
-        text = path.read_text(encoding="utf-8")
+        text = _retry_on_permission_error(lambda: path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return []
     try:
