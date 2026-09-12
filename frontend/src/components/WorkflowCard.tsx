@@ -43,9 +43,10 @@ function Thumb({ url }: { url: string | null }) {
 type WorkflowCardProps = {
   workflow: Workflow;
   onStarted: (runId: string) => void;
+  onViewRuns: (workflowId: string) => void;
 };
 
-export function WorkflowCard({ workflow, onStarted }: WorkflowCardProps) {
+export function WorkflowCard({ workflow, onStarted, onViewRuns }: WorkflowCardProps) {
   const [launching, setLaunching] = useState(false);
   const title = workflow.name ?? workflow.id;
   const broken = !workflow.valid;
@@ -94,8 +95,8 @@ export function WorkflowCard({ workflow, onStarted }: WorkflowCardProps) {
             ))}
           </div>
         ) : null}
-        {!broken ? (
-          <div className="card-foot">
+        <div className="card-foot">
+          {!broken ? (
             <button
               type="button"
               className="btn btn-primary btn-sm"
@@ -105,8 +106,17 @@ export function WorkflowCard({ workflow, onStarted }: WorkflowCardProps) {
             >
               Run workflow
             </button>
-          </div>
-        ) : null}
+          ) : null}
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => {
+              onViewRuns(workflow.id);
+            }}
+          >
+            Runs
+          </button>
+        </div>
       </div>
     </article>
   );
