@@ -402,7 +402,11 @@ def list_run_files(workflow_id: str, run_id: str, request: Request) -> RunFilesO
         if not resolved.is_relative_to(run_root):
             continue
         relative = path.relative_to(run_dir)
-        if relative.name == "context.json" or any(part.startswith(".") for part in relative.parts):
+        if (
+            relative.name == "context.json"
+            or resolved.name == "context.json"
+            or any(part.startswith(".") for part in relative.parts)
+        ):
             continue
         files.append(RunFileOut(path=relative.as_posix(), size=path.stat().st_size))
     files.sort(key=lambda item: item.path)
