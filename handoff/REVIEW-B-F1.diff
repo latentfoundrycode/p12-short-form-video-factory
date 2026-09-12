@@ -1,0 +1,363 @@
+diff --git a/app/core/schedules.py b/app/core/schedules.py
+new file mode 100644
+index 0000000..27bea1b
+--- /dev/null
++++ b/app/core/schedules.py
+@@ -0,0 +1,101 @@
++"""Schedule-entry model and schedules.json persistence (Architecture §5.7).
++
++Data layer only: a validated `ScheduleEntry` and atomic read/write of a JSON list. The scheduler
++loop and CRUD API are later increments. Scheduled runs default to a free dry run; `allow_real_spend`
++is off unless an entry opts in.
++"""
++
++from __future__ import annotations
++
++import json
++import os
++import re
++import tempfile
++from pathlib import Path
++from typing import Any
++
++from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
++
++from app.core.records import _retry_on_permission_error
++from app.paths import APP_ROOT, is_safe_path_segment
++
++SCHEDULES_PATH = APP_ROOT / "schedules.json"
++
++_TIME_OF_DAY = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
++
++
++class ScheduleError(Exception):
++    """schedules.json is malformed JSON, not a list, or contains an invalid entry."""
++
++
++class ScheduleEntry(BaseModel):
++    model_config = ConfigDict(extra="forbid")
++
++    id: str
++    workflow_id: str
++    days: list[int]
++    time_of_day: str
++    video_count: int = Field(ge=1)
++    concurrency: int = Field(default=1, ge=1)
++    params: dict[str, Any] = Field(default_factory=dict)
++    gates_auto: bool
++    allow_real_spend: bool = False
++
++    @field_validator("id", "workflow_id")
++    @classmethod
++    def _safe_segment(cls, value: str) -> str:
++        if not is_safe_path_segment(value):
++            raise ValueError(f"not a safe path segment: {value!r}")
++        return value
++
++    @field_validator("days")
++    @classmethod
++    def _weekday_indices(cls, value: list[int]) -> list[int]:
++        if not value or any(day < 0 or day > 6 for day in value):
++            raise ValueError("days must be a non-empty list of weekday indices 0..6 (Monday=0)")
++        return value
++
++    @field_validator("time_of_day")
++    @classmethod
++    def _hhmm(cls, value: str) -> str:
++        if _TIME_OF_DAY.fullmatch(value) is None:
++            raise ValueError('time_of_day must be 24-hour zero-padded "HH:MM"')
++        return value
++
++
++def _write_json_list_atomic(path: Path, payload: list[dict[str, Any]]) -> None:
++    """Atomic temp-file-then-rename write of a JSON array, mirroring `write_json_atomic`."""
++    path.parent.mkdir(parents=True, exist_ok=True)
++    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
++    tmp_path = Path(tmp_name)
++    try:
++        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
++            json.dump(payload, handle, ensure_ascii=False, indent=2)
++            handle.write("\n")
++            handle.flush()
++            os.fsync(handle.fileno())
++        _retry_on_permission_error(lambda: os.replace(tmp_path, path))  # noqa: PTH105  # os.replace is atomic on Windows
++    except Exception:
++        tmp_path.unlink(missing_ok=True)
++        raise
++
++
++def read_schedules(path: Path) -> list[ScheduleEntry]:
++    try:
++        text = _retry_on_permission_error(lambda: path.read_text(encoding="utf-8"))
++    except FileNotFoundError:
++        return []
++    try:
++        payload: Any = json.loads(text)
++    except json.JSONDecodeError as exc:
++        raise ScheduleError(f"malformed schedules JSON in {path}") from exc
++    if not isinstance(payload, list):
++        raise ScheduleError(f"expected a JSON list in {path}")
++    try:
++        return [ScheduleEntry.model_validate(item) for item in payload]
++    except ValidationError as exc:
++        raise ScheduleError(f"invalid schedule entry in {path}") from exc
++
++
++def write_schedules(path: Path, entries: list[ScheduleEntry]) -> None:
++    _write_json_list_atomic(path, [entry.model_dump(mode="json") for entry in entries])
+diff --git a/handoff/TASK-F1-fixes.md b/handoff/TASK-F1-fixes.md
+new file mode 100644
+index 0000000..4c39c4a
+--- /dev/null
++++ b/handoff/TASK-F1-fixes.md
+@@ -0,0 +1,49 @@
++# TASK F-1 fix — retry-guard the schedules read; correct the ScheduleError docstring
++
++Apply these two edits to `app/core/schedules.py` only. Change nothing else. Do not edit tests.
++
++## FIX A — survive the Windows atomic-replace/open race on read
++The F-2 scheduler will poll `schedules.json` while the F-3 API rewrites it via `os.replace`; on
++Windows a read landing mid-replace raises a transient `PermissionError`. `records.read_json` already
++guards its read with `_retry_on_permission_error` — do the same here (this module already imports
++that helper for the writer). Keep the `FileNotFoundError` → `[]` handling OUTSIDE the retry.
++
++Find:
++```python
++def read_schedules(path: Path) -> list[ScheduleEntry]:
++    try:
++        text = path.read_text(encoding="utf-8")
++    except FileNotFoundError:
++        return []
++```
++Replace with:
++```python
++def read_schedules(path: Path) -> list[ScheduleEntry]:
++    try:
++        text = _retry_on_permission_error(lambda: path.read_text(encoding="utf-8"))
++    except FileNotFoundError:
++        return []
++```
++(`_retry_on_permission_error` retries only the transient `PermissionError` and re-raises everything
++else, so a genuine `FileNotFoundError` still reaches the `except` and returns `[]`. Confirm that is
++how it behaves in `app/core/records.py`; if it swallows `FileNotFoundError`, instead guard only the
++read with a `path.exists()` check before the retry so a missing file still returns `[]`.)
++
++## FIX B — correct the misleading ScheduleError docstring
++A missing file is NOT an error (it returns `[]`). Find:
++```python
++class ScheduleError(Exception):
++    """schedules.json is missing-as-malformed, not a list, or contains an invalid entry."""
++```
++Replace with:
++```python
++class ScheduleError(Exception):
++    """schedules.json is malformed JSON, not a list, or contains an invalid entry."""
++```
++
++## Scope
++- `app/core/schedules.py`
++
++## Verify (from the worktree, `./.venv/Scripts/python.exe`)
++- `-m pytest tests/core/test_schedules.py -q` → all pass.
++- `-m ruff check .`, `-m ruff format --check .`, `-m mypy sdk app` → clean.
+diff --git a/handoff/TASK-F1-schedules-model.md b/handoff/TASK-F1-schedules-model.md
+new file mode 100644
+index 0000000..444b6b0
+--- /dev/null
++++ b/handoff/TASK-F1-schedules-model.md
+@@ -0,0 +1,73 @@
++# TASK F-1 — schedule-entry model + schedules.json persistence (§5.7)
++
++## Goal (one sentence)
++Create `app/core/schedules.py` with a validated `ScheduleEntry` model and read/write of a
++`schedules.json` list, the data layer the F-2 scheduler engine and F-3 API build on.
++
++## Governing spec (verbatim — Architecture §5.7)
++> Reads `schedules.json`. When an entry is due it checks two conditions and acts accordingly: if that
++> workflow already has an active run, the slot is skipped; if the budget is insufficient, the slot is
++> skipped. Otherwise the Generation Request starts with the saved settings. … Each entry carries the
++> flag determining whether approval gates pause or pass automatically.
++
++Owner decision (2026-09-12): scheduled runs default to a free **dry run**; real (paid) spend is a
++per-entry opt-in that is **off by default** (F-2 will map `dry_run = not allow_real_spend`). So the
++model carries `allow_real_spend` defaulting to `False`. This increment is DATA-ONLY: no scheduler
++loop, no API, no runs started.
++
++## Frozen contract (already committed — do NOT edit)
++`tests/core/test_schedules.py`. It imports and pins this exact surface from `app.core.schedules`:
++- `class ScheduleEntry` (a Pydantic model; forbid extra fields, like `_RecordModel` in
++  `app/core/records.py`).
++- `class ScheduleError(Exception)`.
++- `read_schedules(path: Path) -> list[ScheduleEntry]`.
++- `write_schedules(path: Path, entries: list[ScheduleEntry]) -> None`.
++
++## What to implement (`app/core/schedules.py` only)
++
++### `ScheduleEntry` fields + validation
++- `id: str` — a stable identifier for CRUD. Must satisfy `app.paths.is_safe_path_segment` (reject
++  `../escape`, `a/b`, `..`, `.`).
++- `workflow_id: str` — same `is_safe_path_segment` validation.
++- `days: list[int]` — weekday indices the slot fires on, Monday=0 … Sunday=6. Non-empty; every
++  element in 0..6 (reject `[]`, `[7]`, `[-1]`, `[0, 7]`).
++- `time_of_day: str` — 24-hour `"HH:MM"`, zero-padded. Accept `"07:00"`, `"23:59"`; reject `"25:00"`,
++  `"7:00"`, `"07:60"`, `"0700"`, `"24:00"`, `"abc"`, `""`. (A regex like `^([01]\d|2[0-3]):[0-5]\d$`.)
++- `video_count: int` — `>= 1`.
++- `concurrency: int` — `>= 1`, default `1`.
++- `params: dict[str, Any]` — the saved run settings (workflow params). Default empty dict is fine;
++  the test always supplies one.
++- `gates_auto: bool` — §5.7's approval-gate flag (True = gates pass automatically; False = pause).
++- `allow_real_spend: bool` — default `False` (owner decision).
++- Configure the model to FORBID extra fields (a stray key must raise `ValidationError`).
++
++Use Pydantic v2 (`field_validator`/`Field(ge=…)`), matching the style of `app/core/records.py`
++(which uses a `_RecordModel` base with `ConfigDict(extra="forbid")`) and `sfvf.context` models.
++
++### Persistence
++- `read_schedules(path)`: a missing file returns `[]`. A present file must be a JSON **list** of
++  entry objects → return `[ScheduleEntry.model_validate(x) for x in list]`. Malformed JSON, a
++  non-list top-level payload, or an entry that fails validation → raise `ScheduleError` (fail
++  visibly; do not silently drop schedules). Read UTF-8.
++- `write_schedules(path, entries)`: serialize the entries to a JSON list and write **atomically**
++  (reuse `app.core.records.write_json_atomic` — note it takes a `Mapping`; you may write via a small
++  atomic helper of the same shape for a top-level JSON *array*, or wrap as needed — the key
++  requirement is an atomic temp-file-then-rename write, UTF-8, `ensure_ascii=False`, trailing
++  newline, mirroring `write_json_atomic`). A `write_schedules` then `read_schedules` must round-trip
++  to equal `ScheduleEntry` objects.
++- Add a module-level default path constant `SCHEDULES_PATH = APP_ROOT / "schedules.json"` (from
++  `app.paths`) for later increments; the functions take an explicit `path` (do not hardcode it).
++
++## Constraints / do-nots
++- Only create `app/core/schedules.py`. Do NOT edit any test, `app/core/records.py`, `app/paths.py`,
++  the supervisor, or any API/frontend. Do NOT add a dependency (pydantic + stdlib only). Do NOT
++  build the scheduler loop, the API, or start any run — those are F-2/F-3.
++- Keep `ruff check`, `ruff format`, and `mypy --strict` clean; match the surrounding style.
++
++## Scope
++- `app/core/schedules.py`
++
++## Verify (from the worktree, `./.venv/Scripts/python.exe`)
++- `-m pytest tests/core/test_schedules.py -q` → all pass.
++- `-m pytest -q` (full) → green.
++- `-m ruff check .`, `-m ruff format --check .`, `-m mypy sdk app` → clean.
+diff --git a/tests/core/test_schedules.py b/tests/core/test_schedules.py
+new file mode 100644
+index 0000000..f0b4cf1
+--- /dev/null
++++ b/tests/core/test_schedules.py
+@@ -0,0 +1,116 @@
++"""F-1 contract: the schedule-entry model + schedules.json persistence (Architecture §5.7).
++
++§5.7: "Reads `schedules.json`. When an entry is due it checks two conditions … if that workflow
++already has an active run, the slot is skipped; if the budget is insufficient, the slot is skipped.
++Otherwise the Generation Request starts with the saved settings … Each entry carries the flag
++determining whether approval gates pause or pass automatically."
++
++This increment is the DATA LAYER only: a validated `ScheduleEntry` (the saved settings for a slot)
++and read/write of `schedules.json` (a list of entries). The scheduler engine that evaluates
++due-ness and starts runs is F-2; the CRUD API is F-3. Per the owner decision (2026-09-12), scheduled
++runs default to a free dry run — `allow_real_spend` is off by default and F-2 maps
++`dry_run = not allow_real_spend`. No network, no runs started here.
++"""
++
++from __future__ import annotations
++
++from pathlib import Path
++
++import pytest
++from pydantic import ValidationError
++
++from app.core.schedules import ScheduleEntry, ScheduleError, read_schedules, write_schedules
++
++
++def _entry(**overrides: object) -> ScheduleEntry:
++    base: dict[str, object] = {
++        "id": "sch-1",
++        "workflow_id": "explainer",
++        "days": [0, 2, 4],
++        "time_of_day": "07:00",
++        "video_count": 3,
++        "params": {"topic": "physics"},
++        "gates_auto": True,
++    }
++    base.update(overrides)
++    return ScheduleEntry.model_validate(base)
++
++
++def test_valid_entry_and_defaults() -> None:
++    entry = _entry()
++    assert entry.workflow_id == "explainer"
++    assert entry.days == [0, 2, 4]
++    assert entry.time_of_day == "07:00"
++    assert entry.video_count == 3
++    # Owner decision: scheduled runs are a free dry run unless real spend is explicitly enabled.
++    assert entry.allow_real_spend is False
++    # concurrency defaults to 1 (one run per workflow at a time; §2/§5.7).
++    assert entry.concurrency == 1
++
++
++def test_allow_real_spend_can_be_enabled() -> None:
++    assert _entry(allow_real_spend=True).allow_real_spend is True
++
++
++@pytest.mark.parametrize("bad_time", ["25:00", "7:00", "07:60", "0700", "abc", "24:00", ""])
++def test_bad_time_of_day_is_rejected(bad_time: str) -> None:
++    with pytest.raises(ValidationError):
++        _entry(time_of_day=bad_time)
++
++
++@pytest.mark.parametrize("bad_days", [[], [7], [-1], [0, 7]])
++def test_bad_days_are_rejected(bad_days: list[int]) -> None:
++    with pytest.raises(ValidationError):
++        _entry(days=bad_days)
++
++
++@pytest.mark.parametrize("bad_count", [0, -1])
++def test_video_count_must_be_positive(bad_count: int) -> None:
++    with pytest.raises(ValidationError):
++        _entry(video_count=bad_count)
++
++
++def test_concurrency_must_be_positive() -> None:
++    with pytest.raises(ValidationError):
++        _entry(concurrency=0)
++
++
++@pytest.mark.parametrize("field", ["workflow_id", "id"])
++@pytest.mark.parametrize("unsafe", ["../escape", "a/b", "..", "."])
++def test_unsafe_identifiers_are_rejected(field: str, unsafe: str) -> None:
++    with pytest.raises(ValidationError):
++        _entry(**{field: unsafe})
++
++
++def test_extra_fields_forbidden() -> None:
++    with pytest.raises(ValidationError):
++        _entry(surprise="x")
++
++
++def test_write_then_read_round_trips(tmp_path: Path) -> None:
++    path = tmp_path / "schedules.json"
++    entries = [
++        _entry(),
++        _entry(id="sch-2", workflow_id="collage", allow_real_spend=True, gates_auto=False),
++    ]
++    write_schedules(path, entries)
++    loaded = read_schedules(path)
++    assert loaded == entries
++
++
++def test_read_missing_file_returns_empty(tmp_path: Path) -> None:
++    assert read_schedules(tmp_path / "nope.json") == []
++
++
++def test_read_malformed_file_raises(tmp_path: Path) -> None:
++    path = tmp_path / "schedules.json"
++    path.write_text("{not json", encoding="utf-8")
++    with pytest.raises(ScheduleError):
++        read_schedules(path)
++
++
++def test_read_rejects_non_list_payload(tmp_path: Path) -> None:
++    path = tmp_path / "schedules.json"
++    path.write_text('{"entries": []}', encoding="utf-8")
++    with pytest.raises(ScheduleError):
++        read_schedules(path)
