@@ -18,3 +18,12 @@ promotion into the cross-project pitfalls catalogue.
   `ctx.secret(NAME)` and declare the key under `[[requires_keys]]`, mirroring `leaks_cost_secret`;
   never `os.environ`. The supervisor's own frozen contracts get the same scrutiny as the builder's
   code — a wrong stub makes a real check vacuous.
+- **The Vite frontend build wipes `app/web/.gitkeep` (E-4b).** What was wrong: running
+  `npm --prefix frontend run build` (Vite with `emptyOutDir` into `app/web/`) deletes the tracked
+  `app/web/.gitkeep` placeholder — the only tracked file keeping `app/web/` present in the repo (the
+  built `index.html`/`assets/` are gitignored). If committed, a fresh checkout would lack `app/web/`
+  and the backend's static mount could break. How it surfaced: secret-sentinel + diff-reviewer both
+  flagged the `D app/web/.gitkeep` in the changeset (the scope-check ran BEFORE the build and so
+  missed it — the deletion is a build side effect, not a builder edit). Correction: after running the
+  frontend build in a worktree, `git checkout HEAD -- app/web/.gitkeep` before committing; never
+  commit its deletion. A durable fix (deferred) is a Vite config that preserves the placeholder.

@@ -1,12 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchRun, runEventsUrl, stopRun } from "../api";
-import type {
-  RequestStatus,
-  RunDetail,
-  SseEnvelope,
-  StageEvent,
-  VideoStatus,
-} from "../types";
+import { RunRecordView } from "./RunRecordView";
+import type { RequestStatus, RunDetail, SseEnvelope, StageEvent, VideoStatus } from "../types";
 import { isTerminalStatus } from "../types";
 
 type RunViewProps = {
@@ -185,6 +180,7 @@ export function RunView({ workflowId, runId, onClose }: RunViewProps) {
   }, [events]);
 
   const active = run !== null && !isTerminalStatus(run.status);
+  const terminal = run !== null && isTerminalStatus(run.status);
 
   async function onStop(mode: "graceful" | "hard") {
     setStopError(null);
@@ -224,7 +220,7 @@ export function RunView({ workflowId, runId, onClose }: RunViewProps) {
       ) : null}
 
       {run ? (
-        <div className="run-layout">
+        <div className={terminal ? "run-record-page" : "run-layout"}>
           <div className="panel">
             <div className="panel-head">
               <span className="eyebrow">Status</span>
@@ -297,27 +293,33 @@ export function RunView({ workflowId, runId, onClose }: RunViewProps) {
             </div>
           </div>
 
-          <div className="panel run-feed-panel">
-            <div className="panel-head">
-              <span className="eyebrow">Live event feed</span>
-              <span className="page-note">{events.length} event{events.length === 1 ? "" : "s"}</span>
+          {terminal ? (
+            <RunRecordView run={run} events={events} workflowId={workflowId} runId={runId} />
+          ) : (
+            <div className="panel run-feed-panel">
+              <div className="panel-head">
+                <span className="eyebrow">Live event feed</span>
+                <span className="page-note">
+                  {events.length} event{events.length === 1 ? "" : "s"}
+                </span>
+              </div>
+              <div className="panel-body run-feed" ref={feedRef}>
+                {events.length === 0 ? (
+                  <div className="page-note">Waiting for events…</div>
+                ) : (
+                  <ul className="event-list">
+                    {events.map((envelope, index) => (
+                      <li key={`${envelope.ts}-${index}`} className="event-row">
+                        <span className="event-ts path">{envelope.ts}</span>
+                        <span className="event-src">{envelope.source}</span>
+                        <span className="event-body">{formatEnvelope(envelope)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
-            <div className="panel-body run-feed" ref={feedRef}>
-              {events.length === 0 ? (
-                <div className="page-note">Waiting for events…</div>
-              ) : (
-                <ul className="event-list">
-                  {events.map((envelope, index) => (
-                    <li key={`${envelope.ts}-${index}`} className="event-row">
-                      <span className="event-ts path">{envelope.ts}</span>
-                      <span className="event-src">{envelope.source}</span>
-                      <span className="event-body">{formatEnvelope(envelope)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
+          )}
         </div>
       ) : null}
     </section>
