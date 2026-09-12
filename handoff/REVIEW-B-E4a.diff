@@ -1,0 +1,576 @@
+diff --git a/app/api/runs.py b/app/api/runs.py
+index 22aa757..dcd7cca 100644
+--- a/app/api/runs.py
++++ b/app/api/runs.py
+@@ -129,6 +129,15 @@ class RunDetailOut(BaseModel):
+     forecast: dict[str, Any] | None = None
+ 
+ 
++class RunFileOut(BaseModel):
++    path: str
++    size: int
++
++
++class RunFilesOut(BaseModel):
++    files: list[RunFileOut]
++
++
+ def _holder(request: Request) -> RegistryHolder:
+     return cast(RegistryHolder, request.app.state.registry)
+ 
+@@ -376,6 +385,34 @@ async def stream_run_events(workflow_id: str, run_id: str, request: Request) ->
+     )
+ 
+ 
++@router.get("/workflows/{workflow_id}/runs/{run_id}/files", response_model=RunFilesOut)
++def list_run_files(workflow_id: str, run_id: str, request: Request) -> RunFilesOut:
++    _require_workflow(request, workflow_id)
++    if not is_safe_path_segment(run_id):
++        raise HTTPException(status_code=404)
++    run_dir = _runs_dir(request) / workflow_id / run_id
++    if not run_dir.is_dir():
++        raise HTTPException(status_code=404)
++    run_root = run_dir.resolve()
++    files: list[RunFileOut] = []
++    for path in run_dir.rglob("*"):
++        if not path.is_file():
++            continue
++        resolved = path.resolve()
++        if not resolved.is_relative_to(run_root):
++            continue
++        relative = path.relative_to(run_dir)
++        if (
++            relative.name == "context.json"
++            or resolved.name == "context.json"
++            or any(part.startswith(".") for part in relative.parts)
++        ):
++            continue
++        files.append(RunFileOut(path=relative.as_posix(), size=path.stat().st_size))
++    files.sort(key=lambda item: item.path)
++    return RunFilesOut(files=files)
++
++
+ @router.get("/workflows/{workflow_id}/runs/{run_id}/files/{path:path}")
+ def get_run_file(workflow_id: str, run_id: str, path: str, request: Request) -> FileResponse:
+     _require_workflow(request, workflow_id)
+diff --git a/docs/HARDENING.md b/docs/HARDENING.md
+index 9fe2cd6..8e16a2a 100644
+--- a/docs/HARDENING.md
++++ b/docs/HARDENING.md
+@@ -329,6 +329,21 @@ increments that logged them.
+   through verbatim. Not a live hole — the record lives inside the run tree — so defence-in-depth:
+   emit a run-relative path (e.g. `dest.name`) on those branches so a shared record does not disclose
+   absolute host paths. _Source: E-3 security-auditor ADVISORY._ Open.
++- **H35 — run files-listing endpoint: symlink-alias / walk hardening (E-4a).** `GET
++  .../runs/{run_id}/files` (`list_run_files`) is confinement-sound (every entry's resolved path is
++  re-checked against `run_root`; `context.json` and dot-dirs excluded), and every edge below requires
++  an attacker-planted symlink *inside* the run dir — unreachable via the API (run dirs are written
++  only by the trusted child process; unprivileged Windows blocks symlink creation, WinError 1314).
++  Defence-in-depth, tracked: (1) [FIXED in E-4a re-delegation, locked by
++  `test_listing_excludes_context_json_symlink_alias`] the `context.json` exclusion now also tests
++  `resolved.name`, matching the sibling `get_run_file`, so a symlink alias (`notes.txt ->
++  context.json`) is excluded from the listing too. (2) On 3.12 `Path.rglob` follows directory
++  symlinks with no cycle
++  guard; when the runtime reaches 3.13 pass `recurse_symlinks=False` (or `os.walk(...,
++  followlinks=False)`). (3) `list_run_files` gates on `run_dir.is_dir()` while `get_run` requires
++  `request.json` — tightening the listing to require `request.json` makes it a true "is this a real
++  run" check and aligns the two. (4) the serving endpoint could also reject dotfiles (the listing
++  already hides them). _Source: E-4a diff-reviewer + security-auditor ADVISORY/NOTED._ Open.
+ 
+ ## Resolved
+ 
+diff --git a/handoff/REVIEW-B-E4a.diff b/handoff/REVIEW-B-E4a.diff
+new file mode 100644
+index 0000000..8d5cc4a
+--- /dev/null
++++ b/handoff/REVIEW-B-E4a.diff
+@@ -0,0 +1,249 @@
++diff --git a/app/api/runs.py b/app/api/runs.py
++index 22aa757..1c8d6a4 100644
++--- a/app/api/runs.py
+++++ b/app/api/runs.py
++@@ -129,6 +129,15 @@ class RunDetailOut(BaseModel):
++     forecast: dict[str, Any] | None = None
++ 
++ 
+++class RunFileOut(BaseModel):
+++    path: str
+++    size: int
+++
+++
+++class RunFilesOut(BaseModel):
+++    files: list[RunFileOut]
+++
+++
++ def _holder(request: Request) -> RegistryHolder:
++     return cast(RegistryHolder, request.app.state.registry)
++ 
++@@ -376,6 +385,30 @@ async def stream_run_events(workflow_id: str, run_id: str, request: Request) ->
++     )
++ 
++ 
+++@router.get("/workflows/{workflow_id}/runs/{run_id}/files", response_model=RunFilesOut)
+++def list_run_files(workflow_id: str, run_id: str, request: Request) -> RunFilesOut:
+++    _require_workflow(request, workflow_id)
+++    if not is_safe_path_segment(run_id):
+++        raise HTTPException(status_code=404)
+++    run_dir = _runs_dir(request) / workflow_id / run_id
+++    if not run_dir.is_dir():
+++        raise HTTPException(status_code=404)
+++    run_root = run_dir.resolve()
+++    files: list[RunFileOut] = []
+++    for path in run_dir.rglob("*"):
+++        if not path.is_file():
+++            continue
+++        resolved = path.resolve()
+++        if not resolved.is_relative_to(run_root):
+++            continue
+++        relative = path.relative_to(run_dir)
+++        if relative.name == "context.json" or any(part.startswith(".") for part in relative.parts):
+++            continue
+++        files.append(RunFileOut(path=relative.as_posix(), size=path.stat().st_size))
+++    files.sort(key=lambda item: item.path)
+++    return RunFilesOut(files=files)
+++
+++
++ @router.get("/workflows/{workflow_id}/runs/{run_id}/files/{path:path}")
++ def get_run_file(workflow_id: str, run_id: str, path: str, request: Request) -> FileResponse:
++     _require_workflow(request, workflow_id)
++diff --git a/docs/HARDENING.md b/docs/HARDENING.md
++index 9fe2cd6..7d85440 100644
++--- a/docs/HARDENING.md
+++++ b/docs/HARDENING.md
++@@ -329,6 +329,20 @@ increments that logged them.
++   through verbatim. Not a live hole — the record lives inside the run tree — so defence-in-depth:
++   emit a run-relative path (e.g. `dest.name`) on those branches so a shared record does not disclose
++   absolute host paths. _Source: E-3 security-auditor ADVISORY._ Open.
+++- **H35 — run files-listing endpoint: symlink-alias / walk hardening (E-4a).** `GET
+++  .../runs/{run_id}/files` (`list_run_files`) is confinement-sound (every entry's resolved path is
+++  re-checked against `run_root`; `context.json` and dot-dirs excluded), and every edge below requires
+++  an attacker-planted symlink *inside* the run dir — unreachable via the API (run dirs are written
+++  only by the trusted child process; unprivileged Windows blocks symlink creation, WinError 1314).
+++  Defence-in-depth, tracked: (1) the `context.json` exclusion tests `relative.name`, whereas the
+++  sibling `get_run_file` tests `resolved.name` — a symlink alias (`notes.txt -> context.json`) would
+++  be *listed* by name (leaking its size, not contents) though serving still 404s it; align the
+++  listing to `resolved.name`. (2) On 3.12 `Path.rglob` follows directory symlinks with no cycle
+++  guard; when the runtime reaches 3.13 pass `recurse_symlinks=False` (or `os.walk(...,
+++  followlinks=False)`). (3) `list_run_files` gates on `run_dir.is_dir()` while `get_run` requires
+++  `request.json` — tightening the listing to require `request.json` makes it a true "is this a real
+++  run" check and aligns the two. (4) the serving endpoint could also reject dotfiles (the listing
+++  already hides them). _Source: E-4a diff-reviewer + security-auditor ADVISORY/NOTED._ Open.
++ 
++ ## Resolved
++ 
++diff --git a/handoff/TASK-E4a-run-files-listing.md b/handoff/TASK-E4a-run-files-listing.md
++new file mode 100644
++index 0000000..8435a0a
++--- /dev/null
+++++ b/handoff/TASK-E4a-run-files-listing.md
++@@ -0,0 +1,57 @@
+++# TASK E-4a — run files listing endpoint (records/replay Artifacts panel)
+++
+++## Goal (one sentence)
+++Add a `GET /api/workflows/{workflow_id}/runs/{run_id}/files` endpoint that lists a run's serveable
+++files (run-relative path + size), so the records/replay view can enumerate a run's artifacts.
+++
+++## Why
+++The records/replay run-detail view (the approved mockup's `#p-video`, its Artifacts panel) needs to
+++enumerate a run's files — `final.mp4`, `artifacts/script.md`, `artifacts/voice.wav`,
+++`artifacts/composition.html`, `artifacts/captions.srt`. The run detail already returns
+++`video_records` (with `self_review`, cost, status) and events give the steps; the only missing piece
+++is a file *listing* — the existing endpoint only *serves* one file by path
+++(`GET .../files/{path:path}`). This adds the sibling listing route.
+++
+++## Frozen contract (already committed — do NOT edit)
+++`tests/api/test_run_files_listing.py`. It requires:
+++- `GET /api/workflows/{workflow_id}/runs/{run_id}/files` → 200 with
+++  `{"files": [{"path": <run-relative posix string>, "size": <int bytes>}, ...]}`.
+++- Paths are run-relative, posix (`/`), never absolute.
+++- `context.json` is NEVER listed (any depth) — it holds injected secrets and the serving endpoint
+++  already blocks it.
+++- Files under an internal dot-directory (`.steps`, `.library-overlay`, any path component starting
+++  with `.`) are skipped — run state, not artifacts.
+++- An empty/only-internal run returns `{"files": []}`.
+++- Unknown run (no `request.json`? — no: the listing keys on the run *dir*; match the serving
+++  endpoint's guards) → 404; unsafe `run_id` (`is_safe_path_segment` false) → 404; unknown workflow
+++  → 404. Mirror `get_run_file`'s guard order exactly.
+++
+++## What to implement (`app/api/runs.py` only)
+++- Add Pydantic response models near the others, e.g. `RunFileOut(path: str, size: int)` and
+++  `RunFilesOut(files: list[RunFileOut])`.
+++- Add `@router.get("/workflows/{workflow_id}/runs/{run_id}/files", response_model=RunFilesOut)` —
+++  place it BEFORE the existing `.../files/{path:path}` route is fine (FastAPI matches the exact
+++  `/files` path distinctly from `/files/{path}`; verify no shadowing).
+++  - Guard exactly like `get_run_file`: `_require_workflow(request, workflow_id)`;
+++    `if not is_safe_path_segment(run_id): 404`; resolve `run_dir = _runs_dir(request)/workflow_id/
+++    run_id`; `if not run_dir.is_dir(): 404`.
+++  - Walk `run_dir` recursively for regular files. For each, compute the run-relative posix path
+++    (`p.relative_to(run_dir).as_posix()`). SKIP a file if its name is `context.json` OR any path
+++    component starts with `.` (internal dot-dir). Emit `{"path", "size": p.stat().st_size}`.
+++  - Sort the result by `path` for a deterministic response.
+++  - Confinement: only files genuinely under `run_dir` (a `rglob`/`os.walk` of `run_dir` stays inside
+++    by construction; do not follow symlinks out — use `Path.rglob` which does not resolve symlinks
+++    into the walk, and skip any entry whose resolved path escapes `run_dir`).
+++
+++## Constraints / do-nots
+++- Do NOT change the existing `get_run_file` serving endpoint, the detail/list/events endpoints, or
+++  `app/core/records.py`. Do NOT edit any test.
+++- No new dependencies. Keep `ruff`, `ruff format`, and `mypy --strict` clean; match the file's style.
+++
+++## Scope
+++- `app/api/runs.py`
+++
+++## Verify (from the worktree, `./.venv/Scripts/python.exe`)
+++- `-m pytest tests/api/test_run_files_listing.py tests/api/test_run_files.py tests/api/test_runs.py -q` → all pass.
+++- `-m pytest -q` (full) → green.
+++- `-m ruff check .`, `-m ruff format --check .`, `-m mypy sdk app` → clean.
++diff --git a/tests/api/test_run_files_listing.py b/tests/api/test_run_files_listing.py
++new file mode 100644
++index 0000000..f433a49
++--- /dev/null
+++++ b/tests/api/test_run_files_listing.py
++@@ -0,0 +1,104 @@
+++"""E-4a contract: list a run's serveable files (the records/replay Artifacts panel, §5.8 / §8).
+++
+++`GET /api/workflows/{workflow_id}/runs/{run_id}/files` (no trailing path) returns the run's
+++serveable files as `{"files": [{"path": <run-relative posix>, "size": <bytes>}, ...]}`, so the
+++records view can enumerate a run's artifacts (script, voice, composition, captions, final.mp4)
+++without guessing names. It mirrors the file-serving endpoint's confinement: `context.json` is never
+++listed (it holds injected secrets), and internal dot-directories (`.steps`, `.library-overlay`) are
+++skipped as run state rather than artifacts. Unknown/unsafe runs 404 like the serving endpoint.
+++"""
+++
+++from pathlib import Path
+++
+++from fastapi.testclient import TestClient
+++
+++from tests.api.test_runs import _client, _install_stub
+++
+++WORKFLOW = "succeeds"
+++RUN_ID = "20240101-000000"
+++
+++
+++def _seed_run(tmp_path: Path, files: dict[str, bytes]) -> TestClient:
+++    workflows_dir = tmp_path / "workflows"
+++    workflows_dir.mkdir(exist_ok=True)
+++    _install_stub(workflows_dir, WORKFLOW)
+++    run_dir = tmp_path / "runs" / WORKFLOW / RUN_ID
+++    run_dir.mkdir(parents=True, exist_ok=True)
+++    for relative, data in files.items():
+++        target = run_dir / relative
+++        target.parent.mkdir(parents=True, exist_ok=True)
+++        target.write_bytes(data)
+++    return _client(tmp_path)
+++
+++
+++def _list(client: TestClient) -> dict:
+++    response = client.get(f"/api/workflows/{WORKFLOW}/runs/{RUN_ID}/files")
+++    assert response.status_code == 200, response.text
+++    return response.json()
+++
+++
+++def test_listing_returns_run_relative_paths_and_sizes(tmp_path: Path) -> None:
+++    client = _seed_run(
+++        tmp_path,
+++        {
+++            "01/final.mp4": b"x" * 21,
+++            "01/artifacts/script.md": b"hello",
+++        },
+++    )
+++    body = _list(client)
+++    by_path = {item["path"]: item["size"] for item in body["files"]}
+++    assert by_path["01/final.mp4"] == 21
+++    assert by_path["01/artifacts/script.md"] == 5
+++    # Paths are run-relative and posix, never absolute.
+++    assert all(not Path(item["path"]).is_absolute() for item in body["files"])
+++    assert all("\\" not in item["path"] for item in body["files"])
+++
+++
+++def test_listing_excludes_context_json(tmp_path: Path) -> None:
+++    # context.json holds injected secrets and is never served — so it is never listed either.
+++    client = _seed_run(
+++        tmp_path,
+++        {"01/final.mp4": b"v", "01/context.json": b'{"secret":"x"}', "context.json": b"{}"},
+++    )
+++    paths = {item["path"] for item in _list(client)["files"]}
+++    assert not any(p.endswith("context.json") for p in paths)
+++    assert "01/final.mp4" in paths
+++
+++
+++def test_listing_excludes_internal_dot_dirs(tmp_path: Path) -> None:
+++    # .steps / .library-overlay are run state, not artifacts.
+++    client = _seed_run(
+++        tmp_path,
+++        {
+++            "01/final.mp4": b"v",
+++            "01/.steps/abc.json": b"{}",
+++            "01/.library-overlay/x.bin": b"y",
+++        },
+++    )
+++    paths = {item["path"] for item in _list(client)["files"]}
+++    assert "01/final.mp4" in paths
+++    assert not any("/.steps/" in p or p.startswith(".steps/") for p in paths)
+++    assert not any(".library-overlay" in p for p in paths)
+++
+++
+++def test_listing_empty_run_returns_empty_list(tmp_path: Path) -> None:
+++    client = _seed_run(tmp_path, {})
+++    assert _list(client) == {"files": []}
+++
+++
+++def test_listing_unknown_run_is_404(tmp_path: Path) -> None:
+++    workflows_dir = tmp_path / "workflows"
+++    workflows_dir.mkdir()
+++    _install_stub(workflows_dir, WORKFLOW)
+++    client = _client(tmp_path)
+++    response = client.get(f"/api/workflows/{WORKFLOW}/runs/no-such-run/files")
+++    assert response.status_code == 404
+++
+++
+++def test_listing_unsafe_run_id_is_404(tmp_path: Path) -> None:
+++    workflows_dir = tmp_path / "workflows"
+++    workflows_dir.mkdir()
+++    _install_stub(workflows_dir, WORKFLOW)
+++    client = _client(tmp_path)
+++    response = client.get(f"/api/workflows/{WORKFLOW}/runs/../escape/files")
+++    assert response.status_code == 404
+diff --git a/handoff/TASK-E4a-fixes.md b/handoff/TASK-E4a-fixes.md
+new file mode 100644
+index 0000000..61495ed
+--- /dev/null
++++ b/handoff/TASK-E4a-fixes.md
+@@ -0,0 +1,43 @@
++# TASK E-4a fix — exclude a context.json symlink alias from the files listing
++
++## Why (Review B REJECT)
++`list_run_files` excludes `context.json` by its on-disk name (`relative.name == "context.json"`),
++but the sibling `get_run_file` blocks it by its RESOLVED name (`resolved.name == "context.json"`). So
++a symlink alias inside the run dir (e.g. `notes.txt -> context.json`) would be LISTED by the alias
++name — advertising the secret file's size — while the serving endpoint 404s it. Align the listing to
++the established `resolved.name` invariant so the alias is excluded from the listing too. The locking
++test `tests/api/test_run_files_listing.py::test_listing_excludes_context_json_symlink_alias` (already
++committed — do NOT edit it) covers this (it creates the symlink and asserts the alias is not listed;
++it skips where the platform forbids symlink creation and runs on CI).
++
++## Apply EXACTLY this one edit to `app/api/runs.py` (inside `list_run_files`)
++Find this exact block:
++
++```python
++        relative = path.relative_to(run_dir)
++        if relative.name == "context.json" or any(part.startswith(".") for part in relative.parts):
++            continue
++```
++
++Replace it with exactly:
++
++```python
++        relative = path.relative_to(run_dir)
++        if (
++            relative.name == "context.json"
++            or resolved.name == "context.json"
++            or any(part.startswith(".") for part in relative.parts)
++        ):
++            continue
++```
++
++(`resolved` is already computed just above as `resolved = path.resolve()`.) Change nothing else.
++
++## Scope
++- `app/api/runs.py`
++
++## Verify (from the worktree, `./.venv/Scripts/python.exe`)
++- `-m pytest tests/api/test_run_files_listing.py tests/api/test_run_files.py -q` → all pass (the
++  symlink-alias test skips on a platform without symlink support).
++- `-m pytest -q` (full) → green.
++- `-m ruff check .`, `-m ruff format --check .`, `-m mypy sdk app` → clean.
+diff --git a/handoff/TASK-E4a-run-files-listing.md b/handoff/TASK-E4a-run-files-listing.md
+new file mode 100644
+index 0000000..8435a0a
+--- /dev/null
++++ b/handoff/TASK-E4a-run-files-listing.md
+@@ -0,0 +1,57 @@
++# TASK E-4a — run files listing endpoint (records/replay Artifacts panel)
++
++## Goal (one sentence)
++Add a `GET /api/workflows/{workflow_id}/runs/{run_id}/files` endpoint that lists a run's serveable
++files (run-relative path + size), so the records/replay view can enumerate a run's artifacts.
++
++## Why
++The records/replay run-detail view (the approved mockup's `#p-video`, its Artifacts panel) needs to
++enumerate a run's files — `final.mp4`, `artifacts/script.md`, `artifacts/voice.wav`,
++`artifacts/composition.html`, `artifacts/captions.srt`. The run detail already returns
++`video_records` (with `self_review`, cost, status) and events give the steps; the only missing piece
++is a file *listing* — the existing endpoint only *serves* one file by path
++(`GET .../files/{path:path}`). This adds the sibling listing route.
++
++## Frozen contract (already committed — do NOT edit)
++`tests/api/test_run_files_listing.py`. It requires:
++- `GET /api/workflows/{workflow_id}/runs/{run_id}/files` → 200 with
++  `{"files": [{"path": <run-relative posix string>, "size": <int bytes>}, ...]}`.
++- Paths are run-relative, posix (`/`), never absolute.
++- `context.json` is NEVER listed (any depth) — it holds injected secrets and the serving endpoint
++  already blocks it.
++- Files under an internal dot-directory (`.steps`, `.library-overlay`, any path component starting
++  with `.`) are skipped — run state, not artifacts.
++- An empty/only-internal run returns `{"files": []}`.
++- Unknown run (no `request.json`? — no: the listing keys on the run *dir*; match the serving
++  endpoint's guards) → 404; unsafe `run_id` (`is_safe_path_segment` false) → 404; unknown workflow
++  → 404. Mirror `get_run_file`'s guard order exactly.
++
++## What to implement (`app/api/runs.py` only)
++- Add Pydantic response models near the others, e.g. `RunFileOut(path: str, size: int)` and
++  `RunFilesOut(files: list[RunFileOut])`.
++- Add `@router.get("/workflows/{workflow_id}/runs/{run_id}/files", response_model=RunFilesOut)` —
++  place it BEFORE the existing `.../files/{path:path}` route is fine (FastAPI matches the exact
++  `/files` path distinctly from `/files/{path}`; verify no shadowing).
++  - Guard exactly like `get_run_file`: `_require_workflow(request, workflow_id)`;
++    `if not is_safe_path_segment(run_id): 404`; resolve `run_dir = _runs_dir(request)/workflow_id/
++    run_id`; `if not run_dir.is_dir(): 404`.
++  - Walk `run_dir` recursively for regular files. For each, compute the run-relative posix path
++    (`p.relative_to(run_dir).as_posix()`). SKIP a file if its name is `context.json` OR any path
++    component starts with `.` (internal dot-dir). Emit `{"path", "size": p.stat().st_size}`.
++  - Sort the result by `path` for a deterministic response.
++  - Confinement: only files genuinely under `run_dir` (a `rglob`/`os.walk` of `run_dir` stays inside
++    by construction; do not follow symlinks out — use `Path.rglob` which does not resolve symlinks
++    into the walk, and skip any entry whose resolved path escapes `run_dir`).
++
++## Constraints / do-nots
++- Do NOT change the existing `get_run_file` serving endpoint, the detail/list/events endpoints, or
++  `app/core/records.py`. Do NOT edit any test.
++- No new dependencies. Keep `ruff`, `ruff format`, and `mypy --strict` clean; match the file's style.
++
++## Scope
++- `app/api/runs.py`
++
++## Verify (from the worktree, `./.venv/Scripts/python.exe`)
++- `-m pytest tests/api/test_run_files_listing.py tests/api/test_run_files.py tests/api/test_runs.py -q` → all pass.
++- `-m pytest -q` (full) → green.
++- `-m ruff check .`, `-m ruff format --check .`, `-m mypy sdk app` → clean.
+diff --git a/tests/api/test_run_files_listing.py b/tests/api/test_run_files_listing.py
+new file mode 100644
+index 0000000..8f05434
+--- /dev/null
++++ b/tests/api/test_run_files_listing.py
+@@ -0,0 +1,122 @@
++"""E-4a contract: list a run's serveable files (the records/replay Artifacts panel, §5.8 / §8).
++
++`GET /api/workflows/{workflow_id}/runs/{run_id}/files` (no trailing path) returns the run's
++serveable files as `{"files": [{"path": <run-relative posix>, "size": <bytes>}, ...]}`, so the
++records view can enumerate a run's artifacts (script, voice, composition, captions, final.mp4)
++without guessing names. It mirrors the file-serving endpoint's confinement: `context.json` is never
++listed (it holds injected secrets), and internal dot-directories (`.steps`, `.library-overlay`) are
++skipped as run state rather than artifacts. Unknown/unsafe runs 404 like the serving endpoint.
++"""
++
++from pathlib import Path
++
++import pytest
++from fastapi.testclient import TestClient
++
++from tests.api.test_runs import _client, _install_stub
++
++WORKFLOW = "succeeds"
++RUN_ID = "20240101-000000"
++
++
++def _seed_run(tmp_path: Path, files: dict[str, bytes]) -> TestClient:
++    workflows_dir = tmp_path / "workflows"
++    workflows_dir.mkdir(exist_ok=True)
++    _install_stub(workflows_dir, WORKFLOW)
++    run_dir = tmp_path / "runs" / WORKFLOW / RUN_ID
++    run_dir.mkdir(parents=True, exist_ok=True)
++    for relative, data in files.items():
++        target = run_dir / relative
++        target.parent.mkdir(parents=True, exist_ok=True)
++        target.write_bytes(data)
++    return _client(tmp_path)
++
++
++def _list(client: TestClient) -> dict:
++    response = client.get(f"/api/workflows/{WORKFLOW}/runs/{RUN_ID}/files")
++    assert response.status_code == 200, response.text
++    return response.json()
++
++
++def test_listing_returns_run_relative_paths_and_sizes(tmp_path: Path) -> None:
++    client = _seed_run(
++        tmp_path,
++        {
++            "01/final.mp4": b"x" * 21,
++            "01/artifacts/script.md": b"hello",
++        },
++    )
++    body = _list(client)
++    by_path = {item["path"]: item["size"] for item in body["files"]}
++    assert by_path["01/final.mp4"] == 21
++    assert by_path["01/artifacts/script.md"] == 5
++    # Paths are run-relative and posix, never absolute.
++    assert all(not Path(item["path"]).is_absolute() for item in body["files"])
++    assert all("\\" not in item["path"] for item in body["files"])
++
++
++def test_listing_excludes_context_json(tmp_path: Path) -> None:
++    # context.json holds injected secrets and is never served — so it is never listed either.
++    client = _seed_run(
++        tmp_path,
++        {"01/final.mp4": b"v", "01/context.json": b'{"secret":"x"}', "context.json": b"{}"},
++    )
++    paths = {item["path"] for item in _list(client)["files"]}
++    assert not any(p.endswith("context.json") for p in paths)
++    assert "01/final.mp4" in paths
++
++
++def test_listing_excludes_internal_dot_dirs(tmp_path: Path) -> None:
++    # .steps / .library-overlay are run state, not artifacts.
++    client = _seed_run(
++        tmp_path,
++        {
++            "01/final.mp4": b"v",
++            "01/.steps/abc.json": b"{}",
++            "01/.library-overlay/x.bin": b"y",
++        },
++    )
++    paths = {item["path"] for item in _list(client)["files"]}
++    assert "01/final.mp4" in paths
++    assert not any("/.steps/" in p or p.startswith(".steps/") for p in paths)
++    assert not any(".library-overlay" in p for p in paths)
++
++
++def test_listing_empty_run_returns_empty_list(tmp_path: Path) -> None:
++    client = _seed_run(tmp_path, {})
++    assert _list(client) == {"files": []}
++
++
++def test_listing_unknown_run_is_404(tmp_path: Path) -> None:
++    workflows_dir = tmp_path / "workflows"
++    workflows_dir.mkdir()
++    _install_stub(workflows_dir, WORKFLOW)
++    client = _client(tmp_path)
++    response = client.get(f"/api/workflows/{WORKFLOW}/runs/no-such-run/files")
++    assert response.status_code == 404
++
++
++def test_listing_unsafe_run_id_is_404(tmp_path: Path) -> None:
++    workflows_dir = tmp_path / "workflows"
++    workflows_dir.mkdir()
++    _install_stub(workflows_dir, WORKFLOW)
++    client = _client(tmp_path)
++    response = client.get(f"/api/workflows/{WORKFLOW}/runs/../escape/files")
++    assert response.status_code == 404
++
++
++def test_listing_excludes_context_json_symlink_alias(tmp_path: Path) -> None:
++    # A symlink alias to context.json must not be listed — the exclusion follows the RESOLVED
++    # target, not just the on-disk name (parity with the serving endpoint's resolved-name block;
++    # otherwise the alias would advertise the secret file's size). Requires symlink creation;
++    # skipped where the platform forbids it (e.g. unprivileged Windows), and exercised on CI.
++    client = _seed_run(tmp_path, {"01/context.json": b'{"secret":"x"}', "01/final.mp4": b"v"})
++    run_dir = tmp_path / "runs" / WORKFLOW / RUN_ID
++    try:
++        (run_dir / "01" / "alias.txt").symlink_to(run_dir / "01" / "context.json")
++    except (OSError, NotImplementedError):
++        pytest.skip("cannot create symlinks in this environment")
++    paths = {item["path"] for item in _list(client)["files"]}
++    assert "01/alias.txt" not in paths
++    assert not any(p.endswith("context.json") for p in paths)
++    assert "01/final.mp4" in paths

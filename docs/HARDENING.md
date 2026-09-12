@@ -329,6 +329,21 @@ increments that logged them.
   through verbatim. Not a live hole — the record lives inside the run tree — so defence-in-depth:
   emit a run-relative path (e.g. `dest.name`) on those branches so a shared record does not disclose
   absolute host paths. _Source: E-3 security-auditor ADVISORY._ Open.
+- **H35 — run files-listing endpoint: symlink-alias / walk hardening (E-4a).** `GET
+  .../runs/{run_id}/files` (`list_run_files`) is confinement-sound (every entry's resolved path is
+  re-checked against `run_root`; `context.json` and dot-dirs excluded), and every edge below requires
+  an attacker-planted symlink *inside* the run dir — unreachable via the API (run dirs are written
+  only by the trusted child process; unprivileged Windows blocks symlink creation, WinError 1314).
+  Defence-in-depth, tracked: (1) [FIXED in E-4a re-delegation, locked by
+  `test_listing_excludes_context_json_symlink_alias`] the `context.json` exclusion now also tests
+  `resolved.name`, matching the sibling `get_run_file`, so a symlink alias (`notes.txt ->
+  context.json`) is excluded from the listing too. (2) On 3.12 `Path.rglob` follows directory
+  symlinks with no cycle
+  guard; when the runtime reaches 3.13 pass `recurse_symlinks=False` (or `os.walk(...,
+  followlinks=False)`). (3) `list_run_files` gates on `run_dir.is_dir()` while `get_run` requires
+  `request.json` — tightening the listing to require `request.json` makes it a true "is this a real
+  run" check and aligns the two. (4) the serving endpoint could also reject dotfiles (the listing
+  already hides them). _Source: E-4a diff-reviewer + security-auditor ADVISORY/NOTED._ Open.
 
 ## Resolved
 

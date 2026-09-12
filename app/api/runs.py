@@ -129,6 +129,15 @@ class RunDetailOut(BaseModel):
     forecast: dict[str, Any] | None = None
 
 
+class RunFileOut(BaseModel):
+    path: str
+    size: int
+
+
+class RunFilesOut(BaseModel):
+    files: list[RunFileOut]
+
+
 def _holder(request: Request) -> RegistryHolder:
     return cast(RegistryHolder, request.app.state.registry)
 
@@ -374,6 +383,34 @@ async def stream_run_events(workflow_id: str, run_id: str, request: Request) -> 
         _sse_event_stream(request, run_dir),
         media_type="text/event-stream",
     )
+
+
+@router.get("/workflows/{workflow_id}/runs/{run_id}/files", response_model=RunFilesOut)
+def list_run_files(workflow_id: str, run_id: str, request: Request) -> RunFilesOut:
+    _require_workflow(request, workflow_id)
+    if not is_safe_path_segment(run_id):
+        raise HTTPException(status_code=404)
+    run_dir = _runs_dir(request) / workflow_id / run_id
+    if not run_dir.is_dir():
+        raise HTTPException(status_code=404)
+    run_root = run_dir.resolve()
+    files: list[RunFileOut] = []
+    for path in run_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        if not resolved.is_relative_to(run_root):
+            continue
+        relative = path.relative_to(run_dir)
+        if (
+            relative.name == "context.json"
+            or resolved.name == "context.json"
+            or any(part.startswith(".") for part in relative.parts)
+        ):
+            continue
+        files.append(RunFileOut(path=relative.as_posix(), size=path.stat().st_size))
+    files.sort(key=lambda item: item.path)
+    return RunFilesOut(files=files)
 
 
 @router.get("/workflows/{workflow_id}/runs/{run_id}/files/{path:path}")
