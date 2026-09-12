@@ -334,10 +334,11 @@ increments that logged them.
   re-checked against `run_root`; `context.json` and dot-dirs excluded), and every edge below requires
   an attacker-planted symlink *inside* the run dir — unreachable via the API (run dirs are written
   only by the trusted child process; unprivileged Windows blocks symlink creation, WinError 1314).
-  Defence-in-depth, tracked: (1) the `context.json` exclusion tests `relative.name`, whereas the
-  sibling `get_run_file` tests `resolved.name` — a symlink alias (`notes.txt -> context.json`) would
-  be *listed* by name (leaking its size, not contents) though serving still 404s it; align the
-  listing to `resolved.name`. (2) On 3.12 `Path.rglob` follows directory symlinks with no cycle
+  Defence-in-depth, tracked: (1) [FIXED in E-4a re-delegation, locked by
+  `test_listing_excludes_context_json_symlink_alias`] the `context.json` exclusion now also tests
+  `resolved.name`, matching the sibling `get_run_file`, so a symlink alias (`notes.txt ->
+  context.json`) is excluded from the listing too. (2) On 3.12 `Path.rglob` follows directory
+  symlinks with no cycle
   guard; when the runtime reaches 3.13 pass `recurse_symlinks=False` (or `os.walk(...,
   followlinks=False)`). (3) `list_run_files` gates on `run_dir.is_dir()` while `get_run` requires
   `request.json` — tightening the listing to require `request.json` makes it a true "is this a real

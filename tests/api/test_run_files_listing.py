@@ -10,6 +10,7 @@ skipped as run state rather than artifacts. Unknown/unsafe runs 404 like the ser
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.api.test_runs import _client, _install_stub
@@ -102,3 +103,20 @@ def test_listing_unsafe_run_id_is_404(tmp_path: Path) -> None:
     client = _client(tmp_path)
     response = client.get(f"/api/workflows/{WORKFLOW}/runs/../escape/files")
     assert response.status_code == 404
+
+
+def test_listing_excludes_context_json_symlink_alias(tmp_path: Path) -> None:
+    # A symlink alias to context.json must not be listed — the exclusion follows the RESOLVED
+    # target, not just the on-disk name (parity with the serving endpoint's resolved-name block;
+    # otherwise the alias would advertise the secret file's size). Requires symlink creation;
+    # skipped where the platform forbids it (e.g. unprivileged Windows), and exercised on CI.
+    client = _seed_run(tmp_path, {"01/context.json": b'{"secret":"x"}', "01/final.mp4": b"v"})
+    run_dir = tmp_path / "runs" / WORKFLOW / RUN_ID
+    try:
+        (run_dir / "01" / "alias.txt").symlink_to(run_dir / "01" / "context.json")
+    except (OSError, NotImplementedError):
+        pytest.skip("cannot create symlinks in this environment")
+    paths = {item["path"] for item in _list(client)["files"]}
+    assert "01/alias.txt" not in paths
+    assert not any(p.endswith("context.json") for p in paths)
+    assert "01/final.mp4" in paths
