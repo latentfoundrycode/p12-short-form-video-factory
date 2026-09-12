@@ -6,13 +6,14 @@ import { WorkflowCard } from "./WorkflowCard";
 type WorkflowGridProps = {
   onCount: (count: number | null) => void;
   onStarted: (workflowId: string, runId: string) => void;
+  onViewRuns: (workflowId: string) => void;
 };
 
 function messageOf(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
 
-export function WorkflowGrid({ onCount, onStarted }: WorkflowGridProps) {
+export function WorkflowGrid({ onCount, onStarted, onViewRuns }: WorkflowGridProps) {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
@@ -164,6 +165,7 @@ export function WorkflowGrid({ onCount, onStarted }: WorkflowGridProps) {
               onStarted={(runId) => {
                 onStarted(workflow.id, runId);
               }}
+              onViewRuns={onViewRuns}
             />
           ))}
         </div>

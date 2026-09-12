@@ -1,34 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { fetchRun, runEventsUrl, stopRun } from "../api";
+import { fetchRun, runEventsUrl, startRun, stopRun } from "../api";
+import { statusPillClass } from "../statusPill";
 import { RunRecordView } from "./RunRecordView";
-import type { RequestStatus, RunDetail, SseEnvelope, StageEvent, VideoStatus } from "../types";
-import { isTerminalStatus } from "../types";
+import type { RunDetail, SseEnvelope, StageEvent, VideoStatus } from "../types";
+import { isStartRunOk, isTerminalStatus } from "../types";
 
 type RunViewProps = {
   workflowId: string;
   runId: string;
   onClose: () => void;
+  onReplay: (runId: string) => void;
 };
 
 function messageOf(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
-}
-
-function statusPillClass(status: RequestStatus): string {
-  switch (status) {
-    case "running":
-      return "pill run";
-    case "complete":
-      return "pill done";
-    case "failed":
-      return "pill fail";
-    case "partial":
-    case "stopped":
-    case "stopped-budget":
-      return "pill warn";
-    default:
-      return "pill";
-  }
 }
 
 function videoPillClass(status: VideoStatus): string {
@@ -83,11 +68,13 @@ function formatEnvelope(envelope: SseEnvelope): string {
   }
 }
 
-export function RunView({ workflowId, runId, onClose }: RunViewProps) {
+export function RunView({ workflowId, runId, onClose, onReplay }: RunViewProps) {
   const [run, setRun] = useState<RunDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [stopError, setStopError] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [replayError, setReplayError] = useState<string | null>(null);
+  const [replaying, setReplaying] = useState(false);
   const [events, setEvents] = useState<SseEnvelope[]>([]);
   const [stage, setStage] = useState<StageEvent | null>(null);
   const feedRef = useRef<HTMLDivElement | null>(null);
@@ -196,6 +183,30 @@ export function RunView({ workflowId, runId, onClose }: RunViewProps) {
     }
   }
 
+  async function onReplayClick() {
+    if (run === null) {
+      return;
+    }
+    setReplayError(null);
+    setReplaying(true);
+    try {
+      const result = await startRun(workflowId, {
+        params: run.params,
+        video_count: run.videos.length,
+        concurrency: 1,
+      });
+      if (isStartRunOk(result)) {
+        onReplay(result.run_id);
+        return;
+      }
+      setReplayError(result.error);
+    } catch (err) {
+      setReplayError(messageOf(err, "Could not start run"));
+    } finally {
+      setReplaying(false);
+    }
+  }
+
   return (
     <section className="view on">
       <div className="page-head">
@@ -267,28 +278,57 @@ export function RunView({ workflowId, runId, onClose }: RunViewProps) {
 
               {stopError ? <div className="form-error">{stopError}</div> : null}
               {loadError ? <div className="form-error">{loadError}</div> : null}
+              {replayError ? <div className="form-error">{replayError}</div> : null}
 
               <div className="card-foot launch-actions">
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  disabled={!active || stopping}
-                  onClick={() => {
-                    void onStop("graceful");
-                  }}
-                >
-                  Stop
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  disabled={!active || stopping}
-                  onClick={() => {
-                    void onStop("hard");
-                  }}
-                >
-                  Force stop
-                </button>
+                {terminal ? (
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    disabled={replaying}
+                    onClick={() => {
+                      void onReplayClick();
+                    }}
+                  >
+                    <span className="ico">
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                      >
+                        <path d="M2 8a6 6 0 1 0 1.8-4.3" />
+                        <path d="M2 1.6V4.4h2.8" />
+                      </svg>
+                    </span>
+                    {replaying ? "Replaying…" : "Replay run"}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={!active || stopping}
+                      onClick={() => {
+                        void onStop("graceful");
+                      }}
+                    >
+                      Stop
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={!active || stopping}
+                      onClick={() => {
+                        void onStop("hard");
+                      }}
+                    >
+                      Force stop
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
