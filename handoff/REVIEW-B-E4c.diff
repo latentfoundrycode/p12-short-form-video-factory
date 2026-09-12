@@ -1,0 +1,718 @@
+diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
+index f6d5a26..497f485 100644
+--- a/frontend/src/App.tsx
++++ b/frontend/src/App.tsx
+@@ -1,5 +1,6 @@
+ import { useState } from "react";
+ import { PlaceholderView } from "./components/PlaceholderView";
++import { RunsListView } from "./components/RunsListView";
+ import { RunView } from "./components/RunView";
+ import { Shell } from "./components/Shell";
+ import { StatisticsView } from "./components/StatisticsView";
+@@ -15,16 +16,32 @@ function App() {
+   const [tab, setTab] = useState<TabId>("workflows");
+   const [workflowCount, setWorkflowCount] = useState<number | null>(null);
+   const [activeRun, setActiveRun] = useState<ActiveRun | null>(null);
++  const [browsing, setBrowsing] = useState<{ workflowId: string } | null>(null);
+ 
+   return (
+     <Shell tab={tab} onTab={setTab} workflowCount={workflowCount}>
+       {activeRun ? (
+         <RunView
++          key={activeRun.runId}
+           workflowId={activeRun.workflowId}
+           runId={activeRun.runId}
+           onClose={() => {
+             setActiveRun(null);
+           }}
++          onReplay={(runId) => {
++            setActiveRun({ workflowId: activeRun.workflowId, runId });
++          }}
++        />
++      ) : tab === "workflows" && browsing ? (
++        <RunsListView
++          key={browsing.workflowId}
++          workflowId={browsing.workflowId}
++          onBack={() => {
++            setBrowsing(null);
++          }}
++          onOpenRun={(runId) => {
++            setActiveRun({ workflowId: browsing.workflowId, runId });
++          }}
+         />
+       ) : tab === "workflows" ? (
+         <WorkflowGrid
+@@ -32,6 +49,9 @@ function App() {
+           onStarted={(workflowId, runId) => {
+             setActiveRun({ workflowId, runId });
+           }}
++          onViewRuns={(workflowId) => {
++            setBrowsing({ workflowId });
++          }}
+         />
+       ) : tab === "statistics" ? (
+         <StatisticsView />
+diff --git a/frontend/src/components/RunView.tsx b/frontend/src/components/RunView.tsx
+index 6444c86..bfe4d5c 100644
+--- a/frontend/src/components/RunView.tsx
++++ b/frontend/src/components/RunView.tsx
+@@ -1,36 +1,21 @@
+ import { useEffect, useRef, useState } from "react";
+-import { fetchRun, runEventsUrl, stopRun } from "../api";
++import { fetchRun, runEventsUrl, startRun, stopRun } from "../api";
++import { statusPillClass } from "../statusPill";
+ import { RunRecordView } from "./RunRecordView";
+-import type { RequestStatus, RunDetail, SseEnvelope, StageEvent, VideoStatus } from "../types";
+-import { isTerminalStatus } from "../types";
++import type { RunDetail, SseEnvelope, StageEvent, VideoStatus } from "../types";
++import { isStartRunOk, isTerminalStatus } from "../types";
+ 
+ type RunViewProps = {
+   workflowId: string;
+   runId: string;
+   onClose: () => void;
++  onReplay: (runId: string) => void;
+ };
+ 
+ function messageOf(err: unknown, fallback: string): string {
+   return err instanceof Error ? err.message : fallback;
+ }
+ 
+-function statusPillClass(status: RequestStatus): string {
+-  switch (status) {
+-    case "running":
+-      return "pill run";
+-    case "complete":
+-      return "pill done";
+-    case "failed":
+-      return "pill fail";
+-    case "partial":
+-    case "stopped":
+-    case "stopped-budget":
+-      return "pill warn";
+-    default:
+-      return "pill";
+-  }
+-}
+-
+ function videoPillClass(status: VideoStatus): string {
+   switch (status) {
+     case "running":
+@@ -83,11 +68,13 @@ function formatEnvelope(envelope: SseEnvelope): string {
+   }
+ }
+ 
+-export function RunView({ workflowId, runId, onClose }: RunViewProps) {
++export function RunView({ workflowId, runId, onClose, onReplay }: RunViewProps) {
+   const [run, setRun] = useState<RunDetail | null>(null);
+   const [loadError, setLoadError] = useState<string | null>(null);
+   const [stopError, setStopError] = useState<string | null>(null);
+   const [stopping, setStopping] = useState(false);
++  const [replayError, setReplayError] = useState<string | null>(null);
++  const [replaying, setReplaying] = useState(false);
+   const [events, setEvents] = useState<SseEnvelope[]>([]);
+   const [stage, setStage] = useState<StageEvent | null>(null);
+   const feedRef = useRef<HTMLDivElement | null>(null);
+@@ -196,6 +183,30 @@ export function RunView({ workflowId, runId, onClose }: RunViewProps) {
+     }
+   }
+ 
++  async function onReplayClick() {
++    if (run === null) {
++      return;
++    }
++    setReplayError(null);
++    setReplaying(true);
++    try {
++      const result = await startRun(workflowId, {
++        params: run.params,
++        video_count: run.videos.length,
++        concurrency: 1,
++      });
++      if (isStartRunOk(result)) {
++        onReplay(result.run_id);
++        return;
++      }
++      setReplayError(result.error);
++    } catch (err) {
++      setReplayError(messageOf(err, "Could not start run"));
++    } finally {
++      setReplaying(false);
++    }
++  }
++
+   return (
+     <section className="view on">
+       <div className="page-head">
+@@ -267,28 +278,57 @@ export function RunView({ workflowId, runId, onClose }: RunViewProps) {
+ 
+               {stopError ? <div className="form-error">{stopError}</div> : null}
+               {loadError ? <div className="form-error">{loadError}</div> : null}
++              {replayError ? <div className="form-error">{replayError}</div> : null}
+ 
+               <div className="card-foot launch-actions">
+-                <button
+-                  type="button"
+-                  className="btn btn-sm"
+-                  disabled={!active || stopping}
+-                  onClick={() => {
+-                    void onStop("graceful");
+-                  }}
+-                >
+-                  Stop
+-                </button>
+-                <button
+-                  type="button"
+-                  className="btn btn-sm"
+-                  disabled={!active || stopping}
+-                  onClick={() => {
+-                    void onStop("hard");
+-                  }}
+-                >
+-                  Force stop
+-                </button>
++                {terminal ? (
++                  <button
++                    type="button"
++                    className="btn btn-sm"
++                    disabled={replaying}
++                    onClick={() => {
++                      void onReplayClick();
++                    }}
++                  >
++                    <span className="ico">
++                      <svg
++                        width="12"
++                        height="12"
++                        viewBox="0 0 16 16"
++                        fill="none"
++                        stroke="currentColor"
++                        strokeWidth="1.4"
++                      >
++                        <path d="M2 8a6 6 0 1 0 1.8-4.3" />
++                        <path d="M2 1.6V4.4h2.8" />
++                      </svg>
++                    </span>
++                    {replaying ? "Replaying…" : "Replay run"}
++                  </button>
++                ) : (
++                  <>
++                    <button
++                      type="button"
++                      className="btn btn-sm"
++                      disabled={!active || stopping}
++                      onClick={() => {
++                        void onStop("graceful");
++                      }}
++                    >
++                      Stop
++                    </button>
++                    <button
++                      type="button"
++                      className="btn btn-sm"
++                      disabled={!active || stopping}
++                      onClick={() => {
++                        void onStop("hard");
++                      }}
++                    >
++                      Force stop
++                    </button>
++                  </>
++                )}
+               </div>
+             </div>
+           </div>
+diff --git a/frontend/src/components/RunsListView.tsx b/frontend/src/components/RunsListView.tsx
+new file mode 100644
+index 0000000..ba7f66e
+--- /dev/null
++++ b/frontend/src/components/RunsListView.tsx
+@@ -0,0 +1,151 @@
++import { useEffect, useState } from "react";
++import { fetchRuns } from "../api";
++import { statusPillClass } from "../statusPill";
++import type { RunSummary, VideoRef, VideoStatus } from "../types";
++
++type RunsListViewProps = {
++  workflowId: string;
++  onOpenRun: (runId: string) => void;
++  onBack: () => void;
++};
++
++function messageOf(err: unknown, fallback: string): string {
++  return err instanceof Error ? err.message : fallback;
++}
++
++const VIDEO_STATUS_ORDER: readonly VideoStatus[] = [
++  "complete",
++  "running",
++  "pending",
++  "failed",
++  "stopped",
++];
++
++function videoCountLabel(videos: VideoRef[]): string {
++  const n = videos.length;
++  const noun = n === 1 ? "video" : "videos";
++  if (n === 0) {
++    return "0 videos";
++  }
++  const counts = new Map<VideoStatus, number>();
++  for (const video of videos) {
++    counts.set(video.status, (counts.get(video.status) ?? 0) + 1);
++  }
++  if (counts.size === 1) {
++    return `${n} ${noun}`;
++  }
++  const parts: string[] = [];
++  for (const status of VIDEO_STATUS_ORDER) {
++    const count = counts.get(status);
++    if (count) {
++      parts.push(`${count} ${status}`);
++    }
++  }
++  return `${n} ${noun} (${parts.join(", ")})`;
++}
++
++export function RunsListView({ workflowId, onOpenRun, onBack }: RunsListViewProps) {
++  const [runs, setRuns] = useState<RunSummary[]>([]);
++  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
++  const [error, setError] = useState<string | null>(null);
++  const [reload, setReload] = useState(0);
++
++  useEffect(() => {
++    let cancelled = false;
++    void fetchRuns(workflowId).then(
++      (data) => {
++        if (!cancelled) {
++          setRuns(data.runs);
++          setStatus("ready");
++          setError(null);
++        }
++      },
++      (err: unknown) => {
++        if (!cancelled) {
++          setRuns([]);
++          setStatus("error");
++          setError(messageOf(err, "Could not load runs"));
++        }
++      },
++    );
++    return () => {
++      cancelled = true;
++    };
++  }, [workflowId, reload]);
++
++  function onRetry() {
++    setStatus("loading");
++    setError(null);
++    setReload((n) => n + 1);
++  }
++
++  return (
++    <section className="view on">
++      <div className="page-head">
++        <div>
++          <div className="page-title">Runs</div>
++          <div className="page-note">
++            Past runs for <span className="path">{workflowId}</span>.
++          </div>
++        </div>
++        <button type="button" className="btn btn-sm" onClick={onBack}>
++          Back
++        </button>
++      </div>
++
++      {status === "loading" ? (
++        <div className="panel">
++          <div className="panel-body">
++            <div className="page-note">Loading runs…</div>
++          </div>
++        </div>
++      ) : null}
++
++      {status === "error" ? (
++        <div className="panel">
++          <div className="panel-body">
++            <div className="page-note">{error}</div>
++            <div className="card-foot">
++              <button type="button" className="btn btn-sm" onClick={onRetry}>
++                Retry
++              </button>
++            </div>
++          </div>
++        </div>
++      ) : null}
++
++      {status === "ready" && runs.length === 0 ? (
++        <div className="panel">
++          <div className="panel-body">
++            <div className="page-note">No runs yet.</div>
++          </div>
++        </div>
++      ) : null}
++
++      {status === "ready" && runs.length > 0 ? (
++        <div className="panel">
++          <div className="run-list">
++            {runs.map((run) => (
++              <button
++                key={run.run_id}
++                type="button"
++                className="run-row"
++                onClick={() => {
++                  onOpenRun(run.run_id);
++                }}
++              >
++                <div className="run-row-main">
++                  <div className="run-row-id path">{run.run_id}</div>
++                  <div className="run-row-meta">
++                    {run.started_utc} · {videoCountLabel(run.videos)}
++                  </div>
++                </div>
++                <span className={statusPillClass(run.status)}>{run.status}</span>
++              </button>
++            ))}
++          </div>
++        </div>
++      ) : null}
++    </section>
++  );
++}
+diff --git a/frontend/src/components/WorkflowCard.tsx b/frontend/src/components/WorkflowCard.tsx
+index c05e2db..2ba5a47 100644
+--- a/frontend/src/components/WorkflowCard.tsx
++++ b/frontend/src/components/WorkflowCard.tsx
+@@ -43,9 +43,10 @@ function Thumb({ url }: { url: string | null }) {
+ type WorkflowCardProps = {
+   workflow: Workflow;
+   onStarted: (runId: string) => void;
++  onViewRuns: (workflowId: string) => void;
+ };
+ 
+-export function WorkflowCard({ workflow, onStarted }: WorkflowCardProps) {
++export function WorkflowCard({ workflow, onStarted, onViewRuns }: WorkflowCardProps) {
+   const [launching, setLaunching] = useState(false);
+   const title = workflow.name ?? workflow.id;
+   const broken = !workflow.valid;
+@@ -94,8 +95,8 @@ export function WorkflowCard({ workflow, onStarted }: WorkflowCardProps) {
+             ))}
+           </div>
+         ) : null}
+-        {!broken ? (
+-          <div className="card-foot">
++        <div className="card-foot">
++          {!broken ? (
+             <button
+               type="button"
+               className="btn btn-primary btn-sm"
+@@ -105,8 +106,17 @@ export function WorkflowCard({ workflow, onStarted }: WorkflowCardProps) {
+             >
+               Run workflow
+             </button>
+-          </div>
+-        ) : null}
++          ) : null}
++          <button
++            type="button"
++            className="btn btn-sm"
++            onClick={() => {
++              onViewRuns(workflow.id);
++            }}
++          >
++            Runs
++          </button>
++        </div>
+       </div>
+     </article>
+   );
+diff --git a/frontend/src/components/WorkflowGrid.tsx b/frontend/src/components/WorkflowGrid.tsx
+index 825e27b..846973d 100644
+--- a/frontend/src/components/WorkflowGrid.tsx
++++ b/frontend/src/components/WorkflowGrid.tsx
+@@ -6,13 +6,14 @@ import { WorkflowCard } from "./WorkflowCard";
+ type WorkflowGridProps = {
+   onCount: (count: number | null) => void;
+   onStarted: (workflowId: string, runId: string) => void;
++  onViewRuns: (workflowId: string) => void;
+ };
+ 
+ function messageOf(err: unknown, fallback: string): string {
+   return err instanceof Error ? err.message : fallback;
+ }
+ 
+-export function WorkflowGrid({ onCount, onStarted }: WorkflowGridProps) {
++export function WorkflowGrid({ onCount, onStarted, onViewRuns }: WorkflowGridProps) {
+   const [workflows, setWorkflows] = useState<Workflow[]>([]);
+   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+   const [error, setError] = useState<string | null>(null);
+@@ -164,6 +165,7 @@ export function WorkflowGrid({ onCount, onStarted }: WorkflowGridProps) {
+               onStarted={(runId) => {
+                 onStarted(workflow.id, runId);
+               }}
++              onViewRuns={onViewRuns}
+             />
+           ))}
+         </div>
+diff --git a/frontend/src/index.css b/frontend/src/index.css
+index 2e06de2..3e04739 100644
+--- a/frontend/src/index.css
++++ b/frontend/src/index.css
+@@ -513,6 +513,8 @@ textarea {
+   padding-top: 12px;
+   display: flex;
+   justify-content: center;
++  gap: 8px;
++  flex-wrap: wrap;
+ }
+ 
+ /* Launch form + live run view */
+@@ -961,3 +963,46 @@ textarea {
+     grid-template-columns: 1fr;
+   }
+ }
++
++/* Past-run list */
++.run-list {
++  display: flex;
++  flex-direction: column;
++}
++
++.run-row {
++  display: flex;
++  align-items: center;
++  gap: 16px;
++  padding: 14px 16px;
++  width: 100%;
++  text-align: left;
++  border-bottom: 1px solid var(--line-soft);
++  transition: background 0.12s;
++}
++
++.run-row:hover {
++  background: var(--surface-2);
++}
++
++.run-row:last-child {
++  border-bottom: none;
++}
++
++.run-row-main {
++  flex: 1 1 auto;
++  min-width: 0;
++}
++
++.run-row-id {
++  font-size: 13.5px;
++  font-weight: 500;
++  color: var(--text);
++}
++
++.run-row-meta {
++  font-family: var(--font-mono);
++  font-size: 11px;
++  color: var(--text-faint);
++  margin-top: 3px;
++}
+diff --git a/frontend/src/statusPill.ts b/frontend/src/statusPill.ts
+new file mode 100644
+index 0000000..6ab998a
+--- /dev/null
++++ b/frontend/src/statusPill.ts
+@@ -0,0 +1,18 @@
++import type { RequestStatus } from "./types";
++
++export function statusPillClass(status: RequestStatus): string {
++  switch (status) {
++    case "running":
++      return "pill run";
++    case "complete":
++      return "pill done";
++    case "failed":
++      return "pill fail";
++    case "partial":
++    case "stopped":
++    case "stopped-budget":
++      return "pill warn";
++    default:
++      return "pill";
++  }
++}
+diff --git a/handoff/TASK-E4c-fixes.md b/handoff/TASK-E4c-fixes.md
+new file mode 100644
+index 0000000..d234463
+--- /dev/null
++++ b/handoff/TASK-E4c-fixes.md
+@@ -0,0 +1,98 @@
++# TASK E-4c fixes — retry unmount-guard + Replay button icon
++
++Apply these two edits only. Change nothing else. Do not edit tests, backend, docs, or add deps.
++Do not touch `app/web/.gitkeep`.
++
++## FIX A — `frontend/src/components/RunsListView.tsx`: route retry through the guarded effect
++The `onRetry` refetch omits the effect's `cancelled` unmount guard (a latent state-after-unmount
++write). Reuse the guarded effect via a reload counter.
++
++1. Add a reload-counter state immediately after the existing `error` state declaration. Find:
++```tsx
++  const [error, setError] = useState<string | null>(null);
++```
++Replace with:
++```tsx
++  const [error, setError] = useState<string | null>(null);
++  const [reload, setReload] = useState(0);
++```
++
++2. Add `reload` to the effect's dependency array. Find:
++```tsx
++  }, [workflowId]);
++```
++Replace with:
++```tsx
++  }, [workflowId, reload]);
++```
++
++3. Replace the entire `onRetry` function. Find:
++```tsx
++  function onRetry() {
++    setStatus("loading");
++    setError(null);
++    void fetchRuns(workflowId).then(
++      (data) => {
++        setRuns(data.runs);
++        setStatus("ready");
++        setError(null);
++      },
++      (err: unknown) => {
++        setRuns([]);
++        setStatus("error");
++        setError(messageOf(err, "Could not load runs"));
++      },
++    );
++  }
++```
++Replace with:
++```tsx
++  function onRetry() {
++    setStatus("loading");
++    setError(null);
++    setReload((n) => n + 1);
++  }
++```
++
++## FIX B — `frontend/src/components/RunView.tsx`: add the approved replay icon to the button
++The mockup's "Replay run" button carries a refresh icon. Add it. Find:
++```tsx
++                    disabled={replaying}
++                    onClick={() => {
++                      void onReplayClick();
++                    }}
++                  >
++                    {replaying ? "Replaying…" : "Replay run"}
++                  </button>
++```
++Replace with:
++```tsx
++                    disabled={replaying}
++                    onClick={() => {
++                      void onReplayClick();
++                    }}
++                  >
++                    <span className="ico">
++                      <svg
++                        width="12"
++                        height="12"
++                        viewBox="0 0 16 16"
++                        fill="none"
++                        stroke="currentColor"
++                        strokeWidth="1.4"
++                      >
++                        <path d="M2 8a6 6 0 1 0 1.8-4.3" />
++                        <path d="M2 1.6V4.4h2.8" />
++                      </svg>
++                    </span>
++                    {replaying ? "Replaying…" : "Replay run"}
++                  </button>
++```
++
++## Scope
++- `frontend/src/`
++
++## Verify (from the worktree)
++- `npm --prefix frontend run typecheck` → clean.
++- `npm --prefix frontend run lint` → clean.
++- `npm --prefix frontend run build` → succeeds.
+diff --git a/handoff/TASK-E4c-run-history.md b/handoff/TASK-E4c-run-history.md
+new file mode 100644
+index 0000000..f63ec15
+--- /dev/null
++++ b/handoff/TASK-E4c-run-history.md
+@@ -0,0 +1,68 @@
++# TASK E-4c — records/replay: past-run browsing + Replay (§8.6, mockup workflow-card → run detail)
++
++## Goal (one sentence)
++Let the user browse a workflow's past runs and open any one's record, and replay a run — so the
++records/replay detail (E-4b) is reachable for history, not just the just-launched run.
++
++## Why / design source
++Today the app only shows a run's detail (`RunView` → `RunRecordView`) for a run it just launched
++(`App.tsx` `activeRun`). There is no way to see a workflow's run history. `list_runs` + `fetchRuns`
+++ the `RunList`/`RunSummary` types already exist (backend done). The approved mockup
++(`docs/SFVF_UI_Mockup.html`) reaches a run's detail from a workflow card ("Review N videos") through
++a list; this task implements that path with the existing house components. Frozen interface rule:
++`.cursor/rules/30-frontend.mdc`. Stay consistent with `WorkflowGrid`/`WorkflowCard`/`RunView` and the
++`index.css` tokens.
++
++## What to implement (frontend only)
++
++### 1. `RunsListView` (new `frontend/src/components/RunsListView.tsx`)
++Given a `workflowId`, fetch `fetchRuns(workflowId)` and render the workflow's runs newest-first (the
++API already sorts `run_id` desc). Each row shows: `run_id`, a status pill (reuse the
++`RunView` status-pill mapping — extract/share or replicate the small helper), `started_utc`, and the
++video count (`videos.length` with per-status breakdown optional). A row is clickable and calls an
++`onOpenRun(runId)` prop. Handle loading / error / empty ("No runs yet.") states. A "Back" control
++(prop `onBack`) returns to the workflows grid.
++
++### 2. Navigation wiring (`App.tsx`)
++Add a lightweight view state so the user can go: workflows grid → a workflow's runs list → a run's
++detail, and back. Suggested: a `browsing: {workflowId} | null` state alongside `activeRun`.
++- A workflow card raises "view runs" → `setBrowsing({workflowId})` → render `RunsListView`.
++- `RunsListView` `onOpenRun(runId)` → `setActiveRun({workflowId, runId})` (opens the existing
++  `RunView`, which shows `RunRecordView` for a terminal run).
++- `RunView` `onClose` returns to wherever the user came from (the runs list if they were browsing,
++  else the grid). Keep the existing launch→`activeRun` path working unchanged.
++
++### 3. Workflow card affordance (`WorkflowCard.tsx` + `WorkflowGrid.tsx`)
++Add a "Runs" (run history) button to each workflow card, consistent with its existing buttons; it
++raises up to `WorkflowGrid` → `App` to open that workflow's runs list. Thread a new callback
++(`onViewRuns(workflowId)`) through `WorkflowGrid` like the existing `onStarted`.
++
++### 4. Replay (`RunView.tsx`)
++On a TERMINAL run, add a "Replay run" button. It re-launches the SAME workflow with the run's
++recorded params via `startRun(workflowId, { params: run.params, video_count: run.videos.length,
++concurrency: 1 })`. On success (`run_id` returned) open the new run (raise an `onReplay(runId)` /
++`onOpenRun` prop up to `App`, which sets `activeRun` to the new run). Surface the launch failure
++cases already handled in `RunLaunchForm`/`startRun` (409 busy, 422 blocked/invalid) as an inline
++error; do not crash. Disable the button while the replay request is in flight.
++
++## Out of scope (do NOT build — later increment E-4d)
++The Decisions panel (from `decision` events) and the Instructions-in-force panel (its backend record
++field is not populated yet — needs a separate backend increment). "Your judgement" quality capture
++(a write, later stage). Do not add a router library, a new tab, or any dependency.
++
++## Constraints / do-nots
++- Frontend only. Do NOT change any backend file, `app/`, `sdk/`, or any API. Do NOT add a
++  dependency. Do NOT edit the mockup or docs.
++- Keep `npm --prefix frontend run typecheck`, `run lint`, and `run build` all clean. Reuse existing
++  `index.css` classes/tokens; add new ones only as needed, consistent with the house style.
++- After building, DO NOT commit `app/web/.gitkeep` as deleted — the Vite build wipes it; leave it be
++  (the supervisor restores it). Do not touch it.
++
++## Scope
++- `frontend/src/`
++
++## Verify (from the worktree)
++- `npm --prefix frontend run typecheck` → clean.
++- `npm --prefix frontend run lint` → clean.
++- `npm --prefix frontend run build` → succeeds.
++- (The supervisor runs the full pytest gate and verifies the flow in-browser against seeded runs.)
