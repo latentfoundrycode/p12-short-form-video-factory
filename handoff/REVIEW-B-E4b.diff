@@ -1,0 +1,1150 @@
+diff --git a/docs/LESSONS.md b/docs/LESSONS.md
+index eebc84e..b582513 100644
+--- a/docs/LESSONS.md
++++ b/docs/LESSONS.md
+@@ -18,3 +18,12 @@ promotion into the cross-project pitfalls catalogue.
+   `ctx.secret(NAME)` and declare the key under `[[requires_keys]]`, mirroring `leaks_cost_secret`;
+   never `os.environ`. The supervisor's own frozen contracts get the same scrutiny as the builder's
+   code — a wrong stub makes a real check vacuous.
++- **The Vite frontend build wipes `app/web/.gitkeep` (E-4b).** What was wrong: running
++  `npm --prefix frontend run build` (Vite with `emptyOutDir` into `app/web/`) deletes the tracked
++  `app/web/.gitkeep` placeholder — the only tracked file keeping `app/web/` present in the repo (the
++  built `index.html`/`assets/` are gitignored). If committed, a fresh checkout would lack `app/web/`
++  and the backend's static mount could break. How it surfaced: secret-sentinel + diff-reviewer both
++  flagged the `D app/web/.gitkeep` in the changeset (the scope-check ran BEFORE the build and so
++  missed it — the deletion is a build side effect, not a builder edit). Correction: after running the
++  frontend build in a worktree, `git checkout HEAD -- app/web/.gitkeep` before committing; never
++  commit its deletion. A durable fix (deferred) is a Vite config that preserves the placeholder.
+diff --git a/frontend/src/api.ts b/frontend/src/api.ts
+index 4bb2a80..a63a63e 100644
+--- a/frontend/src/api.ts
++++ b/frontend/src/api.ts
+@@ -1,6 +1,7 @@
+ import type {
+   LaunchBody,
+   RunDetail,
++  RunFiles,
+   RunList,
+   StartRunResult,
+   Statistics,
+@@ -101,6 +102,20 @@ export async function fetchRun(id: string, runId: string): Promise<RunDetail> {
+   return (await response.json()) as RunDetail;
+ }
+ 
++export async function fetchRunFiles(id: string, runId: string): Promise<RunFiles> {
++  const response = await fetch(
++    `/api/workflows/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/files`,
++  );
++  if (!response.ok) {
++    throw new Error(`Could not load run files (${response.status})`);
++  }
++  const data = (await response.json()) as RunFiles;
++  if (!Array.isArray(data.files)) {
++    throw new Error("Unexpected response while trying to load run files");
++  }
++  return data;
++}
++
+ export async function fetchRuns(id: string): Promise<RunList> {
+   const response = await fetch(`/api/workflows/${encodeURIComponent(id)}/runs`);
+   if (!response.ok) {
+diff --git a/frontend/src/components/RunRecordView.tsx b/frontend/src/components/RunRecordView.tsx
+new file mode 100644
+index 0000000..65d8a55
+--- /dev/null
++++ b/frontend/src/components/RunRecordView.tsx
+@@ -0,0 +1,655 @@
++import { useEffect, useState } from "react";
++import { fetchRunFiles } from "../api";
++import type { RunDetail, RunFile, SseEnvelope, StepEvent, VideoRecord } from "../types";
++
++type RunRecordViewProps = {
++  run: RunDetail;
++  events: SseEnvelope[];
++  workflowId: string;
++  runId: string;
++};
++
++type CheckKind = "pass" | "fail" | "skip";
++
++type CheckRowModel = {
++  kind: CheckKind;
++  text: string;
++};
++
++type SelfReviewStructural = {
++  duration_s: number | null;
++  width: number | null;
++  height: number | null;
++  has_audio: boolean;
++  has_captions: boolean;
++};
++
++type SelfReviewContent = {
++  black: boolean;
++  silent: boolean;
++  clipping: boolean;
++  slideshow: boolean;
++  audio_mean_dbfs: number | null;
++  motion_score: number | null;
++};
++
++type CompositionViolation = {
++  kind: string;
++  detail: string;
++};
++
++type SelfReviewComposition = {
++  checked: number;
++  violations: CompositionViolation[];
++};
++
++type SelfReview = {
++  passed: boolean;
++  structural: SelfReviewStructural | null;
++  content: SelfReviewContent | null;
++  composition: SelfReviewComposition;
++  failures: string[];
++};
++
++type MeterTotals = {
++  actual: number;
++  uncached: number;
++};
++
++function messageOf(err: unknown, fallback: string): string {
++  return err instanceof Error ? err.message : fallback;
++}
++
++function asRecord(value: unknown): Record<string, unknown> | null {
++  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
++    return value as Record<string, unknown>;
++  }
++  return null;
++}
++
++function asBool(value: unknown): boolean | null {
++  return typeof value === "boolean" ? value : null;
++}
++
++function asFiniteNumber(value: unknown): number | null {
++  return typeof value === "number" && Number.isFinite(value) ? value : null;
++}
++
++function asString(value: unknown): string | null {
++  return typeof value === "string" ? value : null;
++}
++
++function parseStructural(raw: unknown): SelfReviewStructural | null {
++  const rec = asRecord(raw);
++  if (rec === null) {
++    return null;
++  }
++  return {
++    duration_s: asFiniteNumber(rec.duration_s),
++    width: asFiniteNumber(rec.width),
++    height: asFiniteNumber(rec.height),
++    has_audio: asBool(rec.has_audio) ?? false,
++    has_captions: asBool(rec.has_captions) ?? false,
++  };
++}
++
++function parseContent(raw: unknown): SelfReviewContent | null {
++  if (raw === null) {
++    return null;
++  }
++  const rec = asRecord(raw);
++  if (rec === null) {
++    return null;
++  }
++  return {
++    black: asBool(rec.black) ?? false,
++    silent: asBool(rec.silent) ?? false,
++    clipping: asBool(rec.clipping) ?? false,
++    slideshow: asBool(rec.slideshow) ?? false,
++    audio_mean_dbfs: asFiniteNumber(rec.audio_mean_dbfs),
++    motion_score: asFiniteNumber(rec.motion_score),
++  };
++}
++
++function parseViolations(raw: unknown): CompositionViolation[] {
++  if (!Array.isArray(raw)) {
++    return [];
++  }
++  const out: CompositionViolation[] = [];
++  for (const item of raw) {
++    const rec = asRecord(item);
++    if (rec === null) {
++      continue;
++    }
++    const kind = asString(rec.kind);
++    const detail = asString(rec.detail);
++    if (kind === null && detail === null) {
++      continue;
++    }
++    out.push({ kind: kind ?? "", detail: detail ?? "" });
++  }
++  return out;
++}
++
++function parseComposition(raw: unknown): SelfReviewComposition {
++  const rec = asRecord(raw);
++  if (rec === null) {
++    return { checked: 0, violations: [] };
++  }
++  return {
++    checked: asFiniteNumber(rec.checked) ?? 0,
++    violations: parseViolations(rec.violations),
++  };
++}
++
++function parseFailures(raw: unknown): string[] {
++  if (!Array.isArray(raw)) {
++    return [];
++  }
++  return raw.filter((item): item is string => typeof item === "string" && item.length > 0);
++}
++
++function parseSelfReview(raw: Record<string, unknown> | null | undefined): SelfReview | null {
++  if (raw == null) {
++    return null;
++  }
++  return {
++    passed: asBool(raw.passed) ?? false,
++    structural: parseStructural(raw.structural),
++    content: parseContent(raw.content),
++    composition: parseComposition(raw.composition),
++    failures: parseFailures(raw.failures),
++  };
++}
++
++function parseMeterMap(raw: unknown): Record<string, number> {
++  const rec = asRecord(raw);
++  if (rec === null) {
++    return {};
++  }
++  const out: Record<string, number> = {};
++  for (const [meter, amount] of Object.entries(rec)) {
++    const n = asFiniteNumber(amount);
++    if (n !== null) {
++      out[meter] = n;
++    }
++  }
++  return out;
++}
++
++function formatSeconds(n: number): string {
++  return Number.isInteger(n) ? `${n}s` : `${n.toFixed(1)}s`;
++}
++
++function formatDb(n: number): string {
++  return n.toFixed(1);
++}
++
++function formatMeterAmount(n: number): string {
++  if (Number.isInteger(n)) {
++    return n.toLocaleString();
++  }
++  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
++}
++
++function formatSize(bytes: number): string {
++  if (bytes < 1024) {
++    return `${bytes} B`;
++  }
++  const kb = bytes / 1024;
++  if (kb < 1024) {
++    return `${kb >= 10 ? kb.toFixed(0) : kb.toFixed(1)} KB`;
++  }
++  const mb = kb / 1024;
++  if (mb < 1024) {
++    return `${mb >= 10 ? mb.toFixed(0) : mb.toFixed(1)} MB`;
++  }
++  const gb = mb / 1024;
++  return `${gb >= 10 ? gb.toFixed(0) : gb.toFixed(1)} GB`;
++}
++
++function videoIndexFromPath(path: string): number | null {
++  const match = /^(\d+)\//.exec(path);
++  if (match === null) {
++    return null;
++  }
++  return Number.parseInt(match[1], 10);
++}
++
++function stripVideoPrefix(path: string): string {
++  const stripped = path.replace(/^\d+\//, "");
++  return stripped.length > 0 ? stripped : path;
++}
++
++function isRunFile(item: unknown): item is RunFile {
++  const rec = asRecord(item);
++  return rec !== null && typeof rec.path === "string" && typeof rec.size === "number";
++}
++
++function isStepEvent(event: SseEnvelope["event"]): event is StepEvent {
++  if (event.t !== "step") {
++    return false;
++  }
++  return (
++    typeof event.name === "string" &&
++    typeof event.key === "string" &&
++    typeof event.label === "string" &&
++    typeof event.status === "string"
++  );
++}
++
++function stepTag(status: string): "reused" | "gate" | null {
++  if (status === "cached") {
++    return "reused";
++  }
++  if (status === "gate") {
++    return "gate";
++  }
++  return null;
++}
++
++function fileValidText(structural: SelfReviewStructural | null): string {
++  if (structural === null) {
++    return "File valid";
++  }
++  const parts: string[] = ["File valid"];
++  if (structural.duration_s !== null) {
++    parts.push(formatSeconds(structural.duration_s));
++  }
++  if (structural.width !== null && structural.height !== null) {
++    parts.push(`${structural.width}×${structural.height}`);
++  }
++  return parts.join(" · ");
++}
++
++function audioPassText(content: SelfReviewContent): string {
++  const bits: string[] = ["Audio"];
++  if (content.audio_mean_dbfs !== null) {
++    bits.push(`mean ${formatDb(content.audio_mean_dbfs)} dBFS`);
++  }
++  bits.push("no clipping");
++  return bits.join(" · ");
++}
++
++function audioFailText(content: SelfReviewContent): string {
++  const bits: string[] = ["Audio"];
++  if (content.silent) {
++    bits.push("silent");
++  }
++  if (content.clipping) {
++    bits.push("clipping");
++  }
++  if (content.audio_mean_dbfs !== null) {
++    bits.push(`mean ${formatDb(content.audio_mean_dbfs)} dBFS`);
++  }
++  return bits.length > 1 ? bits.join(" · ") : "Audio";
++}
++
++function motionText(content: SelfReviewContent, slideshow: boolean): string {
++  const label = slideshow ? "slideshow" : "not a slideshow";
++  const score = content.motion_score !== null ? `motion ${content.motion_score}` : null;
++  return score === null
++    ? `Motion / slideshow · ${label}`
++    : `Motion / slideshow · ${label} · ${score}`;
++}
++
++function checkRows(review: SelfReview): CheckRowModel[] {
++  const rows: CheckRowModel[] = [{ kind: "pass", text: fileValidText(review.structural) }];
++  const content = review.content;
++  const structural = review.structural;
++
++  if (content === null) {
++    rows.push({ kind: "skip", text: "No black or broken frames · not checked (dry run)" });
++  } else if (content.black) {
++    rows.push({ kind: "fail", text: "No black or broken frames" });
++  } else {
++    rows.push({ kind: "pass", text: "No black or broken frames" });
++  }
++
++  if (content === null) {
++    rows.push({ kind: "skip", text: "Audio · not checked (dry run)" });
++  } else if (structural !== null && !structural.has_audio) {
++    rows.push({ kind: "skip", text: "Audio · no audio track" });
++  } else if (!content.silent && !content.clipping) {
++    rows.push({ kind: "pass", text: audioPassText(content) });
++  } else {
++    rows.push({ kind: "fail", text: audioFailText(content) });
++  }
++
++  if (structural !== null && structural.has_captions) {
++    rows.push({ kind: "pass", text: "Captions · present" });
++  } else {
++    rows.push({ kind: "skip", text: "Captions · none" });
++  }
++
++  if (content === null) {
++    rows.push({ kind: "skip", text: "Motion / slideshow · not checked (dry run)" });
++  } else if (content.slideshow) {
++    rows.push({ kind: "skip", text: motionText(content, true) });
++  } else {
++    rows.push({ kind: "pass", text: motionText(content, false) });
++  }
++
++  const composition = review.composition;
++  if (composition.checked > 0) {
++    if (composition.violations.length === 0) {
++      rows.push({
++        kind: "pass",
++        text: `Composition · ${composition.checked} checked, no issues`,
++      });
++    } else {
++      for (const violation of composition.violations) {
++        const body = [violation.kind, violation.detail]
++          .filter((part) => part.length > 0)
++          .join(": ");
++        rows.push({ kind: "fail", text: body });
++      }
++    }
++  }
++
++  return rows;
++}
++
++function CheckRow({ kind, text }: CheckRowModel) {
++  const icon = kind === "pass" ? "✓" : kind === "fail" ? "✗" : "–";
++  return (
++    <div className={`check check-${kind}`}>
++      <span className="check-ico" aria-hidden="true">
++        {icon}
++      </span>
++      <span>{text}</span>
++    </div>
++  );
++}
++
++function SelfReviewPanel({ video }: { video: VideoRecord }) {
++  const review = parseSelfReview(video.self_review);
++  return (
++    <div className="panel">
++      <div className="panel-head">
++        <span className="eyebrow">Self-review · #{video.index}</span>
++        {review ? (
++          <span className={review.passed ? "pill done" : "pill fail"}>
++            {review.passed ? "Passed" : "Failed"}
++          </span>
++        ) : null}
++      </div>
++      <div className="panel-body check-body">
++        {review === null ? (
++          <div className="page-note">No self-review recorded</div>
++        ) : (
++          <>
++            {checkRows(review).map((row, i) => (
++              <CheckRow key={`${row.kind}-${i}`} kind={row.kind} text={row.text} />
++            ))}
++            {review.failures.length > 0 ? (
++              <ul className="review-failures">
++                {review.failures.map((failure, i) => (
++                  <li key={`${i}-${failure}`} className="review-failure">
++                    {failure}
++                  </li>
++                ))}
++              </ul>
++            ) : null}
++          </>
++        )}
++      </div>
++    </div>
++  );
++}
++
++function StepsPanel({ events }: { events: SseEnvelope[] }) {
++  const steps = events.map((envelope) => envelope.event).filter(isStepEvent);
++  const reused = steps.filter((step) => step.status === "cached").length;
++  return (
++    <div className="panel">
++      <div className="panel-head">
++        <span className="eyebrow">Steps</span>
++        <span className="rq-meta">
++          {steps.length} step{steps.length === 1 ? "" : "s"}
++          {reused > 0 ? ` · ${reused} reused` : ""}
++        </span>
++      </div>
++      <div className="panel-body steps-body">
++        {steps.length === 0 ? (
++          <div className="page-note">No steps recorded.</div>
++        ) : (
++          <div className="steps">
++            {steps.map((step, index) => {
++              const tag = stepTag(step.status);
++              const name = step.name.length > 0 ? step.name : step.label;
++              return (
++                <div key={`${step.key}-${index}`} className="step">
++                  <span className="step-n">{String(index + 1).padStart(2, "0")}</span>
++                  <span className="step-name">{name}</span>
++                  {tag ? <span className="tag-cache">{tag}</span> : null}
++                  <span className="step-t">{step.status}</span>
++                </div>
++              );
++            })}
++          </div>
++        )}
++      </div>
++    </div>
++  );
++}
++
++function aggregateCost(records: VideoRecord[]): Map<string, MeterTotals> {
++  const meters = new Map<string, MeterTotals>();
++  for (const video of records) {
++    const rec = asRecord(video.cost);
++    if (rec === null) {
++      continue;
++    }
++    const uncached = parseMeterMap(rec.uncached);
++    const actual = parseMeterMap(rec.actual);
++    for (const [meter, amount] of Object.entries(uncached)) {
++      const entry = meters.get(meter) ?? { actual: 0, uncached: 0 };
++      entry.uncached += amount;
++      meters.set(meter, entry);
++    }
++    for (const [meter, amount] of Object.entries(actual)) {
++      const entry = meters.get(meter) ?? { actual: 0, uncached: 0 };
++      entry.actual += amount;
++      meters.set(meter, entry);
++    }
++  }
++  return meters;
++}
++
++function unitsFromEvents(events: SseEnvelope[]): Map<string, string> {
++  const units = new Map<string, string>();
++  for (const envelope of events) {
++    const event = envelope.event;
++    if (event.t !== "cost") {
++      continue;
++    }
++    const meter = "meter" in event ? event.meter : undefined;
++    const unit = "unit" in event ? event.unit : undefined;
++    if (typeof meter === "string" && typeof unit === "string" && unit.length > 0) {
++      units.set(meter, unit);
++    }
++  }
++  return units;
++}
++
++function CostPanel({ records, events }: { records: VideoRecord[]; events: SseEnvelope[] }) {
++  const meters = aggregateCost(records);
++  const units = unitsFromEvents(events);
++  const names = [...meters.keys()];
++  return (
++    <div className="panel">
++      <div className="panel-head">
++        <span className="eyebrow">Cost</span>
++      </div>
++      <div className="panel-body">
++        {names.length === 0 ? (
++          <div className="page-note">No cost recorded.</div>
++        ) : (
++          <div className="meters">
++            {names.map((name) => {
++              const totals = meters.get(name);
++              if (totals === undefined) {
++                return null;
++              }
++              const unit = units.get(name);
++              return (
++                <div className="meter lg" key={name}>
++                  <div className="meter-name">{name}</div>
++                  <div className="meter-val">
++                    {formatMeterAmount(totals.actual)}
++                    {unit ? <span className="meter-unit">{unit}</span> : null}
++                  </div>
++                  <div className="meter-sub">
++                    {formatMeterAmount(totals.uncached)} without cache
++                  </div>
++                </div>
++              );
++            })}
++          </div>
++        )}
++      </div>
++    </div>
++  );
++}
++
++function ArtifactList({ files }: { files: RunFile[] }) {
++  if (files.length === 0) {
++    return <div className="page-note">No artifacts recorded.</div>;
++  }
++  return (
++    <div className="artifact-list">
++      {files.map((file) => (
++        <div className="artifact-row" key={file.path}>
++          <b>{file.path}</b>
++          <span>{formatSize(file.size)}</span>
++        </div>
++      ))}
++    </div>
++  );
++}
++
++function ArtifactsPanel({ title, files }: { title: string; files: RunFile[] }) {
++  return (
++    <div className="panel">
++      <div className="panel-head">
++        <span className="eyebrow">{title}</span>
++        <span className="rq-meta">
++          {files.length} file{files.length === 1 ? "" : "s"}
++        </span>
++      </div>
++      <div className="panel-body">
++        <ArtifactList files={files} />
++      </div>
++    </div>
++  );
++}
++
++export function RunRecordView({ run, events, workflowId, runId }: RunRecordViewProps) {
++  const [files, setFiles] = useState<RunFile[] | null>(null);
++  const [filesError, setFilesError] = useState<string | null>(null);
++
++  useEffect(() => {
++    let cancelled = false;
++    void fetchRunFiles(workflowId, runId).then(
++      (data) => {
++        if (!cancelled) {
++          setFiles(data.files.filter(isRunFile));
++          setFilesError(null);
++        }
++      },
++      (err: unknown) => {
++        if (!cancelled) {
++          setFiles([]);
++          setFilesError(messageOf(err, "Could not load artifacts"));
++        }
++      },
++    );
++    return () => {
++      cancelled = true;
++    };
++  }, [workflowId, runId]);
++
++  const runLevel: RunFile[] = [];
++  const byVideo = new Map<number, RunFile[]>();
++  for (const file of files ?? []) {
++    const index = videoIndexFromPath(file.path);
++    if (index === null) {
++      runLevel.push(file);
++      continue;
++    }
++    const group = byVideo.get(index) ?? [];
++    group.push({ ...file, path: stripVideoPrefix(file.path) });
++    byVideo.set(index, group);
++  }
++
++  const records = [...run.video_records].sort((a, b) => a.index - b.index);
++  const extraIndexes = [...byVideo.keys()]
++    .filter((index) => !records.some((video) => video.index === index))
++    .sort((a, b) => a - b);
++
++  return (
++    <div className="run-record">
++      <CostPanel records={records} events={events} />
++      <div className="record-grid">
++        <div className="stack">
++          <StepsPanel events={events} />
++          {filesError ? (
++            <div className="panel">
++              <div className="panel-head">
++                <span className="eyebrow">Artifacts</span>
++              </div>
++              <div className="panel-body">
++                <div className="page-note">{filesError}</div>
++              </div>
++            </div>
++          ) : files === null ? (
++            <div className="panel">
++              <div className="panel-head">
++                <span className="eyebrow">Artifacts</span>
++              </div>
++              <div className="panel-body">
++                <div className="page-note">Loading artifacts…</div>
++              </div>
++            </div>
++          ) : runLevel.length > 0 || byVideo.size === 0 ? (
++            <ArtifactsPanel title="Artifacts" files={runLevel} />
++          ) : null}
++        </div>
++        <div className="stack">
++          {records.length === 0 ? (
++            <div className="panel">
++              <div className="panel-head">
++                <span className="eyebrow">Self-review</span>
++              </div>
++              <div className="panel-body">
++                <div className="page-note">No video records.</div>
++              </div>
++            </div>
++          ) : (
++            records.map((video) => (
++              <div className="stack" key={video.index}>
++                <SelfReviewPanel video={video} />
++                {files !== null && !filesError && (byVideo.get(video.index)?.length ?? 0) > 0 ? (
++                  <ArtifactsPanel
++                    title={`Artifacts · #${video.index}`}
++                    files={byVideo.get(video.index) ?? []}
++                  />
++                ) : null}
++              </div>
++            ))
++          )}
++          {files !== null && !filesError
++            ? extraIndexes.map((index) => (
++                <ArtifactsPanel
++                  key={index}
++                  title={`Artifacts · #${index}`}
++                  files={byVideo.get(index) ?? []}
++                />
++              ))
++            : null}
++        </div>
++      </div>
++    </div>
++  );
++}
+diff --git a/frontend/src/components/RunView.tsx b/frontend/src/components/RunView.tsx
+index 538980e..6444c86 100644
+--- a/frontend/src/components/RunView.tsx
++++ b/frontend/src/components/RunView.tsx
+@@ -1,12 +1,7 @@
+ import { useEffect, useRef, useState } from "react";
+ import { fetchRun, runEventsUrl, stopRun } from "../api";
+-import type {
+-  RequestStatus,
+-  RunDetail,
+-  SseEnvelope,
+-  StageEvent,
+-  VideoStatus,
+-} from "../types";
++import { RunRecordView } from "./RunRecordView";
++import type { RequestStatus, RunDetail, SseEnvelope, StageEvent, VideoStatus } from "../types";
+ import { isTerminalStatus } from "../types";
+ 
+ type RunViewProps = {
+@@ -185,6 +180,7 @@ export function RunView({ workflowId, runId, onClose }: RunViewProps) {
+   }, [events]);
+ 
+   const active = run !== null && !isTerminalStatus(run.status);
++  const terminal = run !== null && isTerminalStatus(run.status);
+ 
+   async function onStop(mode: "graceful" | "hard") {
+     setStopError(null);
+@@ -224,7 +220,7 @@ export function RunView({ workflowId, runId, onClose }: RunViewProps) {
+       ) : null}
+ 
+       {run ? (
+-        <div className="run-layout">
++        <div className={terminal ? "run-record-page" : "run-layout"}>
+           <div className="panel">
+             <div className="panel-head">
+               <span className="eyebrow">Status</span>
+@@ -297,27 +293,33 @@ export function RunView({ workflowId, runId, onClose }: RunViewProps) {
+             </div>
+           </div>
+ 
+-          <div className="panel run-feed-panel">
+-            <div className="panel-head">
+-              <span className="eyebrow">Live event feed</span>
+-              <span className="page-note">{events.length} event{events.length === 1 ? "" : "s"}</span>
+-            </div>
+-            <div className="panel-body run-feed" ref={feedRef}>
+-              {events.length === 0 ? (
+-                <div className="page-note">Waiting for events…</div>
+-              ) : (
+-                <ul className="event-list">
+-                  {events.map((envelope, index) => (
+-                    <li key={`${envelope.ts}-${index}`} className="event-row">
+-                      <span className="event-ts path">{envelope.ts}</span>
+-                      <span className="event-src">{envelope.source}</span>
+-                      <span className="event-body">{formatEnvelope(envelope)}</span>
+-                    </li>
+-                  ))}
+-                </ul>
+-              )}
++          {terminal ? (
++            <RunRecordView run={run} events={events} workflowId={workflowId} runId={runId} />
++          ) : (
++            <div className="panel run-feed-panel">
++              <div className="panel-head">
++                <span className="eyebrow">Live event feed</span>
++                <span className="page-note">
++                  {events.length} event{events.length === 1 ? "" : "s"}
++                </span>
++              </div>
++              <div className="panel-body run-feed" ref={feedRef}>
++                {events.length === 0 ? (
++                  <div className="page-note">Waiting for events…</div>
++                ) : (
++                  <ul className="event-list">
++                    {events.map((envelope, index) => (
++                      <li key={`${envelope.ts}-${index}`} className="event-row">
++                        <span className="event-ts path">{envelope.ts}</span>
++                        <span className="event-src">{envelope.source}</span>
++                        <span className="event-body">{formatEnvelope(envelope)}</span>
++                      </li>
++                    ))}
++                  </ul>
++                )}
++              </div>
+             </div>
+-          </div>
++          )}
+         </div>
+       ) : null}
+     </section>
+diff --git a/frontend/src/index.css b/frontend/src/index.css
+index a9d6448..2e06de2 100644
+--- a/frontend/src/index.css
++++ b/frontend/src/index.css
+@@ -733,3 +733,231 @@ textarea {
+   font-size: 9.5px;
+   color: var(--text-faint);
+ }
++
++/* Run record (terminal run view) */
++.run-record-page {
++  display: flex;
++  flex-direction: column;
++  gap: 16px;
++}
++
++.run-record {
++  display: flex;
++  flex-direction: column;
++  gap: 16px;
++}
++
++.record-grid {
++  display: grid;
++  grid-template-columns: 1fr 1fr;
++  gap: 16px;
++  align-items: start;
++}
++
++.rq-meta {
++  font-family: var(--font-mono);
++  font-size: 11px;
++  color: var(--text-faint);
++}
++
++.meters {
++  display: flex;
++  align-items: stretch;
++  flex-wrap: wrap;
++  border: 1px solid var(--line-soft);
++  border-radius: 2px;
++  overflow: hidden;
++}
++
++.meter {
++  flex: 1 1 0;
++  padding: 6px 10px;
++  border-right: 1px solid var(--line-soft);
++  background: rgb(0 0 0 / 14%);
++  min-width: 120px;
++}
++
++.meter:last-child {
++  border-right: none;
++}
++
++.meter-name {
++  font-family: var(--font-mono);
++  font-size: 9px;
++  letter-spacing: 0.09em;
++  text-transform: uppercase;
++  color: var(--text-faint);
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++}
++
++.meter-val {
++  font-family: var(--font-mono);
++  font-size: 13px;
++  font-weight: 500;
++  color: var(--text);
++  margin-top: 1px;
++}
++
++.meter-unit {
++  font-size: 10px;
++  color: var(--text-faint);
++  margin-left: 3px;
++  font-weight: 400;
++}
++
++.meter-sub {
++  font-family: var(--font-mono);
++  font-size: 9.5px;
++  color: var(--text-faint);
++  margin-top: 3px;
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++}
++
++.meter.lg .meter-val {
++  font-size: 17px;
++}
++
++.steps {
++  display: flex;
++  flex-direction: column;
++}
++
++.steps-body {
++  padding-top: 4px;
++  padding-bottom: 6px;
++}
++
++.step {
++  display: flex;
++  align-items: center;
++  gap: 11px;
++  padding: 8px 0;
++  border-bottom: 1px solid var(--line-soft);
++  font-size: 12.5px;
++}
++
++.step:last-child {
++  border-bottom: none;
++}
++
++.step-n {
++  font-family: var(--font-mono);
++  font-size: 10px;
++  color: var(--text-faint);
++  width: 18px;
++}
++
++.step-name {
++  font-family: var(--font-mono);
++  font-size: 12px;
++  flex: 1 1 auto;
++  color: var(--text);
++}
++
++.step-t {
++  font-family: var(--font-mono);
++  font-size: 11px;
++  color: var(--text-faint);
++  min-width: 56px;
++  text-align: right;
++}
++
++.tag-cache {
++  font-family: var(--font-mono);
++  font-size: 9px;
++  letter-spacing: 0.06em;
++  text-transform: uppercase;
++  color: var(--text-faint);
++  border: 1px solid var(--line);
++  padding: 1px 5px;
++  border-radius: 2px;
++}
++
++.check-body {
++  padding-top: 8px;
++  padding-bottom: 10px;
++}
++
++.check {
++  display: flex;
++  align-items: center;
++  gap: 9px;
++  padding: 5px 0;
++  font-size: 12.5px;
++  color: var(--text-dim);
++}
++
++.check-ico {
++  flex: 0 0 auto;
++  width: 12px;
++  text-align: center;
++  font-size: 12px;
++  line-height: 1;
++}
++
++.check-pass .check-ico {
++  color: var(--green);
++}
++
++.check-fail .check-ico {
++  color: var(--red);
++}
++
++.check-skip {
++  color: var(--text-faint);
++}
++
++.check-skip .check-ico {
++  color: var(--text-faint);
++}
++
++.review-failures {
++  list-style: none;
++  margin-top: 8px;
++  padding-top: 8px;
++  border-top: 1px solid var(--line-soft);
++  display: flex;
++  flex-direction: column;
++  gap: 4px;
++}
++
++.review-failure {
++  font-family: var(--font-mono);
++  font-size: 11.5px;
++  color: var(--red);
++}
++
++.artifact-list {
++  display: flex;
++  flex-direction: column;
++}
++
++.artifact-row {
++  display: flex;
++  align-items: center;
++  gap: 9px;
++  font-family: var(--font-mono);
++  font-size: 11px;
++  color: var(--text-faint);
++  padding: 2.5px 0;
++}
++
++.artifact-row b {
++  color: var(--text-dim);
++  font-weight: 400;
++  flex: 1 1 auto;
++  min-width: 0;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++@media (width <= 1080px) {
++  .record-grid {
++    grid-template-columns: 1fr;
++  }
++}
+diff --git a/frontend/src/types.ts b/frontend/src/types.ts
+index 2f50182..dc18d02 100644
+--- a/frontend/src/types.ts
++++ b/frontend/src/types.ts
+@@ -93,6 +93,15 @@ export type RunDetail = {
+   forecast?: Record<string, unknown> | null;
+ };
+ 
++export type RunFile = {
++  path: string;
++  size: number;
++};
++
++export type RunFiles = {
++  files: RunFile[];
++};
++
+ export type LaunchBody = {
+   params: Record<string, unknown>;
+   video_count: number;
+diff --git a/handoff/TASK-E4b-records-frontend.md b/handoff/TASK-E4b-records-frontend.md
+new file mode 100644
+index 0000000..53afc3d
+--- /dev/null
++++ b/handoff/TASK-E4b-records-frontend.md
+@@ -0,0 +1,87 @@
++# TASK E-4b — records/replay: run-record detail on the run view (§5.8, §8.6)
++
++## Goal (one sentence)
++When a run is terminal, extend the run view to show its record — a per-video **Self-review** panel
++(rendering the §5.8 `self_review`), a **Steps** summary, **Cost** meters, and an **Artifacts** list —
++matching the approved mockup's run-detail (`#p-video`).
++
++## Design source (approved mockup — build against it, it is guidance not a pixel contract)
++`docs/SFVF_UI_Mockup.html`, the `#p-video` run-detail pseudo-view. The panels this task implements:
++- **Self-review** (mockup lines ~1256-1265): a panel headed "Self-review" with a pass/fail pill and
++  one check row per §5.8 check (file valid + duration/resolution; no black/broken frames; audio not
++  silent/clipping; captions present; motion adequate / not a slideshow; composition checks).
++- **Steps** (~1190-1206): a compact list of the run's steps (name, reused/gate tag, status).
++- **Cost** (~1168-1175): per-meter cost tiles (value + "N without cache").
++- **Artifacts** (~1241-1250): the run's files (name + size).
++
++Applicable frozen rule: `.cursor/rules/30-frontend.mdc` (React + TypeScript; compositions are HTML,
++never React). Match the existing `frontend/src/index.css` design tokens and the look of
++`RunView`/`StatisticsView`; add new CSS classes (check rows, meters, steps, artifact rows) in
++`index.css` consistent with the mockup and the existing tokens.
++
++## Data (all already available — no backend change)
++- `RunDetail.video_records[]` (from `fetchRun`) — each `VideoRecord` has `self_review`, `cost`,
++  `status`, `index`. `self_review` shape (E-3), or `null` if the run emitted none:
++  ```
++  { passed: bool,
++    structural: { duration_s: number, width: number, height: number,
++                  has_audio: bool, has_captions: bool },
++    content: { black, silent, clipping, slideshow: bool,
++               audio_mean_dbfs: number|null, audio_peak_dbfs: number|null,
++               motion_score: number } | null,   // null on a dry run (content review skipped)
++    composition: { checked: number, violations: [{kind: string, detail: string}] },
++    failures: string[] }
++  ```
++- Steps: the SSE event stream `RunView` already consumes — the `step` events (`{t:"step", name,
++  key, label, status}`). For a terminal run the stream replays all of them. Build the Steps summary
++  from the `step` events already in component state.
++- `cost`: `VideoRecord.cost` = `{ uncached: {meter: number}, actual?: {meter: number} }`.
++- Artifacts: add `fetchRunFiles(workflowId, runId)` to `api.ts` calling `GET
++  /api/workflows/{id}/runs/{runId}/files` → `{files: [{path: string, size: number}]}` (E-4a). Add a
++  `RunFile`/`RunFiles` type in `types.ts`. Group files by their leading `NN/` video-index segment for
++  the per-video Artifacts list; a file with no video prefix is a run-level artifact.
++
++## Self-review → check-row mapping (render exactly this)
++Per video, a panel titled "Self-review · #{index}" with a pill: **Passed** (`pill done`) when
++`self_review.passed`, else **Failed** (`pill fail`). Rows (each with a ✓/✗/– state icon):
++- **File valid** — always ✓ when a `self_review` exists; text `{duration_s}s · {width}×{height}`.
++- **No black or broken frames** — ✓ when `content && !content.black`; ✗ when `content.black`; **–
++  "not checked (dry run)"** when `content === null`.
++- **Audio** — when `structural.has_audio`: ✓ when `content && !content.silent && !content.clipping`
++  (text e.g. `mean {audio_mean_dbfs} dBFS · no clipping`), ✗ otherwise; when `!has_audio`, show –
++  "no audio track". `content === null` → – "not checked (dry run)".
++- **Captions** — ✓ "present" when `structural.has_captions`, else – "none".
++- **Motion / slideshow** — ✓ "not a slideshow" when `content && !content.slideshow` (text `motion
++  {motion_score}`), the slideshow verdict when `content.slideshow` (recorded, shown as an info –,
++  NOT a ✗ — per E-1 it is not a hard failure), – "not checked (dry run)" when `content === null`.
++- **Composition** — only when `composition.checked > 0`: ✓ "{checked} checked, no issues" when no
++  violations; one ✗ row per violation `{kind}: {detail}` otherwise.
++- If `self_review.failures` is non-empty, show them beneath the rows as the reasons the video failed.
++A video whose `self_review` is `null` shows the panel with a muted "No self-review recorded" note.
++
++## Where it renders
++In `RunView` (`frontend/src/components/RunView.tsx`), when `isTerminalStatus(run.status)`: render the
++record panels (Self-review per video, Steps, Cost, Artifacts) in place of — or below — the live feed.
++While the run is not terminal, keep the current live-progress layout unchanged. You may extract a
++`RunRecord`/`RunRecordView` sub-component under `frontend/src/components/` for the panels; keep
++`RunView`'s existing live behavior intact. Fetch the files listing once when the run is terminal.
++
++## Out of scope (do NOT build — later increment E-4c)
++Player/replay controls, the "Replay run" action, past-run list navigation (browsing a workflow's
++history), and the Decisions / Instructions-in-force panels. Do not add a router or new tab.
++
++## Constraints / do-nots
++- Frontend only. Do NOT change any backend file, `app/`, `sdk/`, or any API. Do NOT add a
++  dependency (no test runner, no router, no chart lib). Do NOT edit the mockup or any doc.
++- Keep `npm --prefix frontend run typecheck`, `npm --prefix frontend run lint`, and
++  `npm --prefix frontend run build` all clean. Type the `self_review` access defensively (it is
++  `Record<string, unknown> | null`); narrow with small typed helpers rather than `any`.
++
++## Scope
++- `frontend/src/`
++
++## Verify (from the worktree)
++- `npm --prefix frontend run typecheck` → clean.
++- `npm --prefix frontend run lint` → clean.
++- `npm --prefix frontend run build` → succeeds.
++- (Python is unaffected; the supervisor runs the full pytest gate and in-browser verification.)

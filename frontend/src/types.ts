@@ -93,6 +93,15 @@ export type RunDetail = {
   forecast?: Record<string, unknown> | null;
 };
 
+export type RunFile = {
+  path: string;
+  size: number;
+};
+
+export type RunFiles = {
+  files: RunFile[];
+};
+
 export type LaunchBody = {
   params: Record<string, unknown>;
   video_count: number;

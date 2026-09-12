@@ -1,6 +1,7 @@
 import type {
   LaunchBody,
   RunDetail,
+  RunFiles,
   RunList,
   StartRunResult,
   Statistics,
@@ -99,6 +100,20 @@ export async function fetchRun(id: string, runId: string): Promise<RunDetail> {
     throw new Error(`Could not load run (${response.status})`);
   }
   return (await response.json()) as RunDetail;
+}
+
+export async function fetchRunFiles(id: string, runId: string): Promise<RunFiles> {
+  const response = await fetch(
+    `/api/workflows/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/files`,
+  );
+  if (!response.ok) {
+    throw new Error(`Could not load run files (${response.status})`);
+  }
+  const data = (await response.json()) as RunFiles;
+  if (!Array.isArray(data.files)) {
+    throw new Error("Unexpected response while trying to load run files");
+  }
+  return data;
 }
 
 export async function fetchRuns(id: string): Promise<RunList> {
