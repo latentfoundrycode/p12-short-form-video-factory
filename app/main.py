@@ -7,10 +7,12 @@ from fastapi.staticfiles import StaticFiles
 from sfvf.context import BudgetConfig
 
 from app.api.runs import router as runs_router
+from app.api.schedules import router as schedules_router
 from app.api.statistics import router as statistics_router
 from app.api.workflows import RegistryHolder
 from app.api.workflows import router as workflows_router
 from app.core.budget_config import load_budget_config
+from app.core.schedules import SCHEDULES_PATH
 from app.core.secrets import SecretStore, _store_path
 from app.core.supervisor import EnsureEnv, PopenFn
 from app.paths import RUNS_DIR, WEB_DIR, WORKFLOWS_DIR
@@ -21,6 +23,7 @@ def create_app(
     web_dir: Path | None = None,
     *,
     runs_dir: Path | None = None,
+    schedules_path: Path | None = None,
     ensure_env: EnsureEnv | None = None,
     popen: PopenFn | None = None,
     secrets: Mapping[str, str] | None = None,
@@ -35,6 +38,7 @@ def create_app(
     application = FastAPI(title="Short-Form Video Factory")
     application.state.registry = RegistryHolder(workflows_dir or WORKFLOWS_DIR)
     application.state.runs_dir = runs_dir or RUNS_DIR
+    application.state.schedules_path = schedules_path or SCHEDULES_PATH
     application.state.ensure_env = ensure_env
     application.state.popen = popen
     application.state.secrets = dict(resolved)
@@ -42,6 +46,7 @@ def create_app(
     application.include_router(workflows_router)
     application.include_router(runs_router)
     application.include_router(statistics_router)
+    application.include_router(schedules_router)
 
     @application.get("/api/health")
     def health() -> dict[str, bool]:
