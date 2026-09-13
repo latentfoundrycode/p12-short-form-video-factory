@@ -149,6 +149,42 @@ def test_unknown_workflow_or_run_is_404(tmp_path: Path) -> None:
     assert _post(client, "no-such-run", {"videos": []}).status_code == 404
 
 
+def test_missing_video_json_is_skipped_not_500(tmp_path: Path) -> None:
+    """A terminal-but-partial request can have a video that never produced a video.json.
+
+    Submitting quality must skip such an index (writing the videos that DO have a record) rather
+    than raising an unhandled 500 mid-write. Regression lock for the reviewers' convergent finding.
+    """
+    workflows = tmp_path / "workflows"
+    workflows.mkdir()
+    write_plugin(workflows, "explainer", minimal_toml("explainer", extra=FACTORS))
+    runs = tmp_path / "runs"
+    run_id = "20260914-130000"
+    run_dir = runs / "explainer" / run_id
+    run_dir.mkdir(parents=True)
+    create_request(
+        run_dir,
+        run_id=run_id,
+        workflow={"id": "explainer", "version": "1.0.0", "sdk": "1"},
+        params={},
+        videos=[{"index": 1, "status": "complete"}, {"index": 2, "status": "failed"}],
+        status="partial",
+    )
+    # Only video 1 produced a record; video 2 failed and has no video.json.
+    v1 = run_dir / format_video_dir(1, 2)
+    v1.mkdir(parents=True)
+    write_video(v1, VideoRecord(index=1, status="complete", started_utc="t", ended_utc="t"))
+
+    client = TestClient(create_app(workflows_dir=workflows, runs_dir=runs))
+    body = {"videos": [{"index": 1, "answers": {"hook": "ok"}}], "rankings": {"hook": [1, 2]}}
+    resp = client.post(f"/api/workflows/explainer/runs/{run_id}/quality", json=body)
+    assert resp.status_code == 200  # NOT 500
+    q1 = read_video(v1).quality or {}
+    assert q1["answers"] == {"hook": "ok"}
+    assert q1["rankings"] == {"hook": 1}
+    assert not (run_dir / format_video_dir(2, 2) / "video.json").exists()  # skipped, not created
+
+
 def test_recorded_quality_surfaces_in_run_detail(tmp_path: Path) -> None:
     client, _run_dir, run_id = _setup(tmp_path)
     _post(client, run_id, {"videos": [{"index": 1, "answers": {"hook": "ok"}}]})
