@@ -3,6 +3,9 @@ import type {
   RunDetail,
   RunFiles,
   RunList,
+  ScheduleEntry,
+  ScheduleList,
+  ScheduleWriteBody,
   StartRunResult,
   Statistics,
   StopMode,
@@ -28,6 +31,64 @@ export async function fetchWorkflows(): Promise<Workflow[]> {
 
 export async function rescanWorkflows(): Promise<Workflow[]> {
   return readList(await fetch("/api/workflows/rescan", { method: "POST" }), "rescan workflows");
+}
+
+export async function fetchSchedules(): Promise<ScheduleEntry[]> {
+  const response = await fetch("/api/schedules");
+  if (!response.ok) {
+    throw new Error(`Could not load schedules (${response.status})`);
+  }
+  const data = (await response.json()) as ScheduleList;
+  if (!Array.isArray(data.schedules)) {
+    throw new Error("Unexpected response while trying to load schedules");
+  }
+  return data.schedules;
+}
+
+export async function createSchedule(body: ScheduleWriteBody): Promise<ScheduleEntry> {
+  const response = await fetch("/api/schedules", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (response.status === 201) {
+    return (await response.json()) as ScheduleEntry;
+  }
+  if (response.status === 422) {
+    throw new Error("The server rejected these schedule values.");
+  }
+  throw new Error(`Could not create schedule (${response.status})`);
+}
+
+export async function updateSchedule(id: string, body: ScheduleWriteBody): Promise<ScheduleEntry> {
+  const response = await fetch(`/api/schedules/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (response.status === 200) {
+    return (await response.json()) as ScheduleEntry;
+  }
+  if (response.status === 404) {
+    throw new Error("That schedule no longer exists.");
+  }
+  if (response.status === 422) {
+    throw new Error("The server rejected these schedule values.");
+  }
+  throw new Error(`Could not update schedule (${response.status})`);
+}
+
+export async function deleteSchedule(id: string): Promise<void> {
+  const response = await fetch(`/api/schedules/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (response.status === 204) {
+    return;
+  }
+  if (response.status === 404) {
+    throw new Error("That schedule no longer exists.");
+  }
+  throw new Error(`Could not delete schedule (${response.status})`);
 }
 
 export function runEventsUrl(workflowId: string, runId: string): string {

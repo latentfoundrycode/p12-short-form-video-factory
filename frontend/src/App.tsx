@@ -2,6 +2,7 @@ import { useState } from "react";
 import { PlaceholderView } from "./components/PlaceholderView";
 import { RunsListView } from "./components/RunsListView";
 import { RunView } from "./components/RunView";
+import { ScheduleView } from "./components/ScheduleView";
 import { Shell } from "./components/Shell";
 import { StatisticsView } from "./components/StatisticsView";
 import { WorkflowGrid } from "./components/WorkflowGrid";
@@ -53,6 +54,8 @@ function App() {
             setBrowsing({ workflowId });
           }}
         />
+      ) : tab === "schedule" ? (
+        <ScheduleView />
       ) : tab === "statistics" ? (
         <StatisticsView />
       ) : (
