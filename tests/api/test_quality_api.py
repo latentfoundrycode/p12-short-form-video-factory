@@ -37,7 +37,13 @@ FACTORS = (
 )
 
 
-def _setup(tmp_path: Path, *, status: str = "complete", n: int = 2) -> tuple[TestClient, Path, str]:
+def _setup(
+    tmp_path: Path,
+    *,
+    status: str = "complete",
+    n: int = 2,
+    secrets: dict[str, str] | None = None,
+) -> tuple[TestClient, Path, str]:
     workflows = tmp_path / "workflows"
     workflows.mkdir()
     write_plugin(workflows, "explainer", minimal_toml("explainer", extra=FACTORS))
@@ -61,7 +67,8 @@ def _setup(tmp_path: Path, *, status: str = "complete", n: int = 2) -> tuple[Tes
             vdir,
             VideoRecord(index=i, status="complete", started_utc="t", ended_utc="t"),
         )
-    return TestClient(create_app(workflows_dir=workflows, runs_dir=runs)), run_dir, run_id
+    app = create_app(workflows_dir=workflows, runs_dir=runs, secrets=secrets)
+    return TestClient(app), run_dir, run_id
 
 
 def _quality(run_dir: Path, index: int, n: int = 2) -> dict:
@@ -183,6 +190,19 @@ def test_missing_video_json_is_skipped_not_500(tmp_path: Path) -> None:
     assert q1["answers"] == {"hook": "ok"}
     assert q1["rankings"] == {"hook": 1}
     assert not (run_dir / format_video_dir(2, 2) / "video.json").exists()  # skipped, not created
+
+
+def test_answers_redact_configured_secrets(tmp_path: Path) -> None:
+    """A configured secret value pasted into a free-text answer must NOT persist in video.json.
+
+    The system's mandatory redaction invariant ("no secret value is ever written to a record",
+    upheld for cost/self_review/context) must also cover this new record-write path. Regression lock
+    for the cross-family Review B finding.
+    """
+    client, run_dir, run_id = _setup(tmp_path, secrets={"OPENROUTER_API_KEY": "sk-live-abc123"})
+    body = {"videos": [{"index": 1, "answers": {"hook": "the key sk-live-abc123 leaked here"}}]}
+    assert _post(client, run_id, body).status_code == 200
+    assert _quality(run_dir, 1)["answers"]["hook"] == "the key [REDACTED] leaked here"
 
 
 def test_recorded_quality_surfaces_in_run_detail(tmp_path: Path) -> None:
