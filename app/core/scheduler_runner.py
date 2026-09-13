@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import subprocess
 import threading
 from collections.abc import Callable, Mapping
@@ -16,6 +17,8 @@ from app.core.schedules import ScheduleEntry
 from app.core.supervisor import EnsureEnv, PopenFn
 
 type WorkflowResolver = Callable[[str], Path | None]
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -111,6 +114,12 @@ class SchedulerDriver:
             self._thread = None
 
     def _loop(self) -> None:
-        self.tick_once()
+        self._guarded_tick()
         while not self._stop.wait(self._interval):
+            self._guarded_tick()
+
+    def _guarded_tick(self) -> None:
+        try:
             self.tick_once()
+        except Exception:
+            _log.exception("scheduler tick failed; skipping this cycle")
