@@ -374,6 +374,24 @@ increments that logged them.
   mockup; no red-at-40% design token exists) — a `--red-border`-style token would single-source it.
   All mirror the approved `v-schedule` mockup and violate no frozen a11y MUST. _Source: F-4
   design-auditor ADVISORY._ Open.
+- **H39 — scheduler runner: restart re-fire, un-plumbed `gates_auto`, shutdown join (F-5).** Three
+  non-blocking advisories from the F-5 review of `app/core/scheduler_runner.py` + `app/main.py`.
+  (1) **Restart re-fire (cost-safety, ELEVATED).** `SchedulerState.fired` is in-memory (F-2) and the
+  driver runs `tick_once()` immediately on startup, so an app restart INSIDE a slot's 5-min grace
+  window re-fires an already-fired slot. For an `allow_real_spend=True` entry that means a duplicate
+  real-money run for the same slot — bounded by the on-disk per-day/per-run budget ledger (not an
+  uncapped hole), and gated behind the off-by-default timer + per-entry opt-in, but a real edge on the
+  paid path. Fix in a dedicated follow-on: persist fired-slot keys (or seed `SchedulerState` from
+  disk) so slot dedup survives a restart; the `_active` guard only blocks CONCURRENT same-workflow
+  runs, not a sequential re-fire. (2) **`gates_auto` not yet honored.** §5.7 says each entry carries
+  the approval-gate auto/pause flag, but the runner has NO gate-bypass parameter yet (`run_request`
+  takes none; the only `gate` state today is the silence-monitor heartbeat, unrelated) — so the flag
+  cannot be plumbed until the approval-gate RUNTIME lands. The field is captured (F-1) and shown (F-4)
+  in anticipation; wire `gates_auto → start → admit_run → run_request` when the gate runtime exists.
+  (3) **Shutdown join under lock.** `SchedulerDriver.stop()` holds `_lifecycle_lock` across
+  `thread.join()`; if a tick is mid-`admit_run`/`ensure_env` (e.g. a first-time venv build) shutdown
+  blocks for that duration — availability at shutdown only; consider a bounded join. _Source: F-5
+  security-auditor ADVISORY._ Open.
 
 ## Resolved
 
