@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { fetchRunFiles } from "../api";
+import { fetchRun, fetchRunFiles } from "../api";
+import { QualityPanel } from "./QualityPanel";
 import type { RunDetail, RunFile, SseEnvelope, StepEvent, VideoRecord } from "../types";
 
 type RunRecordViewProps = {
@@ -548,6 +549,24 @@ function ArtifactsPanel({ title, files }: { title: string; files: RunFile[] }) {
 export function RunRecordView({ run, events, workflowId, runId }: RunRecordViewProps) {
   const [files, setFiles] = useState<RunFile[] | null>(null);
   const [filesError, setFilesError] = useState<string | null>(null);
+  const [videoRecords, setVideoRecords] = useState<VideoRecord[]>(run.video_records);
+  const [seenRun, setSeenRun] = useState(run);
+
+  if (run !== seenRun) {
+    setSeenRun(run);
+    setVideoRecords(run.video_records);
+  }
+
+  function reload() {
+    void fetchRun(workflowId, runId).then(
+      (detail) => {
+        setVideoRecords(detail.video_records);
+      },
+      () => {
+        /* keep the current records if the refresh fails */
+      },
+    );
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -648,6 +667,12 @@ export function RunRecordView({ run, events, workflowId, runId }: RunRecordViewP
                 />
               ))
             : null}
+          <QualityPanel
+            workflowId={workflowId}
+            runId={runId}
+            videos={videoRecords}
+            onSaved={reload}
+          />
         </div>
       </div>
     </div>

@@ -4,6 +4,8 @@ export type Problem = {
   severity: "error" | "warning";
 };
 
+export type QualityFactor = { key: string; question: string };
+
 export type Workflow = {
   id: string;
   name: string | null;
@@ -11,7 +13,15 @@ export type Workflow = {
   thumbnail_url: string | null;
   valid: boolean;
   problems: Problem[];
+  quality_factors: QualityFactor[];
 };
+
+export type VideoQualityInput = {
+  index: number;
+  answers: Record<string, string>;
+  accepted: boolean | null;
+};
+export type QualitySubmission = { videos: VideoQualityInput[] };
 
 export type WorkflowList = {
   workflows: Workflow[];

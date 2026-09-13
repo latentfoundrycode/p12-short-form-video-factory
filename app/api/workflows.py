@@ -35,6 +35,11 @@ class ProblemOut(BaseModel):
     severity: Literal["error", "warning"]
 
 
+class QualityFactorOut(BaseModel):
+    key: str
+    question: str
+
+
 class WorkflowOut(BaseModel):
     id: str
     name: str | None
@@ -42,6 +47,7 @@ class WorkflowOut(BaseModel):
     thumbnail_url: str | None
     valid: bool
     problems: list[ProblemOut]
+    quality_factors: list[QualityFactorOut]
 
 
 class WorkflowListOut(BaseModel):
@@ -67,6 +73,13 @@ def _serialize(entry: WorkflowEntry) -> WorkflowOut:
             ProblemOut(code=problem.code.value, message=problem.message, severity=problem.severity)
             for problem in entry.problems
         ],
+        quality_factors=(
+            []
+            if manifest is None
+            else [
+                QualityFactorOut(key=f.key, question=f.question) for f in manifest.quality_factors
+            ]
+        ),
     )
 
 

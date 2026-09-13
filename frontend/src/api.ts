@@ -1,5 +1,6 @@
 import type {
   LaunchBody,
+  QualitySubmission,
   RunDetail,
   RunFiles,
   RunList,
@@ -187,6 +188,28 @@ export async function fetchRuns(id: string): Promise<RunList> {
     throw new Error("Unexpected response while trying to load runs");
   }
   return data;
+}
+
+export async function submitQuality(
+  workflowId: string,
+  runId: string,
+  body: QualitySubmission,
+): Promise<void> {
+  const response = await fetch(
+    `/api/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/quality`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (response.ok) {
+    return;
+  }
+  if (response.status === 422) {
+    throw new Error("The server rejected these answers.");
+  }
+  throw new Error(`Could not save judgement (${response.status})`);
 }
 
 export async function fetchStatistics(months?: number): Promise<Statistics> {
