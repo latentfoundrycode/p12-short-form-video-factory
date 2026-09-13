@@ -20,6 +20,7 @@ launched work.
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -171,4 +172,32 @@ def test_start_then_stop_is_clean(tmp_path: Path) -> None:
     driver.start()
     assert driver.running is True
     driver.stop()
+    assert driver.running is False
+
+
+def test_driver_survives_a_failing_tick(tmp_path: Path) -> None:
+    """A raising `start` (or any tick error) must NOT kill the daemon — later slots still run.
+
+    Regression lock: without fault isolation in the loop, one exception terminates the scheduler
+    thread permanently and no further schedule ever fires.
+    """
+    schedules_path = tmp_path / "schedules.json"
+    write_schedules(schedules_path, [_entry()])
+    calls = 0
+
+    def start(_entry_arg: ScheduleEntry, _dry: bool) -> None:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("boom")
+
+    driver = _driver(schedules_path, start)
+    driver.start()
+    try:
+        deadline = time.monotonic() + 3.0
+        while calls < 1 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert calls >= 1  # a tick ran and raised
+        assert driver.running is True  # the raise did not tear down the loop
+    finally:
+        driver.stop()
     assert driver.running is False
