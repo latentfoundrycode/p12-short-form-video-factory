@@ -140,6 +140,13 @@ your summary so the design reviewer does not flag the missing budget line.
   uncommitted (the supervisor restores `app/web/.gitkeep` at commit time).
 - TypeScript strict: no `any`, no non-null `!` on untyped data — validate shapes like the existing
   api helpers. Keep `npm run lint`, `npm run stylelint`, and `npm run build` clean.
+- `index.css` note: `npm run stylelint` enforces modern notation, and `origin/main`'s `index.css`
+  already carries TWO pre-existing violations unrelated to this tab (a deprecated
+  `word-break: break-word` and a legacy `@media (max-width: 860px)` in the run-detail `.digest`
+  region). Running `stylelint --fix` corrects them to `overflow-wrap: break-word` and
+  `@media (width <= 860px)`. Those two equivalent rewrites are EXPECTED and REQUIRED to keep the
+  stylelint gate green — keep them; reverting them fails the gate. Add the new schedule classes as
+  described; do not otherwise restyle existing rules.
 
 ## Scope
 - `frontend/src/types.ts`
@@ -147,6 +154,13 @@ your summary so the design reviewer does not flag the missing budget line.
 - `frontend/src/components/ScheduleView.tsx`
 - `frontend/src/App.tsx`
 - `frontend/src/index.css`
+- `docs/HARDENING.md`
+
+(`frontend/src/index.css` includes the two gate-required `stylelint --fix` rewrites noted under
+Constraints. `docs/HARDENING.md` is the supervisor-appended backlog note finalizing the increment —
+e.g. H38, the same way H32–H37 landed through their increments' PRs — not part of the builder's code
+change. The builder itself produces only the five `frontend/src/*` files; the scope-check at the
+builder checkpoint therefore sees exactly those five.)
 
 ## Verify (from the worktree)
 - `cd frontend && npm run build` → tsc + vite build succeed with no type errors.
