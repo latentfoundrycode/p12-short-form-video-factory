@@ -586,6 +586,131 @@ textarea {
   padding: 8px 10px;
 }
 
+/* Schedule */
+.list {
+  display: flex;
+  flex-direction: column;
+}
+
+.li {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.li:last-child {
+  border-bottom: none;
+}
+
+.li-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.li-title {
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.li-sub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 3px;
+}
+
+.days {
+  display: flex;
+  gap: 3px;
+}
+
+.day {
+  width: 22px;
+  height: 22px;
+  border-radius: 2px;
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--text-faint);
+}
+
+.day.on {
+  background: var(--surface-3);
+  border-color: var(--text-faint);
+  color: var(--text);
+}
+
+.time {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+
+.switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+}
+
+.tog {
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  position: relative;
+  flex: 0 0 auto;
+  padding: 0;
+}
+
+.tog::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  transition: 0.15s;
+}
+
+.tog.on {
+  background: var(--surface-3);
+  border-color: var(--text-dim);
+}
+
+.tog.on::after {
+  left: 16px;
+  background: var(--text);
+}
+
+.blocker {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r);
+  border: 1px solid rgb(209 116 108 / 40%);
+  background: var(--red-bg);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  margin-bottom: 16px;
+}
+
+.blocker .ico {
+  color: var(--red);
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
 .run-layout {
   display: grid;
   grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
@@ -675,10 +800,10 @@ textarea {
   font-family: var(--font-mono);
   font-size: 11.5px;
   color: var(--text);
-  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
-@media (max-width: 860px) {
+@media (width <= 860px) {
   .run-layout {
     grid-template-columns: 1fr;
   }

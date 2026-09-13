@@ -17,6 +17,24 @@ export type WorkflowList = {
   workflows: Workflow[];
 };
 
+export type ScheduleEntry = {
+  id: string;
+  workflow_id: string;
+  days: number[];
+  time_of_day: string;
+  video_count: number;
+  concurrency: number;
+  params: Record<string, unknown>;
+  gates_auto: boolean;
+  allow_real_spend: boolean;
+};
+
+export type ScheduleList = {
+  schedules: ScheduleEntry[];
+};
+
+export type ScheduleWriteBody = Omit<ScheduleEntry, "id">;
+
 export type RequestStatus =
   "running" | "complete" | "partial" | "stopped" | "stopped-budget" | "failed";
 

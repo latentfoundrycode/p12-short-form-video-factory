@@ -363,6 +363,17 @@ increments that logged them.
   surfaces as an unhandled 500 on `GET /api/schedules` (an availability nit, not a security hole, and
   the file is only ever written atomically by this same API); a follow-on may map it to a clear 422.
   _Source: F-3 security-auditor ADVISORY._ Open.
+- **H38 — Schedule tab UI polish: day-pill a11y, blocker icon, raw-rgb token (F-4).** Three
+  non-blocking advisories from the F-4 review of `frontend/src/components/ScheduleView.tsx` +
+  `frontend/src/index.css` (same advisory classes deferred at E-4b): (1) the read-only weekday pill
+  strip conveys active days visually only — a screen reader hears "M T W T F S S" with no active-state
+  cue (the interactive form toggles are fine, they carry `aria-pressed`); add a per-pill `aria-label`/
+  state or a text day summary. (2) The ported `.blocker .ico` rule is dead — the real-spend warning
+  renders text with no leading warning icon as the mockup's blocker carries; add the icon element or
+  drop the unused rule. (3) `.blocker`'s border is a literal `rgb(209 116 108 / 40%)` (faithful to the
+  mockup; no red-at-40% design token exists) — a `--red-border`-style token would single-source it.
+  All mirror the approved `v-schedule` mockup and violate no frozen a11y MUST. _Source: F-4
+  design-auditor ADVISORY._ Open.
 
 ## Resolved
 
