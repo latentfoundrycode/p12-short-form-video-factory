@@ -21,7 +21,10 @@ export type VideoQualityInput = {
   answers: Record<string, string>;
   accepted: boolean | null;
 };
-export type QualitySubmission = { videos: VideoQualityInput[] };
+export type QualitySubmission = {
+  videos: VideoQualityInput[];
+  rankings?: Record<string, number[]>;
+};
 
 export type WorkflowList = {
   workflows: Workflow[];
