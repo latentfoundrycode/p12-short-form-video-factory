@@ -6,9 +6,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.runs import _TERMINAL_STATUSES, _holder, _runs_dir
+from app.api.runs import _TERMINAL_STATUSES, _holder, _runs_dir, _secrets
 from app.core.layout import format_video_dir
 from app.core.records import VideoRecord, read_request, read_video, write_video
+from app.core.supervisor import _redact_secrets
 from app.paths import is_safe_path_segment
 
 router = APIRouter(prefix="/api")
@@ -54,6 +55,7 @@ def submit_quality(
             detail="can only record quality for a finished request",
         )
 
+    secret_values = frozenset(v for v in _secrets(request).values() if v)
     declared = set() if entry.manifest is None else {f.key for f in entry.manifest.quality_factors}
     request_indices = {video.index for video in record.videos}
 
@@ -86,6 +88,7 @@ def submit_quality(
         if not quality:
             continue
 
+        quality = _redact_secrets(quality, secret_values)
         video_dir = run_dir / format_video_dir(index, len(record.videos))
         if not (video_dir / "video.json").is_file():
             continue
