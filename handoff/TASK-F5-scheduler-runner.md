@@ -131,6 +131,12 @@ near-midnight-grace edges are tracked in HARDENING H36 — do not add timezone h
 - `app/api/runs.py`
 - `app/core/scheduler_runner.py`
 - `app/main.py`
+- `docs/HARDENING.md`
+
+(The builder itself produces only the three `app/*` files — the checkpoint scope-check sees exactly
+those. `docs/HARDENING.md` is the supervisor-appended advisory backlog note finalizing the increment,
+e.g. H39, the same way H32–H38 landed through their increments' PRs; it is not part of the builder's
+code change.)
 
 ## Verify (from the worktree, `./.venv/Scripts/python.exe`)
 - `-m pytest tests/core/test_scheduler_runner.py tests/api/test_admit_run_dry_run.py tests/api/test_scheduler_lifespan.py -q` → all pass.
