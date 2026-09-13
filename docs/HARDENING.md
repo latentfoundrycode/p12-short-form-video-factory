@@ -392,6 +392,16 @@ increments that logged them.
   `thread.join()`; if a tick is mid-`admit_run`/`ensure_env` (e.g. a first-time venv build) shutdown
   blocks for that duration — availability at shutdown only; consider a bounded join. _Source: F-5
   security-auditor ADVISORY._ Open.
+- **H40 — headless-Chrome/FFmpeg can still orphan (invisibly) on an abnormal node exit (test-infra).**
+  The composition-check / render path spawns `node` via `sfvf.media.graphics._run`, which now sets
+  `CREATE_NO_WINDOW` on Windows so no console window appears (fixing the visible pile-up of
+  `chrome-headless-shell` terminal tabs). Normal and timeout exits are cleaned up (`dom_check.mjs`
+  closes the browser/server in a `finally`; `_run`'s `_kill_process` kills the node tree on timeout).
+  But a hard crash of the Python/node process could still leave a `chrome-headless-shell` / FFmpeg
+  descendant running — now INVISIBLE (no window), so it no longer clutters the terminal but could
+  accumulate as background processes over many crashed runs. Low impact (no UI, no spend); a future
+  hardening could kill the whole child process tree on `_run` exit (Windows: taskkill /T, or a job
+  object). _Source: chrome-console fix follow-up._ Open.
 
 ## Resolved
 

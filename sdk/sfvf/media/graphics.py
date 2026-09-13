@@ -18,6 +18,10 @@ from .._runtime import current_context
 from ..context import Context
 from .speech import WordTiming
 
+# Windows: keep node — and the chrome-headless-shell / FFmpeg it spawns — from opening a console
+# window. CREATE_NO_WINDOW exists only on Windows; 0 is a no-op elsewhere.
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
 _WIDTH = 1080
 _HEIGHT = 1920
 _FPS = 30
@@ -252,6 +256,7 @@ def _run(command: list[str]) -> str:
             encoding="utf-8",
             errors="replace",
             env={**os.environ, "HYPERFRAMES_SKIP_SKILLS": "1"},
+            creationflags=_NO_WINDOW,
         )
     except OSError as exc:
         raise RuntimeError(f"command failed: {command}\n{exc}") from exc
