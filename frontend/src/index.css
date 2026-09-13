@@ -1131,3 +1131,44 @@ textarea {
   color: var(--text-faint);
   margin-top: 3px;
 }
+
+/* ---- quality ---- */
+.q-video {
+  margin-bottom: 22px;
+}
+
+.factor {
+  display: block;
+  margin-bottom: 18px;
+}
+
+.factor-q {
+  display: block;
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 7px;
+  font-weight: 500;
+}
+
+.ta {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 9px 11px;
+  font-size: 12.5px;
+  color: var(--text);
+  resize: vertical;
+  min-height: 62px;
+  font-family: var(--font-body);
+}
+
+.ta::placeholder {
+  color: var(--text-faint);
+}
+
+.verdict {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}

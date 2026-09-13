@@ -5,7 +5,20 @@ from fastapi.testclient import TestClient
 from app.main import create_app
 from tests.registry.fixtures import minimal_toml, write_plugin
 
-WORKFLOW_FIELDS = {"id", "name", "description", "thumbnail_url", "valid", "problems"}
+WORKFLOW_FIELDS = {
+    "id",
+    "name",
+    "description",
+    "thumbnail_url",
+    "valid",
+    "problems",
+    "quality_factors",
+}
+
+QUALITY_FACTORS_TOML = (
+    '[[quality_factors]]\nkey = "hook"\nquestion = "Did the first two seconds hook you? Why?"\n\n'
+    '[[quality_factors]]\nkey = "pace"\nquestion = "Did the pace hold? Where did it sag?"'
+)
 
 
 def client_for(workflows_dir: Path) -> TestClient:
@@ -43,6 +56,22 @@ def test_valid_workflow_serializes_manifest_fields(tmp_path: Path) -> None:
     assert item["thumbnail_url"] == "/api/workflows/news-explainer/thumbnail"
     assert item["valid"] is True
     assert item["problems"] == []
+    assert item["quality_factors"] == []
+
+
+def test_declared_quality_factors_are_exposed(tmp_path: Path) -> None:
+    write_plugin(tmp_path, "explainer", minimal_toml("explainer", extra=QUALITY_FACTORS_TOML))
+    item = client_for(tmp_path).get("/api/workflows").json()["workflows"][0]
+    assert item["quality_factors"] == [
+        {"key": "hook", "question": "Did the first two seconds hook you? Why?"},
+        {"key": "pace", "question": "Did the pace hold? Where did it sag?"},
+    ]
+
+
+def test_broken_workflow_has_empty_quality_factors(tmp_path: Path) -> None:
+    write_plugin(tmp_path, "broken", "[[[not toml")
+    item = client_for(tmp_path).get("/api/workflows").json()["workflows"][0]
+    assert item["quality_factors"] == []
 
 
 def test_broken_folder_appears_with_folder_id_and_unreadable_problem(tmp_path: Path) -> None:
