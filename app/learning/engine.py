@@ -110,6 +110,17 @@ def run_learning(
     staging_dir: Path,
     optimize: OptimizeFn,
 ) -> LearningResult:
+    workflow_resolved = workflow_dir.resolve()
+    staging_resolved = staging_dir.resolve()
+    if (
+        staging_resolved == workflow_resolved
+        or workflow_resolved in staging_resolved.parents
+        or staging_resolved in workflow_resolved.parents
+    ):
+        raise LearningError(
+            f"staging_dir must be disjoint from the workflow directory: {staging_dir}"
+        )
+
     workflow_id = workflow_dir.name
     try:
         learning_input = LearningInput(
