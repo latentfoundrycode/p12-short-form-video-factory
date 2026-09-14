@@ -651,9 +651,17 @@ textarea {
   background: var(--amber-bg);
 }
 
+.lrn.s-run .li-sub {
+  color: var(--amber);
+}
+
 .lrn.s-done {
   border-left: 2px solid var(--green);
   background: var(--green-bg);
+}
+
+.lrn.s-done .li-sub {
+  color: var(--green);
 }
 
 .lrn-count {
@@ -706,6 +714,11 @@ textarea {
   color: var(--text-faint);
   width: 9px;
   flex: 0 0 auto;
+}
+
+.review-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .days {

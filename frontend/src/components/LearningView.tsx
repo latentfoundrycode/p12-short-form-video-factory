@@ -237,6 +237,20 @@ export function LearningView() {
                           Review
                         </button>
                       ) : null}
+                      {run.status === "ready" && run.proposals.length === 0 ? (
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => {
+                            setRuns((current) => ({
+                              ...current,
+                              [workflow.workflow_id]: idleRun,
+                            }));
+                          }}
+                        >
+                          Dismiss
+                        </button>
+                      ) : null}
                       {run.status === "error" ? (
                         <button
                           type="button"
@@ -284,7 +298,7 @@ export function LearningView() {
                   </div>
                 ))}
                 {reviewError === null ? null : <div className="page-note">{reviewError}</div>}
-                <div className="card-foot">
+                <div className="review-actions">
                   <button
                     type="button"
                     className="btn btn-primary btn-sm"
