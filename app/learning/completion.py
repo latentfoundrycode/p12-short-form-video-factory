@@ -101,7 +101,7 @@ def make_openrouter_completion(
         )
 
         with client_factory() as client:
-            for _attempt in range(_MAX_ATTEMPTS):
+            for attempt in range(_MAX_ATTEMPTS):
                 resp = client.post(
                     "/chat/completions",
                     headers={"Authorization": f"Bearer {key}"},
@@ -110,7 +110,8 @@ def make_openrouter_completion(
                 if resp.status_code == 200:
                     break
                 if resp.status_code == 429:
-                    sleep(_retry_after_s(resp.headers.get("Retry-After")))
+                    if attempt < _MAX_ATTEMPTS - 1:
+                        sleep(_retry_after_s(resp.headers.get("Retry-After")))
                     continue
                 raise CompletionError(f"OpenRouter error {resp.status_code}")
             else:
