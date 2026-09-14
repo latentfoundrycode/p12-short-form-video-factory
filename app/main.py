@@ -41,6 +41,7 @@ def create_app(
     secrets: Mapping[str, str] | None = None,
     budget: BudgetConfig | None = None,
     learning_staging_dir: Path | None = None,
+    learning_state_dir: Path | None = None,
     make_learning_optimizer: MakeLearningOptimizer | None = None,
     enable_scheduler: bool = False,
 ) -> FastAPI:
@@ -100,6 +101,9 @@ def create_app(
     application.state.budget = budget if budget is not None else load_budget_config()
     application.state.learning_staging_dir = learning_staging_dir or (
         APP_ROOT / "state" / "learning-staging"
+    )
+    application.state.learning_state_dir = learning_state_dir or (
+        APP_ROOT / "state" / "learning-state"
     )
     application.state.make_learning_optimizer = (
         make_learning_optimizer
