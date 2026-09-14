@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -14,10 +15,24 @@ if TYPE_CHECKING:
 
 LEARNING_METER = "learning"
 _HTTP_TIMEOUT_S = 60.0
+_RETRY_AFTER_DEFAULT_S = 1.0
+_MAX_ATTEMPTS = 3
 
 
 class CompletionError(Exception):
     """Raised when an OpenRouter completion fails outside budget enforcement."""
+
+
+def _retry_after_s(header: str | None) -> float:
+    if header is None:
+        return _RETRY_AFTER_DEFAULT_S
+    try:
+        value = float(header)
+    except (TypeError, ValueError):
+        return _RETRY_AFTER_DEFAULT_S
+    if not math.isfinite(value) or value < 0:
+        return _RETRY_AFTER_DEFAULT_S
+    return value
 
 
 def _default_client_factory() -> httpx2.Client:
@@ -57,6 +72,7 @@ def make_openrouter_completion(
     model: str,
     run_id: str,
     client_factory: Callable[[], httpx2.Client] = _default_client_factory,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> CompleteFn:
     def complete(messages: list[dict[str, str]]) -> str:
         key = secrets.get("OPENROUTER_API_KEY")
@@ -85,14 +101,28 @@ def make_openrouter_completion(
         )
 
         with client_factory() as client:
-            resp = client.post(
-                "/chat/completions",
-                headers={"Authorization": f"Bearer {key}"},
-                json={"model": model, "messages": messages},
-            )
-            if resp.status_code != 200:
+            for attempt in range(_MAX_ATTEMPTS):
+                resp = client.post(
+                    "/chat/completions",
+                    headers={"Authorization": f"Bearer {key}"},
+                    json={"model": model, "messages": messages},
+                )
+                if resp.status_code == 200:
+                    break
+                if resp.status_code == 429:
+                    if attempt < _MAX_ATTEMPTS - 1:
+                        sleep(_retry_after_s(resp.headers.get("Retry-After")))
+                    continue
                 raise CompletionError(f"OpenRouter error {resp.status_code}")
-            data: dict[str, Any] = resp.json()
+            else:
+                raise CompletionError("OpenRouter rate limited after retries (429)")
+
+            try:
+                data = resp.json()
+            except Exception as exc:
+                raise CompletionError("OpenRouter returned a malformed response body") from exc
+            if not isinstance(data, dict):
+                raise CompletionError("OpenRouter response has the wrong shape")
 
         cost = _usage_cost(data)
         if cost is not None:
