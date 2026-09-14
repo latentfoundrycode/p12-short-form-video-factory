@@ -178,6 +178,23 @@ def test_rejects_backslash_and_drive_letter_paths(tmp_path: Path) -> None:
             run_learning(workflow_dir, runs_dir=runs, staging_dir=staging, optimize=optimize)
 
 
+def test_rejects_staging_dir_inside_workflow(tmp_path: Path) -> None:
+    """§5.11 ("enforced by the module, not by convention"): a staging_dir that overlaps the
+    workflow must be refused BEFORE any rmtree, so a wiring bug can never delete live rules/skills."""
+    workflow_dir = _workflow(tmp_path)
+    runs = _seed_labelled_run(tmp_path)
+
+    def optimize(_inp: LearningInput) -> list[ProposedEdit]:
+        return [ProposedEdit(path="rules/tone.md", content="x")]
+
+    with pytest.raises(LearningError):
+        run_learning(
+            workflow_dir, runs_dir=runs, staging_dir=workflow_dir / "rules", optimize=optimize
+        )
+    # the live rules file is untouched (never rmtree'd)
+    assert "Be concrete." in (workflow_dir / "rules" / "tone.md").read_text(encoding="utf-8")
+
+
 def test_reverts_staging_on_optimize_error(tmp_path: Path) -> None:
     def optimize(_inp: LearningInput) -> list[ProposedEdit]:
         raise RuntimeError("optimiser blew up")
