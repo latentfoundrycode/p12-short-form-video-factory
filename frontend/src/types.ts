@@ -30,6 +30,17 @@ export type WorkflowList = {
   workflows: Workflow[];
 };
 
+export type LearningRow = {
+  workflow_id: string;
+  name: string | null;
+  label_count: number;
+  rules_count: number;
+  skills_count: number;
+  last_learned: string | null;
+};
+
+export type LearningList = { workflows: LearningRow[] };
+
 export type ScheduleEntry = {
   id: string;
   workflow_id: string;

@@ -1,4 +1,6 @@
 import type {
+  LearningList,
+  LearningRow,
   LaunchBody,
   QualitySubmission,
   RunDetail,
@@ -32,6 +34,18 @@ export async function fetchWorkflows(): Promise<Workflow[]> {
 
 export async function rescanWorkflows(): Promise<Workflow[]> {
   return readList(await fetch("/api/workflows/rescan", { method: "POST" }), "rescan workflows");
+}
+
+export async function fetchLearning(): Promise<LearningRow[]> {
+  const response = await fetch("/api/learning");
+  if (!response.ok) {
+    throw new Error(`Could not load learning data (${response.status})`);
+  }
+  const data = (await response.json()) as LearningList;
+  if (!Array.isArray(data.workflows)) {
+    throw new Error("Unexpected response while trying to load learning data");
+  }
+  return data.workflows;
 }
 
 export async function fetchSchedules(): Promise<ScheduleEntry[]> {
