@@ -65,7 +65,13 @@ def _seed_run(runs: Path, workflow_id: str, run_id: str, quality_by_index: dict[
 
 def _rows(workflows: Path, runs: Path) -> list[dict]:
     """Build the app AFTER seeding, then read /api/learning."""
-    client = TestClient(create_app(workflows_dir=workflows, runs_dir=runs))
+    client = TestClient(
+        create_app(
+            workflows_dir=workflows,
+            runs_dir=runs,
+            learning_state_dir=workflows.parent / "learning-state",
+        )
+    )
     response = client.get("/api/learning")
     assert response.status_code == 200
     return response.json()["workflows"]

@@ -153,3 +153,14 @@ def test_accept_sets_last_learned_marker(tmp_path: Path) -> None:
     # the marker (now) is newer than both fixture runs, so nothing counts as new anymore
     assert _row(client)["label_count"] == 0
     assert _row(client)["last_learned"] == marker
+
+
+def test_accept_without_applied_edits_does_not_advance_marker(tmp_path: Path) -> None:
+    # A no-op accept (a run that proposed nothing, so nothing is applied) must NOT advance the
+    # checkpoint — otherwise existing labels would be hidden from future learning with no work done.
+    # the optimiser proposes nothing, so the run stages nothing to accept
+    client, state_dir = _setup(tmp_path, factory=_capturing_factory([]))
+    client.post("/api/learning/explainer/run")
+    assert client.post("/api/learning/explainer/accept").status_code == 200
+    assert read_last_learned(state_dir, "explainer") is None  # marker untouched
+    assert _row(client)["label_count"] == 2  # both labels still counted as unlearned
