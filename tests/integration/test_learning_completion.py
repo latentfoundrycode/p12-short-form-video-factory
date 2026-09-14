@@ -275,3 +275,24 @@ def test_429_exhausted_raises_completion_error(tmp_path: Path) -> None:
     with pytest.raises(CompletionError):
         complete(_MSGS)
     assert len(seen) >= 2  # bounded retries were attempted, then it gave up
+
+
+def test_no_sleep_after_the_final_attempt(tmp_path: Path) -> None:
+    # A large Retry-After on the LAST 429 must not stall the failure: sleep only between attempts,
+    # never after the final one (else an exhausted retry could hang for the Retry-After duration).
+    def handler(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        return httpx2.Response(429, headers={"Retry-After": "9999"}, json={"error": 429})
+
+    factory, seen, _ = _factory(handler)
+    slept: list[float] = []
+    complete = make_openrouter_completion(
+        secrets={"OPENROUTER_API_KEY": _KEY},
+        budget=_budget(tmp_path),
+        model="m",
+        run_id="r",
+        client_factory=factory,
+        sleep=slept.append,
+    )
+    with pytest.raises(CompletionError):
+        complete(_MSGS)
+    assert len(slept) == len(seen) - 1  # slept between attempts only, never after the last one
