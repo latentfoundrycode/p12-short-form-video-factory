@@ -19,7 +19,7 @@ _FRONTMATTER = re.compile(
     r"\A---\n(?P<body>.*?)(?P<closing>^---(?:\n|\Z))",
     re.DOTALL | re.MULTILINE,
 )
-_VERSION = re.compile(r"^version:\s*(\d+)\s*$", re.MULTILINE)
+_VERSION = re.compile(r"^version:\s*(\d+)[ \t]*$", re.MULTILINE)
 
 
 def _read_version(text: str) -> int:
@@ -58,6 +58,11 @@ def _valid_staged_path(raw_path: str) -> bool:
 
 
 def accept_learning(workflow_dir: Path, staging_dir: Path) -> AcceptResult:
+    workflow = workflow_dir.resolve()
+    staging = staging_dir.resolve()
+    if workflow == staging or workflow.is_relative_to(staging) or staging.is_relative_to(workflow):
+        raise AcceptError("staging directory must not overlap workflow directory")
+
     staged = sorted(
         (path.relative_to(staging_dir).as_posix(), path)
         for path in staging_dir.rglob("*")
