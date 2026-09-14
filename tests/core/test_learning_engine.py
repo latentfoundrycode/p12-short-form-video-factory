@@ -144,6 +144,40 @@ def test_rejects_edit_outside_rules_and_skills(tmp_path: Path) -> None:
     assert "Be concrete." in (workflow_dir / "rules" / "tone.md").read_text(encoding="utf-8")
 
 
+def test_rejects_backslash_traversal_escape(tmp_path: Path) -> None:
+    """Windows escape: a backslash traversal slips past a POSIX-only path check but escapes staging
+    when the native Path writes it. Must be rejected, and nothing must land outside staging.
+
+    (Payloads chosen so that, if they DID escape, they land under the pytest tmp dir — never a real
+    system path — so running this against an unfixed engine is harmless.)
+    """
+    workflow_dir = _workflow(tmp_path)
+    runs = _seed_labelled_run(tmp_path)
+    staging = tmp_path / "staging"
+    for bad in (r"rules/..\..\evil.md", r"rules/sub\..\..\..\evil.md"):
+
+        def optimize(_inp: LearningInput, _bad: str = bad) -> list[ProposedEdit]:
+            return [ProposedEdit(path=_bad, content="x")]
+
+        with pytest.raises(LearningError):
+            run_learning(workflow_dir, runs_dir=runs, staging_dir=staging, optimize=optimize)
+    assert not (tmp_path / "evil.md").exists()  # nothing escaped staging
+
+
+def test_rejects_backslash_and_drive_letter_paths(tmp_path: Path) -> None:
+    """Any '\\' or ':' (drive marker) in an edit path is rejected before any write."""
+    workflow_dir = _workflow(tmp_path)
+    runs = _seed_labelled_run(tmp_path)
+    staging = tmp_path / "staging"
+    for bad in (r"rules/C:\Windows\evil.md", "rules/x\\y.md", "C:/evil.md", "rules/../evil.md"):
+
+        def optimize(_inp: LearningInput, _bad: str = bad) -> list[ProposedEdit]:
+            return [ProposedEdit(path=_bad, content="x")]
+
+        with pytest.raises(LearningError):
+            run_learning(workflow_dir, runs_dir=runs, staging_dir=staging, optimize=optimize)
+
+
 def test_reverts_staging_on_optimize_error(tmp_path: Path) -> None:
     def optimize(_inp: LearningInput) -> list[ProposedEdit]:
         raise RuntimeError("optimiser blew up")
