@@ -195,3 +195,83 @@ def test_missing_content_raises_completion_error(tmp_path: Path) -> None:
     )
     with pytest.raises(CompletionError):
         complete(_MSGS)
+
+
+# --- H43: untrusted-response error contract + bounded 429/Retry-After retry ---
+
+
+def test_malformed_body_raises_completion_error(tmp_path: Path) -> None:
+    # A 200 whose body is not JSON must surface as CompletionError, never a raw JSONDecodeError.
+    def handler(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        return httpx2.Response(200, content=b"not json at all")
+
+    factory, seen, _ = _factory(handler)
+    complete = make_openrouter_completion(
+        secrets={"OPENROUTER_API_KEY": _KEY},
+        budget=_budget(tmp_path),
+        model="m",
+        run_id="r",
+        client_factory=factory,
+    )
+    with pytest.raises(CompletionError):
+        complete(_MSGS)
+    assert len(seen) == 1
+
+
+def test_non_dict_json_body_raises_completion_error(tmp_path: Path) -> None:
+    # A 200 whose top-level JSON is not an object surfaces as CompletionError, not AttributeError.
+    def handler(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        return httpx2.Response(200, json=[1, 2, 3])
+
+    factory, _, _ = _factory(handler)
+    complete = make_openrouter_completion(
+        secrets={"OPENROUTER_API_KEY": _KEY},
+        budget=_budget(tmp_path),
+        model="m",
+        run_id="r",
+        client_factory=factory,
+    )
+    with pytest.raises(CompletionError):
+        complete(_MSGS)
+
+
+def test_retries_on_429_then_succeeds(tmp_path: Path) -> None:
+    def handler(_request: httpx2.Request, n: int) -> httpx2.Response:
+        if n == 1:
+            return httpx2.Response(429, headers={"Retry-After": "5"}, json={"error": 429})
+        return httpx2.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}}], "usage": {"cost": 0.001}},
+        )
+
+    factory, seen, _ = _factory(handler)
+    slept: list[float] = []
+    complete = make_openrouter_completion(
+        secrets={"OPENROUTER_API_KEY": _KEY},
+        budget=_budget(tmp_path),
+        model="m",
+        run_id="r",
+        client_factory=factory,
+        sleep=slept.append,
+    )
+    assert complete(_MSGS) == "ok"
+    assert len(seen) == 2  # retried after the 429
+    assert 5.0 in slept  # honored Retry-After via the injected sleep (no real wait)
+
+
+def test_429_exhausted_raises_completion_error(tmp_path: Path) -> None:
+    def handler(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        return httpx2.Response(429, headers={"Retry-After": "1"}, json={"error": 429})
+
+    factory, seen, _ = _factory(handler)
+    complete = make_openrouter_completion(
+        secrets={"OPENROUTER_API_KEY": _KEY},
+        budget=_budget(tmp_path),
+        model="m",
+        run_id="r",
+        client_factory=factory,
+        sleep=lambda _seconds: None,
+    )
+    with pytest.raises(CompletionError):
+        complete(_MSGS)
+    assert len(seen) >= 2  # bounded retries were attempted, then it gave up
