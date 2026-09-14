@@ -197,11 +197,12 @@ def get_staged_learning(request: Request, workflow_id: str) -> StagedOut:
 def accept_staged_learning(request: Request, workflow_id: str) -> AcceptOut:
     entry = _entry(request, workflow_id)
     result = accept_learning(entry.path, _staging_for(request, workflow_id))
-    write_last_learned(
-        _learning_state_dir(request),
-        workflow_id,
-        ids.format_utc_z(ids.utc_now()),
-    )
+    if result.applied:
+        write_last_learned(
+            _learning_state_dir(request),
+            workflow_id,
+            ids.format_utc_z(ids.utc_now()),
+        )
     return AcceptOut(applied=result.applied)
 
 
