@@ -179,8 +179,8 @@ def test_rejects_backslash_and_drive_letter_paths(tmp_path: Path) -> None:
 
 
 def test_rejects_staging_dir_inside_workflow(tmp_path: Path) -> None:
-    """§5.11 ("enforced by the module, not by convention"): a staging_dir that overlaps the
-    workflow must be refused BEFORE any rmtree, so a wiring bug can never delete live rules/skills."""
+    """§5.11 is enforced by the module: a staging_dir overlapping the workflow is refused BEFORE any
+    rmtree, so a wiring bug can never delete the live rules/skills."""
     workflow_dir = _workflow(tmp_path)
     runs = _seed_labelled_run(tmp_path)
 
