@@ -11,11 +11,13 @@ from sfvf.context import BudgetConfig
 
 from app.api.runs import _runs_dir
 from app.api.workflows import _holder
-from app.core.records import read_video
+from app.core import ids
+from app.core.records import read_request, read_video
 from app.learning.accept import accept_learning, reject_learning
 from app.learning.completion import make_openrouter_completion
 from app.learning.engine import LearningError, OptimizeFn, ProposedEdit, run_learning
 from app.learning.optimizer import make_optimizer
+from app.learning.state import read_last_learned, write_last_learned
 from app.paths import is_safe_path_segment
 from app.registry.validate import WorkflowEntry
 
@@ -81,6 +83,10 @@ def _staging_for(request: Request, workflow_id: str) -> Path:
     return staging_dir / workflow_id
 
 
+def _learning_state_dir(request: Request) -> Path:
+    return cast(Path, request.app.state.learning_state_dir)
+
+
 def _read_staged(staging: Path) -> list[StagedProposalOut]:
     return [
         StagedProposalOut(
@@ -92,7 +98,7 @@ def _read_staged(staging: Path) -> list[StagedProposalOut]:
     ]
 
 
-def _label_count(runs_dir: Path, workflow_id: str) -> int:
+def _label_count(runs_dir: Path, workflow_id: str, since: str | None = None) -> int:
     workflow_runs = runs_dir / workflow_id
     if not workflow_runs.is_dir():
         return 0
@@ -106,8 +112,11 @@ def _label_count(runs_dir: Path, workflow_id: str) -> int:
         if not run_dir.is_dir() or not (run_dir / "request.json").is_file():
             continue
         try:
+            request = read_request(run_dir)
             children = list(run_dir.iterdir())
-        except OSError:
+        except (OSError, TypeError, ValueError):
+            continue
+        if since is not None and not (request.started_utc > since):
             continue
         for child in children:
             if not child.is_dir() or not (child / "video.json").is_file():
@@ -138,19 +147,21 @@ def list_learning(request: Request) -> LearningListOut:
     runs_dir = _runs_dir(request)
     holder = _holder(request)
     entries = holder.snapshot
-    return LearningListOut(
-        workflows=[
+    state_dir = _learning_state_dir(request)
+    rows: list[LearningRowOut] = []
+    for entry in entries:
+        marker = read_last_learned(state_dir, entry.folder_name)
+        rows.append(
             LearningRowOut(
                 workflow_id=entry.folder_name,
                 name=None if entry.manifest is None else entry.manifest.workflow.name,
-                label_count=_label_count(runs_dir, entry.folder_name),
+                label_count=_label_count(runs_dir, entry.folder_name, since=marker),
                 rules_count=_markdown_count(entry.path / "rules"),
                 skills_count=_markdown_count(entry.path / "skills"),
-                last_learned=None,
+                last_learned=marker,
             )
-            for entry in entries
-        ]
-    )
+        )
+    return LearningListOut(workflows=rows)
 
 
 @router.post("/learning/{workflow_id}/run", response_model=StagedOut)
@@ -159,12 +170,14 @@ def run_learning_for_workflow(request: Request, workflow_id: str) -> StagedOut:
     staging = _staging_for(request, workflow_id)
     run_id = f"learning-{workflow_id}-{uuid.uuid4().hex}"
     optimize = request.app.state.make_learning_optimizer(workflow_id, run_id)
+    since = read_last_learned(_learning_state_dir(request), workflow_id)
     try:
         result = run_learning(
             entry.path,
             runs_dir=_runs_dir(request),
             staging_dir=staging,
             optimize=optimize,
+            since=since,
         )
     except LearningError as exc:
         raise HTTPException(status_code=502, detail="learning run failed") from exc
@@ -184,6 +197,12 @@ def get_staged_learning(request: Request, workflow_id: str) -> StagedOut:
 def accept_staged_learning(request: Request, workflow_id: str) -> AcceptOut:
     entry = _entry(request, workflow_id)
     result = accept_learning(entry.path, _staging_for(request, workflow_id))
+    if result.applied:
+        write_last_learned(
+            _learning_state_dir(request),
+            workflow_id,
+            ids.format_utc_z(ids.utc_now()),
+        )
     return AcceptOut(applied=result.applied)
 
 

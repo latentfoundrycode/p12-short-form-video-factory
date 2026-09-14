@@ -36,7 +36,9 @@ class LearningResult:
 type OptimizeFn = Callable[[LearningInput], list[ProposedEdit]]
 
 
-def _gather_labels(runs_dir: Path, workflow_id: str) -> list[dict[str, Any]]:
+def _gather_labels(
+    runs_dir: Path, workflow_id: str, *, since: str | None = None
+) -> list[dict[str, Any]]:
     workflow_runs = runs_dir / workflow_id
     if not workflow_runs.is_dir():
         return []
@@ -50,9 +52,11 @@ def _gather_labels(runs_dir: Path, workflow_id: str) -> list[dict[str, Any]]:
         if not run_dir.is_dir() or not (run_dir / "request.json").is_file():
             continue
         try:
-            read_request(run_dir)
+            request = read_request(run_dir)
             children = sorted(run_dir.iterdir())
         except (OSError, TypeError, ValueError):
+            continue
+        if since is not None and not (request.started_utc > since):
             continue
         for child in children:
             if not child.is_dir() or not (child / "video.json").is_file():
@@ -109,6 +113,7 @@ def run_learning(
     runs_dir: Path,
     staging_dir: Path,
     optimize: OptimizeFn,
+    since: str | None = None,
 ) -> LearningResult:
     workflow_resolved = workflow_dir.resolve()
     staging_resolved = staging_dir.resolve()
@@ -125,7 +130,7 @@ def run_learning(
     try:
         learning_input = LearningInput(
             workflow_id=workflow_id,
-            labels=_gather_labels(runs_dir, workflow_id),
+            labels=_gather_labels(runs_dir, workflow_id, since=since),
             criteria=_load_markdown(workflow_dir / "criteria"),
             rules=_load_markdown(workflow_dir / "rules"),
             skills=_load_markdown(workflow_dir / "skills"),

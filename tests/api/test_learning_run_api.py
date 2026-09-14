@@ -75,6 +75,7 @@ def _setup(
         workflows_dir=workflows,
         runs_dir=runs,
         learning_staging_dir=staging,
+        learning_state_dir=tmp_path / "learning-state",
         make_learning_optimizer=factory,
     )
     return TestClient(app), workflows / "explainer", staging
