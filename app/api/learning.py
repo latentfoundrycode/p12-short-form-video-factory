@@ -1,15 +1,44 @@
 """Learning API — per-workflow label, rule, and skill counts (PRD §8.5)."""
 
+import uuid
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import cast
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+from sfvf.context import BudgetConfig
 
 from app.api.runs import _runs_dir
 from app.api.workflows import _holder
 from app.core.records import read_video
+from app.learning.accept import accept_learning, reject_learning
+from app.learning.completion import make_openrouter_completion
+from app.learning.engine import LearningError, OptimizeFn, ProposedEdit, run_learning
+from app.learning.optimizer import make_optimizer
+from app.paths import is_safe_path_segment
+from app.registry.validate import WorkflowEntry
 
 router = APIRouter(prefix="/api")
+
+LEARNING_MODEL = "openai/gpt-4o-mini"
+type MakeLearningOptimizer = Callable[[str, str], OptimizeFn]
+
+
+def make_default_learning_optimizer(
+    secrets: Mapping[str, str], budget: BudgetConfig | None
+) -> MakeLearningOptimizer:
+    def factory(workflow_id: str, run_id: str) -> OptimizeFn:
+        return make_optimizer(
+            make_openrouter_completion(
+                secrets=secrets,
+                budget=budget,
+                model=LEARNING_MODEL,
+                run_id=run_id,
+            )
+        )
+
+    return factory
 
 
 class LearningRowOut(BaseModel):
@@ -23,6 +52,44 @@ class LearningRowOut(BaseModel):
 
 class LearningListOut(BaseModel):
     workflows: list[LearningRowOut]
+
+
+class StagedProposalOut(BaseModel):
+    path: str
+    content: str
+
+
+class StagedOut(BaseModel):
+    staged: list[StagedProposalOut]
+
+
+class AcceptOut(BaseModel):
+    applied: list[str]
+
+
+def _entry(request: Request, workflow_id: str) -> WorkflowEntry:
+    if not is_safe_path_segment(workflow_id):
+        raise HTTPException(status_code=404)
+    entry = _holder(request).get(workflow_id)
+    if entry is None:
+        raise HTTPException(status_code=404)
+    return entry
+
+
+def _staging_for(request: Request, workflow_id: str) -> Path:
+    staging_dir = cast(Path, request.app.state.learning_staging_dir)
+    return staging_dir / workflow_id
+
+
+def _read_staged(staging: Path) -> list[StagedProposalOut]:
+    return [
+        StagedProposalOut(
+            path=path.relative_to(staging).as_posix(),
+            content=path.read_text(encoding="utf-8"),
+        )
+        for path in sorted(staging.rglob("*"))
+        if path.is_file()
+    ]
 
 
 def _label_count(runs_dir: Path, workflow_id: str) -> int:
@@ -84,3 +151,44 @@ def list_learning(request: Request) -> LearningListOut:
             for entry in entries
         ]
     )
+
+
+@router.post("/learning/{workflow_id}/run", response_model=StagedOut)
+def run_learning_for_workflow(request: Request, workflow_id: str) -> StagedOut:
+    entry = _entry(request, workflow_id)
+    staging = _staging_for(request, workflow_id)
+    run_id = f"learning-{workflow_id}-{uuid.uuid4().hex}"
+    optimize = request.app.state.make_learning_optimizer(workflow_id, run_id)
+    try:
+        result = run_learning(
+            entry.path,
+            runs_dir=_runs_dir(request),
+            staging_dir=staging,
+            optimize=optimize,
+        )
+    except LearningError as exc:
+        raise HTTPException(status_code=502, detail="learning run failed") from exc
+    staged: list[ProposedEdit] = result.staged
+    return StagedOut(
+        staged=[StagedProposalOut(path=edit.path, content=edit.content) for edit in staged]
+    )
+
+
+@router.get("/learning/{workflow_id}/staged", response_model=StagedOut)
+def get_staged_learning(request: Request, workflow_id: str) -> StagedOut:
+    _entry(request, workflow_id)
+    return StagedOut(staged=_read_staged(_staging_for(request, workflow_id)))
+
+
+@router.post("/learning/{workflow_id}/accept", response_model=AcceptOut)
+def accept_staged_learning(request: Request, workflow_id: str) -> AcceptOut:
+    entry = _entry(request, workflow_id)
+    result = accept_learning(entry.path, _staging_for(request, workflow_id))
+    return AcceptOut(applied=result.applied)
+
+
+@router.post("/learning/{workflow_id}/reject")
+def reject_staged_learning(request: Request, workflow_id: str) -> dict[str, bool]:
+    _entry(request, workflow_id)
+    reject_learning(_staging_for(request, workflow_id))
+    return {"ok": True}

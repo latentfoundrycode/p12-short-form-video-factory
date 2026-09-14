@@ -8,7 +8,13 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from sfvf.context import BudgetConfig
 
-from app.api.learning import router as learning_router
+from app.api.learning import (
+    MakeLearningOptimizer,
+    make_default_learning_optimizer,
+)
+from app.api.learning import (
+    router as learning_router,
+)
 from app.api.quality import router as quality_router
 from app.api.runs import router as runs_router
 from app.api.schedules import router as schedules_router
@@ -21,7 +27,7 @@ from app.core.scheduler_runner import SchedulerDeps, SchedulerDriver, make_sched
 from app.core.schedules import SCHEDULES_PATH
 from app.core.secrets import SecretStore, _store_path
 from app.core.supervisor import EnsureEnv, PopenFn
-from app.paths import RUNS_DIR, WEB_DIR, WORKFLOWS_DIR
+from app.paths import APP_ROOT, RUNS_DIR, WEB_DIR, WORKFLOWS_DIR
 
 
 def create_app(
@@ -34,6 +40,8 @@ def create_app(
     popen: PopenFn | None = None,
     secrets: Mapping[str, str] | None = None,
     budget: BudgetConfig | None = None,
+    learning_staging_dir: Path | None = None,
+    make_learning_optimizer: MakeLearningOptimizer | None = None,
     enable_scheduler: bool = False,
 ) -> FastAPI:
     if secrets is not None:
@@ -90,6 +98,13 @@ def create_app(
     application.state.popen = popen
     application.state.secrets = dict(resolved)
     application.state.budget = budget if budget is not None else load_budget_config()
+    application.state.learning_staging_dir = learning_staging_dir or (
+        APP_ROOT / "state" / "learning-staging"
+    )
+    application.state.make_learning_optimizer = (
+        make_learning_optimizer
+        or make_default_learning_optimizer(resolved, application.state.budget)
+    )
     application.include_router(workflows_router)
     application.include_router(runs_router)
     application.include_router(quality_router)
