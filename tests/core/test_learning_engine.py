@@ -127,13 +127,21 @@ def test_stages_valid_rules_and_skills_edits(tmp_path: Path) -> None:
 
 def test_rejects_edit_outside_rules_and_skills(tmp_path: Path) -> None:
     # criteria/, the manifest, the library, and any traversal/absolute path are all off-limits.
+    # Build the workflow once (write_plugin won't recreate an existing dir) and reject each in turn;
+    # run_learning never touches the live workflow, so reuse is safe.
+    workflow_dir = _workflow(tmp_path)
+    runs = _seed_labelled_run(tmp_path)
+    staging = tmp_path / "staging"
     for bad in ("criteria/good.md", "workflow.toml", "../secret.txt", "library/desc.json"):
 
         def optimize(_inp: LearningInput, _bad: str = bad) -> list[ProposedEdit]:
             return [ProposedEdit(path=_bad, content="x")]
 
         with pytest.raises(LearningError):
-            _run(tmp_path, optimize)
+            run_learning(workflow_dir, runs_dir=runs, staging_dir=staging, optimize=optimize)
+        assert not staging.exists() or not any(staging.rglob("*"))
+    # the live workflow is untouched after all rejections
+    assert "Be concrete." in (workflow_dir / "rules" / "tone.md").read_text(encoding="utf-8")
 
 
 def test_reverts_staging_on_optimize_error(tmp_path: Path) -> None:
