@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from sfvf.context import BudgetConfig
 
+from app.api.learning import router as learning_router
 from app.api.quality import router as quality_router
 from app.api.runs import router as runs_router
 from app.api.schedules import router as schedules_router
@@ -92,6 +93,7 @@ def create_app(
     application.include_router(workflows_router)
     application.include_router(runs_router)
     application.include_router(quality_router)
+    application.include_router(learning_router)
     application.include_router(statistics_router)
     application.include_router(schedules_router)
 

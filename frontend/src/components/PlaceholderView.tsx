@@ -1,16 +1,12 @@
 import type { TabId } from "../tabs";
 
-type PlaceholderTab = Exclude<TabId, "workflows" | "statistics">;
+type PlaceholderTab = Extract<TabId, "settings">;
 
 const LINES: Record<PlaceholderTab, string> = {
-  schedule: "Arrives in a later stage",
-  learning: "Arrives in a later stage",
   settings: "Arrives in a later stage",
 };
 
 const TITLES: Record<PlaceholderTab, string> = {
-  schedule: "Schedule",
-  learning: "Learning",
   settings: "Settings",
 };
 

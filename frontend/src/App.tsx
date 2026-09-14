@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { LearningView } from "./components/LearningView";
 import { PlaceholderView } from "./components/PlaceholderView";
 import { RunsListView } from "./components/RunsListView";
 import { RunView } from "./components/RunView";
@@ -56,6 +57,8 @@ function App() {
         />
       ) : tab === "schedule" ? (
         <ScheduleView />
+      ) : tab === "learning" ? (
+        <LearningView />
       ) : tab === "statistics" ? (
         <StatisticsView />
       ) : (
