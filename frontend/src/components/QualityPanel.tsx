@@ -40,6 +40,20 @@ function parseAccepted(raw: unknown): boolean | null {
   return typeof raw === "boolean" ? raw : null;
 }
 
+function parseRankings(raw: unknown): Record<string, number> {
+  const rec = asRecord(raw);
+  if (rec === null) {
+    return {};
+  }
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(rec)) {
+    if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 function parseQuality(quality: Record<string, unknown> | null | undefined): {
   answers: Record<string, string>;
   accepted: boolean | null;
@@ -66,6 +80,38 @@ function draftsFromVideos(videos: VideoRecord[], factors: QualityFactor[]): Vide
     });
 }
 
+function rankingsFromVideos(
+  videos: VideoRecord[],
+  factors: QualityFactor[],
+): Record<string, number[]> {
+  const parsed = [...videos]
+    .sort((a, b) => a.index - b.index)
+    .map((video) => ({
+      index: video.index,
+      rankings: parseRankings(video.quality?.rankings),
+    }));
+  const rankings: Record<string, number[]> = {};
+  for (const factor of factors) {
+    rankings[factor.key] = [...parsed]
+      .sort((a, b) => {
+        const aPosition = a.rankings[factor.key];
+        const bPosition = b.rankings[factor.key];
+        if (aPosition !== undefined && bPosition !== undefined) {
+          return aPosition - bPosition || a.index - b.index;
+        }
+        if (aPosition !== undefined) {
+          return -1;
+        }
+        if (bPosition !== undefined) {
+          return 1;
+        }
+        return a.index - b.index;
+      })
+      .map((video) => video.index);
+  }
+  return rankings;
+}
+
 function collectSubmission(drafts: VideoDraft[]): VideoQualityInput[] {
   const videos: VideoQualityInput[] = [];
   for (const draft of drafts) {
@@ -90,6 +136,7 @@ function videoLabel(index: number): string {
 export function QualityPanel({ workflowId, runId, videos, onSaved }: QualityPanelProps) {
   const [factors, setFactors] = useState<QualityFactor[] | null>(null);
   const [drafts, setDrafts] = useState<VideoDraft[]>([]);
+  const [rankings, setRankings] = useState<Record<string, number[]>>({});
   const [syncedVideos, setSyncedVideos] = useState(videos);
   const [syncedFactors, setSyncedFactors] = useState(factors);
   const [formError, setFormError] = useState<string | null>(null);
@@ -99,6 +146,7 @@ export function QualityPanel({ workflowId, runId, videos, onSaved }: QualityPane
     setSyncedVideos(videos);
     setSyncedFactors(factors);
     setDrafts(factors !== null && factors.length > 0 ? draftsFromVideos(videos, factors) : []);
+    setRankings(factors !== null && factors.length > 0 ? rankingsFromVideos(videos, factors) : {});
   }
 
   useEffect(() => {
@@ -126,7 +174,10 @@ export function QualityPanel({ workflowId, runId, videos, onSaved }: QualityPane
     setFormError(null);
     setSubmitting(true);
     try {
-      await submitQuality(workflowId, runId, { videos: collectSubmission(drafts) });
+      await submitQuality(workflowId, runId, {
+        videos: collectSubmission(drafts),
+        ...(drafts.length >= 2 ? { rankings } : {}),
+      });
       onSaved();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Could not save judgement");
@@ -151,6 +202,30 @@ export function QualityPanel({ workflowId, runId, videos, onSaved }: QualityPane
           : draft,
       ),
     );
+  }
+
+  function moveRanking(factorKey: string, videoIndex: number, direction: -1 | 1) {
+    setRankings((prev) => {
+      const current = prev[factorKey];
+      if (current === undefined) {
+        return prev;
+      }
+      const position = current.indexOf(videoIndex);
+      const target = position + direction;
+      if (position < 0 || target < 0 || target >= current.length) {
+        return prev;
+      }
+      const next = current.map((value, index) => {
+        if (index === position) {
+          return current[target] ?? value;
+        }
+        if (index === target) {
+          return current[position] ?? value;
+        }
+        return value;
+      });
+      return { ...prev, [factorKey]: next };
+    });
   }
 
   if (factors === null || factors.length === 0) {
@@ -206,6 +281,50 @@ export function QualityPanel({ workflowId, runId, videos, onSaved }: QualityPane
             </div>
           </div>
         ))}
+        {drafts.length >= 2
+          ? factors.map((factor) => {
+              const order = rankings[factor.key] ?? [];
+              return (
+                <div className="rank" key={factor.key}>
+                  <div className="rank-label">Rank the {drafts.length} videos of this request</div>
+                  <div className="factor-q">{factor.question}</div>
+                  <div className="rank-list">
+                    {order.map((videoIndex, position) => {
+                      const label = videoLabel(videoIndex);
+                      return (
+                        <div className="rank-item" key={videoIndex}>
+                          <span className="rank-pos">{position + 1}</span>
+                          <span>{label}</span>
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            disabled={submitting || position === 0}
+                            aria-label={`Move ${label} up for ${factor.key}`}
+                            onClick={() => {
+                              moveRanking(factor.key, videoIndex, -1);
+                            }}
+                          >
+                            Move up
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            disabled={submitting || position === order.length - 1}
+                            aria-label={`Move ${label} down for ${factor.key}`}
+                            onClick={() => {
+                              moveRanking(factor.key, videoIndex, 1);
+                            }}
+                          >
+                            Move down
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })
+          : null}
         {formError ? <div className="form-error">{formError}</div> : null}
         <div className="card-foot">
           <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>

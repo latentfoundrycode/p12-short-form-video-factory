@@ -1167,8 +1167,51 @@ textarea {
   color: var(--text-faint);
 }
 
+.rank {
+  margin-top: 9px;
+}
+
+.rank-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+
+.rank-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.rank-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  font-size: 12.5px;
+}
+
+.rank-item:hover {
+  border-color: var(--text-faint);
+}
+
+.rank-pos {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  width: 14px;
+}
+
 .verdict {
   display: flex;
   gap: 8px;
   margin-top: 4px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 13px;
 }
