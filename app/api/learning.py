@@ -70,7 +70,7 @@ def _markdown_count(directory: Path) -> int:
 def list_learning(request: Request) -> LearningListOut:
     runs_dir = _runs_dir(request)
     holder = _holder(request)
-    entries = holder.snapshot if holder.snapshot else holder.rescan()
+    entries = holder.snapshot
     return LearningListOut(
         workflows=[
             LearningRowOut(
