@@ -1,4 +1,5 @@
 import type {
+  AcceptResult,
   LearningList,
   LearningRow,
   LaunchBody,
@@ -9,6 +10,8 @@ import type {
   ScheduleEntry,
   ScheduleList,
   ScheduleWriteBody,
+  StagedList,
+  StagedProposal,
   StartRunResult,
   Statistics,
   StopMode,
@@ -46,6 +49,55 @@ export async function fetchLearning(): Promise<LearningRow[]> {
     throw new Error("Unexpected response while trying to load learning data");
   }
   return data.workflows;
+}
+
+export async function runLearning(id: string): Promise<StagedProposal[]> {
+  const response = await fetch(`/api/learning/${encodeURIComponent(id)}/run`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(`Could not start learning (${response.status})`);
+  }
+  const data = (await response.json()) as StagedList;
+  if (!Array.isArray(data.staged)) {
+    throw new Error("Unexpected response while trying to start learning");
+  }
+  return data.staged;
+}
+
+export async function fetchStaged(id: string): Promise<StagedProposal[]> {
+  const response = await fetch(`/api/learning/${encodeURIComponent(id)}/staged`);
+  if (!response.ok) {
+    throw new Error(`Could not load staged proposals (${response.status})`);
+  }
+  const data = (await response.json()) as StagedList;
+  if (!Array.isArray(data.staged)) {
+    throw new Error("Unexpected response while trying to load staged proposals");
+  }
+  return data.staged;
+}
+
+export async function acceptLearning(id: string): Promise<string[]> {
+  const response = await fetch(`/api/learning/${encodeURIComponent(id)}/accept`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(`Could not accept learning (${response.status})`);
+  }
+  const data = (await response.json()) as AcceptResult;
+  if (!Array.isArray(data.applied)) {
+    throw new Error("Unexpected response while trying to accept learning");
+  }
+  return data.applied;
+}
+
+export async function rejectLearning(id: string): Promise<void> {
+  const response = await fetch(`/api/learning/${encodeURIComponent(id)}/reject`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(`Could not reject learning (${response.status})`);
+  }
 }
 
 export async function fetchSchedules(): Promise<ScheduleEntry[]> {

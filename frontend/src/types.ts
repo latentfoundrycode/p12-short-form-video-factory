@@ -41,6 +41,10 @@ export type LearningRow = {
 
 export type LearningList = { workflows: LearningRow[] };
 
+export type StagedProposal = { path: string; content: string };
+export type StagedList = { staged: StagedProposal[] };
+export type AcceptResult = { applied: string[] };
+
 export type ScheduleEntry = {
   id: string;
   workflow_id: string;
