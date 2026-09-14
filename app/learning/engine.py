@@ -91,6 +91,8 @@ def _load_markdown(directory: Path) -> dict[str, str]:
 
 def _validate_edits(edits: list[ProposedEdit]) -> None:
     for edit in edits:
+        if "\\" in edit.path or ":" in edit.path:
+            raise LearningError(f"edit path is outside rules/ and skills/: {edit.path}")
         path = PurePosixPath(edit.path)
         if (
             path.is_absolute()
@@ -124,6 +126,8 @@ def run_learning(
         staging_dir.mkdir(parents=True)
         for edit in edits:
             destination = staging_dir.joinpath(*PurePosixPath(edit.path).parts)
+            if not destination.resolve().is_relative_to(staging_dir.resolve()):
+                raise LearningError(f"edit path escapes the staging area: {edit.path}")
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(edit.content, encoding="utf-8", newline="\n")
         return LearningResult(staged=list(edits))
