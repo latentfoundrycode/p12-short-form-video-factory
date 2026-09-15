@@ -974,6 +974,21 @@ textarea {
   gap: 16px;
 }
 
+.run-two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.run-video {
+  width: 100%;
+  max-height: 70vh;
+  border-radius: var(--r);
+  background: #000;
+  display: block;
+}
+
 .record-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1185,6 +1200,12 @@ textarea {
 
 @media (width <= 1080px) {
   .record-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (width <= 960px) {
+  .run-two {
     grid-template-columns: 1fr;
   }
 }

@@ -162,6 +162,15 @@ export function runEventsUrl(workflowId: string, runId: string): string {
   return `/api/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/events`;
 }
 
+export function runVideoDirectory(index: number): string {
+  return String(index).padStart(2, "0");
+}
+
+export function runFileUrl(workflowId: string, runId: string, path: string): string {
+  const encPath = path.split("/").map(encodeURIComponent).join("/");
+  return `/api/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/files/${encPath}`;
+}
+
 export async function startRun(id: string, body: LaunchBody): Promise<StartRunResult> {
   const response = await fetch(`/api/workflows/${encodeURIComponent(id)}/runs`, {
     method: "POST",
