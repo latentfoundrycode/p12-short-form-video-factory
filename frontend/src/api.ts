@@ -1,5 +1,7 @@
 import type {
   AcceptResult,
+  InstructionFile,
+  InstructionsList,
   LearningList,
   LearningRow,
   LaunchBody,
@@ -10,6 +12,7 @@ import type {
   ScheduleEntry,
   ScheduleList,
   ScheduleWriteBody,
+  SaveInstructionResult,
   StagedList,
   StagedProposal,
   StartRunResult,
@@ -49,6 +52,34 @@ export async function fetchLearning(): Promise<LearningRow[]> {
     throw new Error("Unexpected response while trying to load learning data");
   }
   return data.workflows;
+}
+
+export async function fetchInstructions(id: string): Promise<InstructionFile[]> {
+  const response = await fetch(`/api/learning/${encodeURIComponent(id)}/instructions`);
+  if (!response.ok) {
+    throw new Error(`Could not load instruction files (${response.status})`);
+  }
+  const data = (await response.json()) as InstructionsList;
+  if (!Array.isArray(data.instructions)) {
+    throw new Error("Unexpected response while trying to load instruction files");
+  }
+  return data.instructions;
+}
+
+export async function saveInstruction(id: string, path: string, content: string): Promise<number> {
+  const response = await fetch(`/api/learning/${encodeURIComponent(id)}/instructions`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, content }),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not save instruction file (${response.status})`);
+  }
+  const data = (await response.json()) as SaveInstructionResult;
+  if (typeof data.version !== "number") {
+    throw new Error("Unexpected response while trying to save instruction file");
+  }
+  return data.version;
 }
 
 export async function runLearning(id: string): Promise<StagedProposal[]> {
