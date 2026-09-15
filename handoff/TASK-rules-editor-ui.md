@@ -114,6 +114,45 @@ and match the surrounding style; keep it minimal.
 - Keep `npm run lint` and `npm run typecheck` clean; no `any`, no non-null-assertion hacks; match the
   existing React 19 + hooks idiom (the file uses functional updates like `setRuns((current) => ...)`).
 
+## Review follow-up (SECOND delegation — fix these in `LearningView.tsx`)
+Your first implementation is otherwise correct and verified end-to-end. Cross-family Review B found
+three real interaction bugs; the design review added three small polish items. Apply all of them,
+touching ONLY `frontend/src/components/LearningView.tsx` (no CSS/type/api changes needed).
+
+CORRECTNESS (must fix):
+1. **Accept must invalidate that workflow's cached files.** In `acceptSelected`'s success branch (after
+   `await acceptLearning(id)`), the accepted rules/skills changed on disk but `filesByWorkflow[id]` still
+   holds the pre-accept content, so re-opening a file shows stale text and a Save would overwrite the
+   accepted change. Fix: after a successful accept, DROP that workflow's cached entry (e.g.
+   `setFilesByWorkflow((entries) => { const next = { ...entries }; delete next[id]; return next; })`) so
+   the next expand refetches, AND if `selectedFile?.workflowId === id` clear the open file
+   (`setSelectedFile(null); setEditing(false); setDraft(""); setSavedVersion(null);`).
+2. **A finishing learning run must not discard an in-progress edit.** `runLearning`'s success callback
+   auto-opens the proposal panel and clears `selectedFile`/editing. If the user started editing a file
+   while the run was in flight, this throws away their draft. Fix: guard the auto-open so it only runs
+   when the user is NOT currently editing/viewing a file. Because the callback closes over stale state,
+   use a ref: add `const editingRef = useRef(false)` (import `useRef`), set `editingRef.current = true`
+   when entering edit mode and `= false` when leaving it (save success, select another file, open
+   proposals). In the `runLearning` `.then`, only run the `setSelectedFile(null)/setSelectedWorkflowId(id)`
+   auto-open block when `!editingRef.current`. When it is suppressed, leave `run.status === "ready"` so
+   the row's existing "Review" button still lets them open the proposals later. (Do NOT auto-open over an
+   active edit.)
+3. **Disable mode-switching while a save is in flight.** Add `|| saving` to the `disabled` of the row's
+   "Start learning" and "Review" buttons (they currently stay enabled during a Save, letting the user
+   navigate away and lose sight of a save error, or let Accept race the direct save). The file-list
+   buttons are already `disabled={saving}`.
+
+POLISH (small, do while here):
+4. Add `aria-pressed={fileSelected}` to each file-list button so the selected file is not color-only.
+5. Use a matched caret pair so the row does not jump on toggle: `▾` when expanded, `▸` when collapsed
+   (replace the `›`).
+6. The expand toggle is `<button className="li-main">` containing `<div className="li-title">` and
+   `<div className="li-sub">` — a `<div>` inside a `<button>` is invalid (button takes phrasing content).
+   Change those two inner `<div>`s to `<span>` with `className` kept, and add
+   `style={{ display: "block" }}` (or rely on existing block-ish styling) so layout is unchanged.
+
+Keep `npm run lint`, `npm run typecheck`, and `npm run build` clean; do not commit built assets.
+
 ## Scope
 - `frontend/src/types.ts`
 - `frontend/src/api.ts`
