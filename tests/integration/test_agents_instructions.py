@@ -119,3 +119,23 @@ def test_research_also_receives_the_instructions(
     messages = _messages(seen)
     assert messages[0]["role"] == "system"
     assert "Prefer concrete, verifiable facts." in messages[0]["content"]
+
+
+def test_unreadable_instruction_file_is_skipped_not_crashing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A non-UTF-8 (undecodable) rule file must be skipped, never break the LLM call — the good
+    # instruction still applies. (read_text raises UnicodeDecodeError, a ValueError, not OSError.)
+    bad = tmp_path / "rules" / "bad.md"
+    bad.parent.mkdir(parents=True, exist_ok=True)
+    bad.write_bytes(b"\xff\xfe not valid utf-8 \x80\x81")
+    good = _rule(tmp_path / "skills", "hooks.md", "Lead with the concrete noun.")
+    seen = _install_mock(monkeypatch, _ok)
+    out = _run(
+        _ctx(tmp_path, instructions=[bad, good]),
+        lambda: agents.llm("write the script", agent="script", model="m"),
+    )
+    assert out == "ok"  # the call succeeded despite the undecodable file
+    messages = _messages(seen)
+    assert messages[0]["role"] == "system"
+    assert "Lead with the concrete noun." in messages[0]["content"]  # the good file still applies
