@@ -106,7 +106,7 @@ def _instruction_text(ctx: Context) -> str:
     for path in ctx.instructions:
         try:
             text = Path(path).read_text(encoding="utf-8").strip()
-        except OSError:
+        except (OSError, UnicodeError):
             continue
         if text:
             parts.append(text)
