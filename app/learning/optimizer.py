@@ -21,8 +21,15 @@ _FENCE = re.compile(
 )
 
 _SYSTEM_PROMPT = (
-    "You are a SkillOpt-derived optimiser. Improve a workflow's instruction "
-    "files from quality evidence.\n"
+    "You are a SkillOpt-derived optimiser. You revise a workflow's instruction "
+    "files so future videos better match the user's judgement.\n"
+    "The quality answers are the user's own words about what they wanted — treat "
+    "them as AUTHORITATIVE directives, not as evidence to second-guess. Encode "
+    "the user's stated preferences faithfully: if a user says a video must do "
+    "something (or must not), write a rule that says exactly that. Do NOT "
+    "override, soften, or invert a stated preference because you disagree with "
+    "it or think it is bad practice — your job is to capture what the user "
+    "wants, not to impose your own taste.\n"
     "Propose edits ONLY to files under rules/ or skills/. Do not edit "
     "criteria or any other path.\n"
     "Reply with a JSON object of this exact shape: "
