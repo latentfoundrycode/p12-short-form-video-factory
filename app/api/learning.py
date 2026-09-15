@@ -1,5 +1,6 @@
 """Learning API — per-workflow label, rule, and skill counts (PRD §8.5)."""
 
+import logging
 import threading
 import uuid
 from collections.abc import Callable, Mapping
@@ -24,6 +25,7 @@ from app.registry.validate import WorkflowEntry
 
 router = APIRouter(prefix="/api")
 
+_log = logging.getLogger("app.api.learning")
 _WORKFLOW_LOCKS: dict[str, threading.Lock] = {}
 _WORKFLOW_LOCKS_GUARD = threading.Lock()
 
@@ -195,6 +197,7 @@ def run_learning_for_workflow(request: Request, workflow_id: str) -> StagedOut:
                 since=since,
             )
         except LearningError as exc:
+            _log.warning("learning run failed for %s: %r", workflow_id, exc.__cause__ or exc)
             raise HTTPException(status_code=502, detail="learning run failed") from exc
         staged: list[ProposedEdit] = result.staged
         return StagedOut(
