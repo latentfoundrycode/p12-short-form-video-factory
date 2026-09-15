@@ -91,6 +91,30 @@ class SaveInstructionOut(BaseModel):
 - The save path must NEVER write outside `workflow_dir/rules/`, `workflow_dir/skills/`, or
   `workflow_dir/archive/`.
 
+## Review B follow-up (SECOND delegation — apply these two fixes to `apply_instruction_edit`)
+Your first implementation passed diff-review and security-review. The cross-family reviewer found
+two real robustness gaps in `apply_instruction_edit` (both also protect the existing accept path):
+
+1. **Normalize line endings before versioning** (pinned by the new frozen test
+   `test_apply_edit_normalizes_crlf_line_endings`). The editor's content comes from a browser
+   textarea and on Windows carries CRLF. `_set_version`'s frontmatter regex is LF-only, so a CRLF
+   body gets a SECOND frontmatter block prepended with a stale version line. In
+   `apply_instruction_edit`, normalize the incoming `content` — replace `\r\n` and lone `\r` with
+   `\n` — BEFORE calling `_set_version`. (Do this inside `apply_instruction_edit` so accept benefits
+   too.) The saved file must have exactly one frontmatter block and LF endings.
+
+2. **Resolved-containment guard on the write targets** (defence in depth; no new test — mirrors the
+   symlink guard in `app/api/runs.py:list_run_files`). Inside `apply_instruction_edit`, compute
+   `root = workflow_dir.resolve()`. Before archiving, if the live file exists and
+   `not live.resolve().is_relative_to(root)`, raise `AcceptError`. After `archive.parent.mkdir(...)`,
+   if `not archive.parent.resolve().is_relative_to(root)`, raise `AcceptError` (this catches a
+   symlinked `archive/` or `rules/`/`skills/` directory that would otherwise let `shutil.move`
+   escape the workflow tree). These raises must occur before any `shutil.move`/write for the file in
+   question. The existing accept/edit tests use no symlinks, so they stay green.
+
+Keep everything else from the first implementation. Do NOT introduce atomic-write / temp-file
+rename (that is tracked separately as hardening) and do NOT add run-coordination locking here.
+
 ## Scope
 - `app/learning/accept.py`
 - `app/api/learning.py`
