@@ -57,6 +57,38 @@ def _valid_staged_path(raw_path: str) -> bool:
     )
 
 
+def apply_instruction_edit(workflow_dir: Path, relative_path: str, content: str) -> int:
+    """Archive the current live file (if any) keyed by its version, write `content` to the live
+    path with frontmatter `version` set to prior+1 (a new file starts at 1), and return the new
+    version. `relative_path` must be a workflow-relative POSIX path under rules/ or skills/;
+    anything else raises AcceptError. The caller holds the per-workflow lock."""
+    if not _valid_staged_path(relative_path):
+        raise AcceptError(f"staged path is outside rules/ and skills/: {relative_path}")
+
+    relative = PurePosixPath(relative_path)
+    root = workflow_dir.resolve()
+    live = workflow_dir.joinpath(*relative.parts)
+    if not live.resolve().is_relative_to(root):
+        raise AcceptError(f"live path escapes workflow directory: {relative_path}")
+    if live.is_file():
+        old_version = _read_version(live.read_text(encoding="utf-8"))
+        archive_name = f"{relative.stem}.v{old_version}{relative.suffix}"
+        archive = workflow_dir.joinpath("archive", *relative.with_name(archive_name).parts)
+        if not archive.resolve().is_relative_to(root):
+            raise AcceptError(f"archive path escapes workflow directory: {relative_path}")
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(live, archive)
+        new_version = old_version + 1
+    else:
+        new_version = 1
+
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    written = _set_version(content, new_version)
+    live.parent.mkdir(parents=True, exist_ok=True)
+    live.write_text(written, encoding="utf-8", newline="\n")
+    return new_version
+
+
 def accept_learning(workflow_dir: Path, staging_dir: Path) -> AcceptResult:
     workflow = workflow_dir.resolve()
     staging = staging_dir.resolve()
@@ -74,24 +106,11 @@ def accept_learning(workflow_dir: Path, staging_dir: Path) -> AcceptResult:
             raise AcceptError(f"staged path is outside rules/ and skills/: {relative_path}")
 
     for relative_path, staged_file in staged:
-        relative = PurePosixPath(relative_path)
-        live = workflow_dir.joinpath(*relative.parts)
-        if live.is_file():
-            old_version = _read_version(live.read_text(encoding="utf-8"))
-            archive_name = f"{relative.stem}.v{old_version}{relative.suffix}"
-            archive = workflow_dir.joinpath("archive", *relative.with_name(archive_name).parts)
-            archive.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(live, archive)
-            new_version = old_version + 1
-        else:
-            new_version = 1
-
-        content = _set_version(
+        apply_instruction_edit(
+            workflow_dir,
+            relative_path,
             staged_file.read_text(encoding="utf-8"),
-            new_version,
         )
-        live.parent.mkdir(parents=True, exist_ok=True)
-        live.write_text(content, encoding="utf-8", newline="\n")
 
     shutil.rmtree(staging_dir, ignore_errors=True)
     return AcceptResult(applied=[relative_path for relative_path, _ in staged])
