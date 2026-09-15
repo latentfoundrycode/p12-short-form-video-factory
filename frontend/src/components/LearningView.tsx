@@ -1,8 +1,16 @@
-import { useEffect, useState } from "react";
-import { acceptLearning, fetchLearning, rejectLearning, runLearning } from "../api";
-import type { LearningRow, StagedProposal } from "../types";
+import { Fragment, useEffect, useRef, useState } from "react";
+import {
+  acceptLearning,
+  fetchInstructions,
+  fetchLearning,
+  rejectLearning,
+  runLearning,
+  saveInstruction,
+} from "../api";
+import type { InstructionFile, LearningRow, StagedProposal } from "../types";
 
 type RunStatus = "idle" | "running" | "ready" | "error";
+type InstructionStatus = "idle" | "loading" | "ready" | "error";
 
 type WorkflowRun = {
   status: RunStatus;
@@ -10,9 +18,26 @@ type WorkflowRun = {
   error: string | null;
 };
 
+type WorkflowInstructions = {
+  status: InstructionStatus;
+  files: InstructionFile[];
+  error: string | null;
+};
+
+type SelectedFile = {
+  workflowId: string;
+  path: string;
+};
+
 const idleRun: WorkflowRun = {
   status: "idle",
   proposals: [],
+  error: null,
+};
+
+const idleInstructions: WorkflowInstructions = {
+  status: "idle",
+  files: [],
   error: null,
 };
 
@@ -27,6 +52,15 @@ export function LearningView() {
   const [error, setError] = useState<string | null>(null);
   const [runs, setRuns] = useState<Record<string, WorkflowRun>>({});
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [filesByWorkflow, setFilesByWorkflow] = useState<Record<string, WorkflowInstructions>>({});
+  const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
+  const [editing, setEditing] = useState(false);
+  const editingRef = useRef(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedVersion, setSavedVersion] = useState<number | null>(null);
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
 
@@ -53,8 +87,60 @@ export function LearningView() {
     };
   }, [reloadKey]);
 
+  function toggleWorkflow(id: string): void {
+    if (expandedId === id) {
+      setExpandedId(null);
+      return;
+    }
+
+    setExpandedId(id);
+    const current = filesByWorkflow[id];
+    if (current?.status === "ready" || current?.status === "loading") {
+      return;
+    }
+
+    setFilesByWorkflow((entries) => ({
+      ...entries,
+      [id]: { status: "loading", files: [], error: null },
+    }));
+    void fetchInstructions(id).then(
+      (files) => {
+        setFilesByWorkflow((entries) => ({
+          ...entries,
+          [id]: { status: "ready", files, error: null },
+        }));
+      },
+      (err: unknown) => {
+        setFilesByWorkflow((entries) => ({
+          ...entries,
+          [id]: {
+            status: "error",
+            files: [],
+            error: messageOf(err, "Could not load instruction files"),
+          },
+        }));
+      },
+    );
+  }
+
+  function selectInstruction(workflowId: string, path: string): void {
+    setSelectedFile({ workflowId, path });
+    editingRef.current = false;
+    setEditing(false);
+    setDraft("");
+    setSaveError(null);
+    setSavedVersion(null);
+    setReviewError(null);
+    setSelectedWorkflowId(null);
+  }
+
   function startLearning(workflow: LearningRow): void {
     const id = workflow.workflow_id;
+    setSelectedFile(null);
+    editingRef.current = false;
+    setEditing(false);
+    setSaveError(null);
+    setSavedVersion(null);
     setRuns((current) => ({
       ...current,
       [id]: { status: "running", proposals: [], error: null },
@@ -66,7 +152,12 @@ export function LearningView() {
           ...current,
           [id]: { status: "ready", proposals, error: null },
         }));
-        if (proposals.length > 0) {
+        if (proposals.length > 0 && !editingRef.current) {
+          setSelectedFile(null);
+          editingRef.current = false;
+          setEditing(false);
+          setSaveError(null);
+          setSavedVersion(null);
           setReviewError(null);
           setSelectedWorkflowId(id);
         }
@@ -92,6 +183,18 @@ export function LearningView() {
     setReviewError(null);
     try {
       await acceptLearning(id);
+      setFilesByWorkflow((entries) => {
+        const next = { ...entries };
+        delete next[id];
+        return next;
+      });
+      if (selectedFile?.workflowId === id) {
+        setSelectedFile(null);
+        editingRef.current = false;
+        setEditing(false);
+        setDraft("");
+        setSavedVersion(null);
+      }
       setRuns((current) => ({ ...current, [id]: idleRun }));
       setSelectedWorkflowId(null);
       setStatus("loading");
@@ -121,12 +224,51 @@ export function LearningView() {
     }
   }
 
+  async function saveSelectedInstruction(): Promise<void> {
+    if (selectedFile === null) return;
+
+    const { workflowId, path } = selectedFile;
+    const savedContent = draft;
+    setSaving(true);
+    setSaveError(null);
+    setSavedVersion(null);
+    try {
+      const version = await saveInstruction(workflowId, path, savedContent);
+      setFilesByWorkflow((entries) => {
+        const workflowFiles = entries[workflowId];
+        if (workflowFiles === undefined) return entries;
+        return {
+          ...entries,
+          [workflowId]: {
+            ...workflowFiles,
+            files: workflowFiles.files.map((file) =>
+              file.path === path ? { ...file, content: savedContent } : file,
+            ),
+          },
+        };
+      });
+      editingRef.current = false;
+      setEditing(false);
+      setSavedVersion(version);
+    } catch (err) {
+      setSaveError(messageOf(err, "Could not save instruction file"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const selectedWorkflow =
     selectedWorkflowId === null
       ? null
       : (workflows.find((workflow) => workflow.workflow_id === selectedWorkflowId) ?? null);
   const selectedRun = selectedWorkflowId === null ? null : (runs[selectedWorkflowId] ?? idleRun);
   const selectedProposals = selectedRun?.proposals ?? [];
+  const selectedInstruction =
+    selectedFile === null
+      ? null
+      : (filesByWorkflow[selectedFile.workflowId]?.files.find(
+          (file) => file.path === selectedFile.path,
+        ) ?? null);
 
   return (
     <section className="view on">
@@ -183,6 +325,8 @@ export function LearningView() {
               <div className="list">
                 {workflows.map((workflow) => {
                   const run = runs[workflow.workflow_id] ?? idleRun;
+                  const instructions = filesByWorkflow[workflow.workflow_id] ?? idleInstructions;
+                  const expanded = expandedId === workflow.workflow_id;
                   const counts = `${workflow.rules_count} rules, ${workflow.skills_count} skills`;
                   const idleDetails =
                     workflow.last_learned === null
@@ -202,75 +346,192 @@ export function LearningView() {
                     run.status === "running" ? " s-run" : run.status === "ready" ? " s-done" : "";
 
                   return (
-                    <div className={`lrn${stateClass}`} key={workflow.workflow_id}>
-                      <div className="lrn-count">
-                        {workflow.label_count}
-                        <small>labels</small>
+                    <Fragment key={workflow.workflow_id}>
+                      <div className={`lrn${stateClass}`}>
+                        <div className="lrn-count">
+                          {workflow.label_count}
+                          <small>labels</small>
+                        </div>
+                        <button
+                          type="button"
+                          className="li-main"
+                          aria-expanded={expanded}
+                          onClick={() => toggleWorkflow(workflow.workflow_id)}
+                        >
+                          <span className="li-title" style={{ display: "block" }}>
+                            <span aria-hidden="true">{expanded ? "▾" : "▸"} </span>
+                            {workflow.name || workflow.workflow_id}
+                          </span>
+                          <span className="li-sub" style={{ display: "block" }}>
+                            {details}
+                          </span>
+                        </button>
+                        {run.status === "idle" ? (
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            disabled={workflow.label_count === 0 || saving}
+                            onClick={() => {
+                              startLearning(workflow);
+                            }}
+                          >
+                            Start learning
+                          </button>
+                        ) : null}
+                        {run.status === "running" ? (
+                          <span className="pill run">Running</span>
+                        ) : null}
+                        {run.status === "ready" && run.proposals.length > 0 ? (
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            disabled={reviewSubmitting || saving}
+                            onClick={() => {
+                              setSelectedFile(null);
+                              editingRef.current = false;
+                              setEditing(false);
+                              setSaveError(null);
+                              setSavedVersion(null);
+                              setReviewError(null);
+                              setSelectedWorkflowId(workflow.workflow_id);
+                            }}
+                          >
+                            Review
+                          </button>
+                        ) : null}
+                        {run.status === "ready" && run.proposals.length === 0 ? (
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            onClick={() => {
+                              setRuns((current) => ({
+                                ...current,
+                                [workflow.workflow_id]: idleRun,
+                              }));
+                            }}
+                          >
+                            Dismiss
+                          </button>
+                        ) : null}
+                        {run.status === "error" ? (
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            onClick={() => {
+                              setRuns((current) => ({
+                                ...current,
+                                [workflow.workflow_id]: idleRun,
+                              }));
+                            }}
+                          >
+                            Retry
+                          </button>
+                        ) : null}
                       </div>
-                      <div className="li-main">
-                        <div className="li-title">{workflow.name || workflow.workflow_id}</div>
-                        <div className="li-sub">{details}</div>
-                      </div>
-                      {run.status === "idle" ? (
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          disabled={workflow.label_count === 0}
-                          onClick={() => {
-                            startLearning(workflow);
-                          }}
-                        >
-                          Start learning
-                        </button>
+                      {expanded ? (
+                        <div className="learning-files">
+                          {instructions.status === "idle" || instructions.status === "loading" ? (
+                            <div className="page-note">Loading instruction files…</div>
+                          ) : null}
+                          {instructions.status === "error" ? (
+                            <div className="form-error">{instructions.error}</div>
+                          ) : null}
+                          {instructions.status === "ready" && instructions.files.length === 0 ? (
+                            <div className="page-note">No rule or skill files yet.</div>
+                          ) : null}
+                          {instructions.status === "ready"
+                            ? instructions.files.map((file) => {
+                                const fileSelected =
+                                  selectedFile?.workflowId === workflow.workflow_id &&
+                                  selectedFile.path === file.path;
+                                return (
+                                  <button
+                                    type="button"
+                                    className={`btn btn-sm ${
+                                      fileSelected ? "btn-primary" : "btn-ghost"
+                                    }`}
+                                    aria-pressed={fileSelected}
+                                    disabled={saving}
+                                    key={file.path}
+                                    onClick={() =>
+                                      selectInstruction(workflow.workflow_id, file.path)
+                                    }
+                                  >
+                                    {file.path}
+                                  </button>
+                                );
+                              })
+                            : null}
+                        </div>
                       ) : null}
-                      {run.status === "running" ? <span className="pill run">Running</span> : null}
-                      {run.status === "ready" && run.proposals.length > 0 ? (
-                        <button
-                          type="button"
-                          className="btn btn-primary btn-sm"
-                          disabled={reviewSubmitting}
-                          onClick={() => {
-                            setReviewError(null);
-                            setSelectedWorkflowId(workflow.workflow_id);
-                          }}
-                        >
-                          Review
-                        </button>
-                      ) : null}
-                      {run.status === "ready" && run.proposals.length === 0 ? (
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          onClick={() => {
-                            setRuns((current) => ({
-                              ...current,
-                              [workflow.workflow_id]: idleRun,
-                            }));
-                          }}
-                        >
-                          Dismiss
-                        </button>
-                      ) : null}
-                      {run.status === "error" ? (
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          onClick={() => {
-                            setRuns((current) => ({
-                              ...current,
-                              [workflow.workflow_id]: idleRun,
-                            }));
-                          }}
-                        >
-                          Retry
-                        </button>
-                      ) : null}
-                    </div>
+                    </Fragment>
                   );
                 })}
               </div>
             )}
           </div>
+
+          {selectedFile !== null && selectedWorkflowId === null ? (
+            <div className="panel">
+              <div className="panel-head">
+                <span className="eyebrow">{selectedFile.path}</span>
+                <button
+                  type="button"
+                  className={`btn btn-sm${editing ? " btn-primary" : ""}`}
+                  disabled={saving || selectedInstruction === null}
+                  onClick={() => {
+                    if (editing) {
+                      void saveSelectedInstruction();
+                    } else if (selectedInstruction !== null) {
+                      setDraft(selectedInstruction.content);
+                      editingRef.current = true;
+                      setEditing(true);
+                      setSaveError(null);
+                      setSavedVersion(null);
+                    }
+                  }}
+                >
+                  {editing ? "Save" : "Edit"}
+                </button>
+              </div>
+              <div className="panel-body">
+                {selectedInstruction === null ? (
+                  <div className="page-note">This instruction file is no longer available.</div>
+                ) : editing ? (
+                  <label className="field">
+                    <span className="field-label">Content</span>
+                    <textarea
+                      className="field-input field-textarea"
+                      rows={12}
+                      spellCheck={false}
+                      disabled={saving}
+                      value={draft}
+                      onChange={(event) => setDraft(event.target.value)}
+                    />
+                  </label>
+                ) : (
+                  <div className="diff">
+                    <div className="diff-head">
+                      <span>{selectedFile.path}</span>
+                      <span>current</span>
+                    </div>
+                    <div className="diff-body">
+                      {selectedInstruction.content.split("\n").map((line, lineIndex) => (
+                        <div className="dl" key={lineIndex}>
+                          <span className="dl-mark"> </span>
+                          <span>{line}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {saveError === null ? null : <div className="form-error">{saveError}</div>}
+                {savedVersion === null ? null : (
+                  <div className="page-note">Saved · version {savedVersion}</div>
+                )}
+              </div>
+            </div>
+          ) : null}
 
           {selectedWorkflow !== null && selectedProposals.length > 0 ? (
             <div className="panel">
