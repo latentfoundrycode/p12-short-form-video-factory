@@ -100,40 +100,47 @@ def make_openrouter_completion(
             estimate=estimate,
         )
 
-        with client_factory() as client:
-            for attempt in range(_MAX_ATTEMPTS):
-                resp = client.post(
-                    "/chat/completions",
-                    headers={"Authorization": f"Bearer {key}"},
-                    json={"model": model, "messages": messages},
-                )
-                if resp.status_code == 200:
-                    break
-                if resp.status_code == 429:
-                    if attempt < _MAX_ATTEMPTS - 1:
-                        sleep(_retry_after_s(resp.headers.get("Retry-After")))
-                    continue
-                raise CompletionError(f"OpenRouter error {resp.status_code}")
-            else:
-                raise CompletionError("OpenRouter rate limited after retries (429)")
+        unbilled = False
+        try:
+            with client_factory() as client:
+                for attempt in range(_MAX_ATTEMPTS):
+                    resp = client.post(
+                        "/chat/completions",
+                        headers={"Authorization": f"Bearer {key}"},
+                        json={"model": model, "messages": messages},
+                    )
+                    if resp.status_code == 200:
+                        break
+                    if resp.status_code == 429:
+                        if attempt < _MAX_ATTEMPTS - 1:
+                            sleep(_retry_after_s(resp.headers.get("Retry-After")))
+                        continue
+                    unbilled = True
+                    raise CompletionError(f"OpenRouter error {resp.status_code}")
+                else:
+                    unbilled = True
+                    raise CompletionError("OpenRouter rate limited after retries (429)")
+
+                try:
+                    data = resp.json()
+                except Exception as exc:
+                    raise CompletionError("OpenRouter returned a malformed response body") from exc
+                if not isinstance(data, dict):
+                    raise CompletionError("OpenRouter response has the wrong shape")
+
+            cost = _usage_cost(data)
+            if cost is not None:
+                guard.reconcile(token, actual=cost)
 
             try:
-                data = resp.json()
-            except Exception as exc:
-                raise CompletionError("OpenRouter returned a malformed response body") from exc
-            if not isinstance(data, dict):
-                raise CompletionError("OpenRouter response has the wrong shape")
-
-        cost = _usage_cost(data)
-        if cost is not None:
-            guard.reconcile(token, actual=cost)
-
-        try:
-            content = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise CompletionError("OpenRouter response is missing assistant content") from exc
-        if not isinstance(content, str):
-            raise CompletionError("OpenRouter response is missing assistant content")
-        return content
+                content = data["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError) as exc:
+                raise CompletionError("OpenRouter response is missing assistant content") from exc
+            if not isinstance(content, str):
+                raise CompletionError("OpenRouter response is missing assistant content")
+            return content
+        finally:
+            if unbilled:
+                guard.reconcile(token, actual=0.0)
 
     return complete

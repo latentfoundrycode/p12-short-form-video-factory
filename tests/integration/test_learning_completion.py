@@ -181,6 +181,57 @@ def test_non_200_raises_completion_error(tmp_path: Path) -> None:
     assert len(seen) == 1  # it did attempt the call
 
 
+def test_failed_call_releases_its_budget_reservation(tmp_path: Path) -> None:
+    # A non-200 failure is not billed, so it must RELEASE its reservation (reconcile to 0) instead
+    # of leaving the estimate standing — else repeated failures accumulate and exhaust the budget.
+    # With per_day just above one estimate, a second failing call would be blocked at reserve if the
+    # first's reservation still stood; releasing it lets the second call reach the endpoint again.
+    budget = _budget(tmp_path, estimate=0.10, per_day=0.15)
+
+    def handler(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        return httpx2.Response(402, json={"error": "insufficient credits"})
+
+    factory, seen, _ = _factory(handler)
+    complete = make_openrouter_completion(
+        secrets={"OPENROUTER_API_KEY": _KEY},
+        budget=budget,
+        model="m",
+        run_id="r",
+        client_factory=factory,
+    )
+    with pytest.raises(CompletionError):
+        complete(_MSGS)  # first 402 — releases its reservation
+    with pytest.raises(CompletionError):
+        complete(_MSGS)  # second 402, NOT a BudgetError from an accumulated reservation
+    assert len(seen) == 2  # both calls reached the endpoint (second not blocked at reserve)
+
+
+def test_transport_error_keeps_the_reservation(tmp_path: Path) -> None:
+    # A transport failure (no HTTP response) is AMBIGUOUS — OpenRouter may have processed and BILLED
+    # the request before the connection dropped — so it must NOT release the reservation (that would
+    # under-count real spend and let the daily ceiling be exceeded). Only a confirmed-unbilled
+    # failure (a non-2xx response / exhausted 429) releases. So a second call is correctly blocked.
+    budget = _budget(tmp_path, estimate=0.10, per_day=0.15)
+
+    def handler(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        raise RuntimeError("simulated transport failure")
+
+    factory, _, _ = _factory(handler)
+    complete = make_openrouter_completion(
+        secrets={"OPENROUTER_API_KEY": _KEY},
+        budget=budget,
+        model="m",
+        run_id="r",
+        client_factory=factory,
+    )
+    with pytest.raises(RuntimeError):
+        complete(
+            _MSGS
+        )  # transport error propagates; reservation is NOT released (ambiguous billing)
+    with pytest.raises(BudgetError):
+        complete(_MSGS)  # second call blocked at reserve — the first reservation still stands
+
+
 def test_missing_content_raises_completion_error(tmp_path: Path) -> None:
     def handler(_request: httpx2.Request, _n: int) -> httpx2.Response:
         return httpx2.Response(200, json={"choices": [{"message": {}}], "usage": {"cost": 0.0}})
