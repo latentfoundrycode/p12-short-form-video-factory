@@ -62,6 +62,26 @@ def test_apply_edit_new_file_starts_at_version_1(tmp_path: Path) -> None:
     assert not (workflow_dir / "archive").exists()  # nothing to archive
 
 
+def test_apply_edit_normalizes_crlf_line_endings(tmp_path: Path) -> None:
+    # The manual editor's content arrives from a browser textarea and on Windows carries CRLF.
+    # `_set_version`'s frontmatter regex is LF-only, so without normalization a CRLF body gets a
+    # SECOND frontmatter block prepended, leaving a stale version line in the saved file. The saved
+    # file must have exactly one frontmatter block, LF endings, and the bumped version only.
+    workflow_dir = tmp_path / "workflows" / "explainer"
+    workflow_dir.mkdir(parents=True)
+    _live(workflow_dir, "rules/tone.md", "---\nversion: 2\n---\nBe concrete.")
+    new_version = apply_instruction_edit(
+        workflow_dir, "rules/tone.md", "---\r\nversion: 2\r\n---\r\nOpen on an object.\r\n"
+    )
+    assert new_version == 3
+    live = (workflow_dir / "rules" / "tone.md").read_text(encoding="utf-8")
+    assert "\r" not in live  # line endings normalized to LF
+    assert live.count("---") == 2  # exactly one frontmatter block (open + close), not duplicated
+    assert "version: 3" in live
+    assert "version: 2" not in live  # no stale version line left behind in the body
+    assert "Open on an object." in live
+
+
 def test_apply_edit_rejects_path_outside_rules_and_skills(tmp_path: Path) -> None:
     # Defence in depth: a manual edit must never touch a path outside rules/ or skills/.
     workflow_dir = tmp_path / "workflows" / "explainer"
