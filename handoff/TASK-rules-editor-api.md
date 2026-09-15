@@ -103,14 +103,34 @@ two real robustness gaps in `apply_instruction_edit` (both also protect the exis
    `\n` — BEFORE calling `_set_version`. (Do this inside `apply_instruction_edit` so accept benefits
    too.) The saved file must have exactly one frontmatter block and LF endings.
 
-2. **Resolved-containment guard on the write targets** (defence in depth; no new test — mirrors the
-   symlink guard in `app/api/runs.py:list_run_files`). Inside `apply_instruction_edit`, compute
-   `root = workflow_dir.resolve()`. Before archiving, if the live file exists and
-   `not live.resolve().is_relative_to(root)`, raise `AcceptError`. After `archive.parent.mkdir(...)`,
-   if `not archive.parent.resolve().is_relative_to(root)`, raise `AcceptError` (this catches a
-   symlinked `archive/` or `rules/`/`skills/` directory that would otherwise let `shutil.move`
-   escape the workflow tree). These raises must occur before any `shutil.move`/write for the file in
-   question. The existing accept/edit tests use no symlinks, so they stay green.
+2. **Resolved-containment guard on the write targets — must be COMPLETE** (defence in depth;
+   mirrors the symlink guard in `app/api/runs.py:list_run_files`). The guard must resolve BOTH the
+   live target and the archive target and check containment UNCONDITIONALLY, before any `mkdir`,
+   `shutil.move`, or write. Structure it exactly like this:
+
+   ```python
+   root = workflow_dir.resolve()
+   live = workflow_dir.joinpath(*relative.parts)
+   # unconditional — a symlinked rules/ or skills/ dir must not redirect even a NEW (nonexistent)
+   # leaf outside the tree (Path.resolve is non-strict on 3.12, so a legit nonexistent leaf under a
+   # real dir still resolves inside root and passes).
+   if not live.resolve().is_relative_to(root):
+       raise AcceptError(f"live path escapes workflow directory: {relative_path}")
+   if live.is_file():
+       old_version = _read_version(live.read_text(encoding="utf-8"))
+       archive_name = f"{relative.stem}.v{old_version}{relative.suffix}"
+       archive = workflow_dir.joinpath("archive", *relative.with_name(archive_name).parts)
+       # check the full archive path BEFORE mkdir/move — catches a symlinked archive/ dir AND a
+       # pre-existing archive leaf that is itself a symlink pointing outside.
+       if not archive.resolve().is_relative_to(root):
+           raise AcceptError(f"archive path escapes workflow directory: {relative_path}")
+       archive.parent.mkdir(parents=True, exist_ok=True)
+       shutil.move(live, archive)
+       new_version = old_version + 1
+   else:
+       new_version = 1
+   ```
+   The existing accept/edit tests use no symlinks, so they stay green.
 
 Keep everything else from the first implementation. Do NOT introduce atomic-write / temp-file
 rename (that is tracked separately as hardening) and do NOT add run-coordination locking here.
