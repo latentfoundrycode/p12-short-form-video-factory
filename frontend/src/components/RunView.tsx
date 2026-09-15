@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchRun, runEventsUrl, startRun, stopRun } from "../api";
-import { statusPillClass } from "../statusPill";
-import { RunRecordView } from "./RunRecordView";
-import type { RunDetail, SseEnvelope, StageEvent, VideoStatus } from "../types";
+import { RunRecordView, RunStatusPanel } from "./RunRecordView";
+import type { RunDetail, SseEnvelope, StageEvent } from "../types";
 import { isStartRunOk, isTerminalStatus } from "../types";
 
 type RunViewProps = {
@@ -14,22 +13,6 @@ type RunViewProps = {
 
 function messageOf(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
-}
-
-function videoPillClass(status: VideoStatus): string {
-  switch (status) {
-    case "running":
-      return "pill run";
-    case "complete":
-      return "pill done";
-    case "failed":
-      return "pill fail";
-    case "stopped":
-      return "pill warn";
-    case "pending":
-    default:
-      return "pill idle";
-  }
 }
 
 function isStageEvent(event: SseEnvelope["event"]): event is StageEvent {
@@ -231,82 +214,32 @@ export function RunView({ workflowId, runId, onClose, onReplay }: RunViewProps) 
       ) : null}
 
       {run ? (
-        <div className={terminal ? "run-record-page" : "run-layout"}>
-          <div className="panel">
-            <div className="panel-head">
-              <span className="eyebrow">Status</span>
-              <span className={statusPillClass(run.status)}>{run.status}</span>
-            </div>
-            <div className="panel-body">
-              <div className="run-meta">
-                <div>
-                  <span className="field-label">Started</span>
-                  <span className="path">{run.started_utc}</span>
-                </div>
-                {run.ended_utc ? (
-                  <div>
-                    <span className="field-label">Ended</span>
-                    <span className="path">{run.ended_utc}</span>
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="run-stage">
-                <span className="field-label">Current stage</span>
-                {stage ? (
-                  <div className="run-stage-value">
-                    {stage.index}/{stage.total} — {stage.label}
-                  </div>
-                ) : (
-                  <div className="page-note">No stage event yet.</div>
-                )}
-              </div>
-
-              <div className="run-videos">
-                <span className="field-label">Videos</span>
-                <div className="run-video-list">
-                  {run.videos.map((video) => (
-                    <span key={video.index} className={videoPillClass(video.status)}>
-                      #{video.index} {video.status}
-                    </span>
-                  ))}
-                  {run.videos.length === 0 ? (
-                    <span className="page-note">No videos recorded yet.</span>
-                  ) : null}
-                </div>
-              </div>
-
-              {stopError ? <div className="form-error">{stopError}</div> : null}
-              {loadError ? <div className="form-error">{loadError}</div> : null}
-              {replayError ? <div className="form-error">{replayError}</div> : null}
-
-              <div className="card-foot launch-actions">
-                {terminal ? (
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    disabled={replaying}
-                    onClick={() => {
-                      void onReplayClick();
-                    }}
-                  >
-                    <span className="ico">
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.4"
-                      >
-                        <path d="M2 8a6 6 0 1 0 1.8-4.3" />
-                        <path d="M2 1.6V4.4h2.8" />
-                      </svg>
-                    </span>
-                    {replaying ? "Replaying…" : "Replay run"}
-                  </button>
-                ) : (
-                  <>
+        terminal ? (
+          <div className="run-record-page">
+            <RunRecordView
+              run={run}
+              events={events}
+              workflowId={workflowId}
+              runId={runId}
+              stage={stage}
+              onReplay={() => {
+                void onReplayClick();
+              }}
+              replaying={replaying}
+              replayError={replayError}
+              loadError={loadError}
+            />
+          </div>
+        ) : (
+          <div className="run-layout">
+            <RunStatusPanel
+              run={run}
+              stage={stage}
+              actions={
+                <>
+                  {stopError ? <div className="form-error">{stopError}</div> : null}
+                  {loadError ? <div className="form-error">{loadError}</div> : null}
+                  <div className="card-foot launch-actions">
                     <button
                       type="button"
                       className="btn btn-sm"
@@ -327,15 +260,10 @@ export function RunView({ workflowId, runId, onClose, onReplay }: RunViewProps) 
                     >
                       Force stop
                     </button>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {terminal ? (
-            <RunRecordView run={run} events={events} workflowId={workflowId} runId={runId} />
-          ) : (
+                  </div>
+                </>
+              }
+            />
             <div className="panel run-feed-panel">
               <div className="panel-head">
                 <span className="eyebrow">Live event feed</span>
@@ -359,8 +287,8 @@ export function RunView({ workflowId, runId, onClose, onReplay }: RunViewProps) 
                 )}
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )
       ) : null}
     </section>
   );

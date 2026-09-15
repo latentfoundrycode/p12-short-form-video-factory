@@ -1,13 +1,34 @@
-import { useEffect, useState } from "react";
-import { fetchRun, fetchRunFiles } from "../api";
+import { useEffect, useState, type ReactNode } from "react";
+import { fetchRun, fetchRunFiles, runVideoDirectory } from "../api";
+import { statusPillClass } from "../statusPill";
 import { QualityPanel } from "./QualityPanel";
-import type { RunDetail, RunFile, SseEnvelope, StepEvent, VideoRecord } from "../types";
+import { VideoPanel } from "./VideoPanel";
+import type {
+  RunDetail,
+  RunFile,
+  SseEnvelope,
+  StageEvent,
+  StepEvent,
+  VideoRecord,
+  VideoStatus,
+} from "../types";
 
 type RunRecordViewProps = {
   run: RunDetail;
   events: SseEnvelope[];
   workflowId: string;
   runId: string;
+  stage: StageEvent | null;
+  onReplay: () => void;
+  replaying: boolean;
+  replayError: string | null;
+  loadError: string | null;
+};
+
+type RunStatusPanelProps = {
+  run: RunDetail;
+  stage: StageEvent | null;
+  actions: ReactNode;
 };
 
 type CheckKind = "pass" | "fail" | "skip";
@@ -363,6 +384,74 @@ function CheckRow({ kind, text }: CheckRowModel) {
   );
 }
 
+function videoPillClass(status: VideoStatus): string {
+  switch (status) {
+    case "running":
+      return "pill run";
+    case "complete":
+      return "pill done";
+    case "failed":
+      return "pill fail";
+    case "stopped":
+      return "pill warn";
+    case "pending":
+    default:
+      return "pill idle";
+  }
+}
+
+export function RunStatusPanel({ run, stage, actions }: RunStatusPanelProps) {
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <span className="eyebrow">Status</span>
+        <span className={statusPillClass(run.status)}>{run.status}</span>
+      </div>
+      <div className="panel-body">
+        <div className="run-meta">
+          <div>
+            <span className="field-label">Started</span>
+            <span className="path">{run.started_utc}</span>
+          </div>
+          {run.ended_utc ? (
+            <div>
+              <span className="field-label">Ended</span>
+              <span className="path">{run.ended_utc}</span>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="run-stage">
+          <span className="field-label">Current stage</span>
+          {stage ? (
+            <div className="run-stage-value">
+              {stage.index}/{stage.total} — {stage.label}
+            </div>
+          ) : (
+            <div className="page-note">No stage event yet.</div>
+          )}
+        </div>
+
+        <div className="run-videos">
+          <span className="field-label">Videos</span>
+          <div className="run-video-list">
+            {run.videos.map((video) => (
+              <span key={video.index} className={videoPillClass(video.status)}>
+                #{video.index} {video.status}
+              </span>
+            ))}
+            {run.videos.length === 0 ? (
+              <span className="page-note">No videos recorded yet.</span>
+            ) : null}
+          </div>
+        </div>
+
+        {actions}
+      </div>
+    </div>
+  );
+}
+
 function SelfReviewPanel({ video }: { video: VideoRecord }) {
   const review = parseSelfReview(video.self_review);
   return (
@@ -546,7 +635,17 @@ function ArtifactsPanel({ title, files }: { title: string; files: RunFile[] }) {
   );
 }
 
-export function RunRecordView({ run, events, workflowId, runId }: RunRecordViewProps) {
+export function RunRecordView({
+  run,
+  events,
+  workflowId,
+  runId,
+  stage,
+  onReplay,
+  replaying,
+  replayError,
+  loadError,
+}: RunRecordViewProps) {
   const [files, setFiles] = useState<RunFile[] | null>(null);
   const [filesError, setFilesError] = useState<string | null>(null);
   const [videoRecords, setVideoRecords] = useState<VideoRecord[]>(run.video_records);
@@ -589,10 +688,14 @@ export function RunRecordView({ run, events, workflowId, runId }: RunRecordViewP
     };
   }, [workflowId, runId]);
 
+  const records = [...run.video_records].sort((a, b) => a.index - b.index);
   const runLevel: RunFile[] = [];
   const byVideo = new Map<number, RunFile[]>();
   for (const file of files ?? []) {
-    const index = videoIndexFromPath(file.path);
+    const knownVideo = records.find((video) =>
+      file.path.startsWith(`${runVideoDirectory(video.index)}/`),
+    );
+    const index = knownVideo?.index ?? videoIndexFromPath(file.path);
     if (index === null) {
       runLevel.push(file);
       continue;
@@ -602,17 +705,61 @@ export function RunRecordView({ run, events, workflowId, runId }: RunRecordViewP
     byVideo.set(index, group);
   }
 
-  const records = [...run.video_records].sort((a, b) => a.index - b.index);
   const extraIndexes = [...byVideo.keys()]
     .filter((index) => !records.some((video) => video.index === index))
     .sort((a, b) => a - b);
 
   return (
     <div className="run-record">
-      <CostPanel records={records} events={events} />
-      <div className="record-grid">
+      <div className="run-two">
         <div className="stack">
+          <RunStatusPanel
+            run={run}
+            stage={stage}
+            actions={
+              <>
+                {loadError ? <div className="form-error">{loadError}</div> : null}
+                {replayError ? <div className="form-error">{replayError}</div> : null}
+                <div className="card-foot launch-actions">
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    disabled={replaying}
+                    onClick={onReplay}
+                  >
+                    <span className="ico">
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                      >
+                        <path d="M2 8a6 6 0 1 0 1.8-4.3" />
+                        <path d="M2 1.6V4.4h2.8" />
+                      </svg>
+                    </span>
+                    {replaying ? "Replaying…" : "Replay run"}
+                  </button>
+                </div>
+              </>
+            }
+          />
+          <CostPanel records={records} events={events} />
           <StepsPanel events={events} />
+          {records.length === 0 ? (
+            <div className="panel">
+              <div className="panel-head">
+                <span className="eyebrow">Self-review</span>
+              </div>
+              <div className="panel-body">
+                <div className="page-note">No video records.</div>
+              </div>
+            </div>
+          ) : (
+            records.map((video) => <SelfReviewPanel key={video.index} video={video} />)
+          )}
           {filesError ? (
             <div className="panel">
               <div className="panel-head">
@@ -634,30 +781,17 @@ export function RunRecordView({ run, events, workflowId, runId }: RunRecordViewP
           ) : runLevel.length > 0 || byVideo.size === 0 ? (
             <ArtifactsPanel title="Artifacts" files={runLevel} />
           ) : null}
-        </div>
-        <div className="stack">
-          {records.length === 0 ? (
-            <div className="panel">
-              <div className="panel-head">
-                <span className="eyebrow">Self-review</span>
-              </div>
-              <div className="panel-body">
-                <div className="page-note">No video records.</div>
-              </div>
-            </div>
-          ) : (
-            records.map((video) => (
-              <div className="stack" key={video.index}>
-                <SelfReviewPanel video={video} />
-                {files !== null && !filesError && (byVideo.get(video.index)?.length ?? 0) > 0 ? (
+          {files !== null && !filesError
+            ? records.map((video) =>
+                (byVideo.get(video.index)?.length ?? 0) > 0 ? (
                   <ArtifactsPanel
+                    key={video.index}
                     title={`Artifacts · #${video.index}`}
                     files={byVideo.get(video.index) ?? []}
                   />
-                ) : null}
-              </div>
-            ))
-          )}
+                ) : null,
+              )
+            : null}
           {files !== null && !filesError
             ? extraIndexes.map((index) => (
                 <ArtifactsPanel
@@ -667,6 +801,14 @@ export function RunRecordView({ run, events, workflowId, runId }: RunRecordViewP
                 />
               ))
             : null}
+        </div>
+        <div className="stack">
+          <VideoPanel
+            workflowId={workflowId}
+            runId={runId}
+            videos={records}
+            files={files ?? []}
+          />
           <QualityPanel
             workflowId={workflowId}
             runId={runId}

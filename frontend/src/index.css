@@ -974,11 +974,19 @@ textarea {
   gap: 16px;
 }
 
-.record-grid {
+.run-two {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
   align-items: start;
+}
+
+.run-video {
+  width: 100%;
+  max-height: 70vh;
+  border-radius: var(--r);
+  background: #000;
+  display: block;
 }
 
 .rq-meta {
@@ -1183,8 +1191,8 @@ textarea {
   white-space: nowrap;
 }
 
-@media (width <= 1080px) {
-  .record-grid {
+@media (width <= 960px) {
+  .run-two {
     grid-template-columns: 1fr;
   }
 }
