@@ -100,7 +100,7 @@ def make_openrouter_completion(
             estimate=estimate,
         )
 
-        got_response = False
+        unbilled = False
         try:
             with client_factory() as client:
                 for attempt in range(_MAX_ATTEMPTS):
@@ -110,14 +110,15 @@ def make_openrouter_completion(
                         json={"model": model, "messages": messages},
                     )
                     if resp.status_code == 200:
-                        got_response = True
                         break
                     if resp.status_code == 429:
                         if attempt < _MAX_ATTEMPTS - 1:
                             sleep(_retry_after_s(resp.headers.get("Retry-After")))
                         continue
+                    unbilled = True
                     raise CompletionError(f"OpenRouter error {resp.status_code}")
                 else:
+                    unbilled = True
                     raise CompletionError("OpenRouter rate limited after retries (429)")
 
                 try:
@@ -139,7 +140,7 @@ def make_openrouter_completion(
                 raise CompletionError("OpenRouter response is missing assistant content")
             return content
         finally:
-            if not got_response:
+            if unbilled:
                 guard.reconcile(token, actual=0.0)
 
     return complete

@@ -11,10 +11,11 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from sfvf.context import BudgetConfig
 
-from app.api.runs import _runs_dir
+from app.api.runs import _runs_dir, _secrets
 from app.api.workflows import _holder
 from app.core import ids
 from app.core.records import read_request, read_video
+from app.core.supervisor import _redact_secrets
 from app.learning.accept import AcceptError, accept_learning, reject_learning
 from app.learning.completion import make_openrouter_completion
 from app.learning.engine import LearningError, OptimizeFn, ProposedEdit, run_learning
@@ -197,7 +198,9 @@ def run_learning_for_workflow(request: Request, workflow_id: str) -> StagedOut:
                 since=since,
             )
         except LearningError as exc:
-            _log.warning("learning run failed for %s: %r", workflow_id, exc.__cause__ or exc)
+            secret_values = frozenset(v for v in _secrets(request).values() if v)
+            cause = _redact_secrets(repr(exc.__cause__ or exc), secret_values)
+            _log.warning("learning run failed for %s: %s", workflow_id, cause)
             raise HTTPException(status_code=502, detail="learning run failed") from exc
         staged: list[ProposedEdit] = result.staged
         return StagedOut(
