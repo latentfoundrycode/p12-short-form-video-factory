@@ -241,6 +241,17 @@ def _video_refs(statuses: dict[int, VideoStatus]) -> list[VideoRef]:
     return [VideoRef(index=index, status=statuses[index]) for index in sorted(statuses)]
 
 
+def instruction_paths(workflow_dir: Path) -> list[Path]:
+    """The frozen instruction files (rules then skills) that apply to a run, sorted within each and
+    returned as absolute paths so the child subprocess can read them."""
+    result: list[Path] = []
+    for sub in ("rules", "skills"):
+        directory = workflow_dir / sub
+        if directory.is_dir():
+            result.extend(sorted(p.resolve() for p in directory.glob("*.md") if p.is_file()))
+    return result
+
+
 def _make_context(
     wiring: _ContextWiring,
     *,
@@ -272,7 +283,7 @@ def _make_context(
             library=wiring.library_root,
             library_overlay=wiring.library_overlay_root,
         ),
-        instructions=[],
+        instructions=instruction_paths(wiring.workflow_dir),
         secrets=dict(wiring.secrets),
         previous=previous,
         shared=shared_payload,

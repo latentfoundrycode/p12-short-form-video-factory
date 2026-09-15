@@ -101,6 +101,18 @@ def _usage_cost(data: dict[str, Any]) -> float | None:
     return amount
 
 
+def _instruction_text(ctx: Context) -> str:
+    parts: list[str] = []
+    for path in ctx.instructions:
+        try:
+            text = Path(path).read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError):
+            continue
+        if text:
+            parts.append(text)
+    return "\n\n".join(parts)
+
+
 def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
     """POST /chat/completions with auth + rate limiting + retry; return the parsed 200 JSON.
 
@@ -109,6 +121,12 @@ def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
     (bounded); 402 raises (insufficient credits); other non-2xx raises with status + body; returns
     resp.json() on 200. The bearer key is never logged or put in an error message.
     """
+    instructions = _instruction_text(ctx)
+    if instructions:
+        body["messages"] = [
+            {"role": "system", "content": instructions},
+            *body["messages"],
+        ]
     key = ctx.secret("OPENROUTER_API_KEY")
     token = ctx._budget_reserve("openrouter", "usd")
     with _http_client() as client:

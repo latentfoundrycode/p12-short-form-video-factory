@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import shutil
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -180,6 +181,18 @@ def _add_composition_sidecars(files: dict[str, Path], video: Path) -> None:
                 files[sidecar] = candidate
 
 
+def _read_instruction_text(paths: list[Path]) -> str:
+    parts: list[str] = []
+    for path in paths:
+        try:
+            text = Path(path).read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError):
+            continue
+        if text:
+            parts.append(text)
+    return "\n\n".join(parts)
+
+
 class _Step:
     """Handle yielded by `Context.step`; cache lookup on enter, store on exit."""
 
@@ -213,7 +226,12 @@ class _Step:
         return StepCache(cache_root, partition=(PAID if self._paid else CHEAP))
 
     def __enter__(self) -> _Step:
-        self._key = step_key(self._ctx.workflow_version, self._family, self._inputs)
+        self._key = step_key(
+            self._ctx.workflow_version,
+            self._family,
+            self._inputs,
+            instructions=self._ctx._instructions_digest,
+        )
         found = self._step_cache().get(self._key, restore_into=self._ctx.paths.video)
         if found is not None:
             self.cached = True
@@ -443,6 +461,10 @@ class Context:
         self.params = file.settings
         self.paths = file.paths
         self.instructions = file.instructions
+        instruction_text = _read_instruction_text(self.instructions)
+        self._instructions_digest = (
+            hashlib.sha256(instruction_text.encode("utf-8")).hexdigest() if instruction_text else ""
+        )
         self.previous = file.previous
         self.shared = file.shared
         self.workflow_version = file.workflow_version
