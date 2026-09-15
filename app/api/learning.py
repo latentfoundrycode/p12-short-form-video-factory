@@ -4,7 +4,7 @@ import logging
 import threading
 import uuid
 from collections.abc import Callable, Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import cast
 
 from fastapi import APIRouter, HTTPException, Request
@@ -16,7 +16,13 @@ from app.api.workflows import _holder
 from app.core import ids
 from app.core.records import read_request, read_video
 from app.core.supervisor import _redact_secrets
-from app.learning.accept import AcceptError, accept_learning, reject_learning
+from app.learning.accept import (
+    AcceptError,
+    _valid_staged_path,
+    accept_learning,
+    apply_instruction_edit,
+    reject_learning,
+)
 from app.learning.completion import make_openrouter_completion
 from app.learning.engine import LearningError, OptimizeFn, ProposedEdit, run_learning
 from app.learning.optimizer import make_optimizer
@@ -84,6 +90,25 @@ class StagedOut(BaseModel):
 
 class AcceptOut(BaseModel):
     applied: list[str]
+
+
+class InstructionFileOut(BaseModel):
+    path: str
+    content: str
+
+
+class InstructionsOut(BaseModel):
+    instructions: list[InstructionFileOut]
+
+
+class SaveInstructionIn(BaseModel):
+    path: str
+    content: str
+
+
+class SaveInstructionOut(BaseModel):
+    path: str
+    version: int
 
 
 def _entry(request: Request, workflow_id: str) -> WorkflowEntry:
@@ -239,3 +264,47 @@ def reject_staged_learning(request: Request, workflow_id: str) -> dict[str, bool
     with _workflow_lock(workflow_id):
         reject_learning(_staging_for(request, workflow_id))
         return {"ok": True}
+
+
+@router.get("/learning/{workflow_id}/instructions", response_model=InstructionsOut)
+def list_instructions(request: Request, workflow_id: str) -> InstructionsOut:
+    entry = _entry(request, workflow_id)
+    root = entry.path.resolve()
+    instructions: list[InstructionFileOut] = []
+    for sub in ("rules", "skills"):
+        directory = entry.path / sub
+        if not directory.is_dir():
+            continue
+        try:
+            candidates = sorted(directory.glob("*.md"))
+        except OSError:
+            continue
+        for path in candidates:
+            if not path.is_file():
+                continue
+            resolved = path.resolve()
+            if not resolved.is_relative_to(root):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                continue
+            instructions.append(InstructionFileOut(path=f"{sub}/{path.name}", content=content))
+    return InstructionsOut(instructions=instructions)
+
+
+@router.put("/learning/{workflow_id}/instructions", response_model=SaveInstructionOut)
+def save_instruction(
+    request: Request, workflow_id: str, body: SaveInstructionIn
+) -> SaveInstructionOut:
+    entry = _entry(request, workflow_id)
+    if not _valid_staged_path(body.path) or not body.path.endswith(".md"):
+        raise HTTPException(status_code=400)
+    with _workflow_lock(workflow_id):
+        live = entry.path.joinpath(*PurePosixPath(body.path).parts)
+        if not live.resolve().is_relative_to(entry.path.resolve()):
+            raise HTTPException(status_code=404)
+        if not live.is_file():
+            raise HTTPException(status_code=404)
+        version = apply_instruction_edit(entry.path, body.path, body.content)
+        return SaveInstructionOut(path=body.path, version=version)
