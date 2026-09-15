@@ -50,8 +50,12 @@ def _reject_escaping_name(name: str) -> None:
         raise ValueError(f"cache file name is not a confined relative path: {name}")
 
 
-def step_key(workflow_version: str, family: str, inputs: dict[str, Any]) -> str:
+def step_key(
+    workflow_version: str, family: str, inputs: dict[str, Any], *, instructions: str = ""
+) -> str:
     payload: list[object] = [workflow_version, family, _canonicalize(inputs)]
+    if instructions:
+        payload.append(instructions)
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 
 

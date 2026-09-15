@@ -226,12 +226,12 @@ class _Step:
         return StepCache(cache_root, partition=(PAID if self._paid else CHEAP))
 
     def __enter__(self) -> _Step:
-        key_inputs = (
-            {**self._inputs, "__sfvf_instructions__": self._ctx._instructions_digest}
-            if self._ctx._instructions_digest
-            else self._inputs
+        self._key = step_key(
+            self._ctx.workflow_version,
+            self._family,
+            self._inputs,
+            instructions=self._ctx._instructions_digest,
         )
-        self._key = step_key(self._ctx.workflow_version, self._family, key_inputs)
         found = self._step_cache().get(self._key, restore_into=self._ctx.paths.video)
         if found is not None:
             self.cached = True
