@@ -36,6 +36,7 @@ export function VideoPanel({ workflowId, runId, videos, files }: VideoPanelProps
                 <div className="eyebrow">#{video.index}</div>
                 {file ? (
                   <video
+                    aria-label={`Video #${video.index}`}
                     className="run-video"
                     controls
                     preload="metadata"

@@ -989,13 +989,6 @@ textarea {
   display: block;
 }
 
-.record-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  align-items: start;
-}
-
 .rq-meta {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -1196,12 +1189,6 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-@media (width <= 1080px) {
-  .record-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (width <= 960px) {
