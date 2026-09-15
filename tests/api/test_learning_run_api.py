@@ -23,8 +23,10 @@ Unknown / unsafe workflow id → 404.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.learning.engine import LearningInput, OptimizeFn, ProposedEdit
@@ -142,3 +144,38 @@ def test_unknown_workflow_is_404(tmp_path: Path) -> None:
     assert client.post("/api/learning/ghost/run").status_code == 404
     assert client.get("/api/learning/ghost/staged").status_code == 404
     assert client.post("/api/learning/../etc/run").status_code == 404
+
+
+def test_run_failure_log_redacts_secrets(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    # The run endpoint logs the underlying cause of a failure — but a secret value that reaches an
+    # exception message must be REDACTED before it is written to the log (write-path invariant).
+    secret = "sk-super-secret-value-should-never-be-logged"
+
+    def factory(workflow_id: str, run_id: str) -> OptimizeFn:
+        def optimize(_learning_input: LearningInput) -> list[ProposedEdit]:
+            raise ValueError(f"upstream failure leaking {secret}")
+
+        return optimize
+
+    workflows = tmp_path / "workflows"
+    workflows.mkdir()
+    write_plugin(
+        workflows,
+        "explainer",
+        minimal_toml("explainer"),
+        extra_files={"rules/tone.md": "---\nversion: 1\n---\nBe concrete."},
+    )
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    app = create_app(
+        workflows_dir=workflows,
+        runs_dir=runs,
+        learning_staging_dir=tmp_path / "staging",
+        make_learning_optimizer=factory,
+        secrets={"OPENROUTER_API_KEY": secret},
+    )
+    client = TestClient(app)
+    with caplog.at_level(logging.WARNING, logger="app.api.learning"):
+        assert client.post("/api/learning/explainer/run").status_code == 502
+    assert caplog.text  # the failure WAS logged
+    assert secret not in caplog.text  # ...but the secret value is redacted
