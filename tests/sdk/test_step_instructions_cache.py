@@ -67,3 +67,20 @@ def test_no_instructions_preserves_the_prior_cache_key(tmp_path: Path) -> None:
     # A workflow with no rules/skills keys exactly as before, so existing caches stay valid.
     assert _run_step(_ctx(tmp_path, instructions=[])) is False  # miss, stores
     assert _run_step(_ctx(tmp_path, instructions=[])) is True  # hit — key unchanged by the feature
+
+
+def test_instruction_digest_does_not_clobber_a_caller_input(tmp_path: Path) -> None:
+    # The digest must be composed OUTSIDE the caller's inputs: a caller input that happens to be
+    # named like the internal marker must still distinguish steps (no key collision).
+    rule = _rule(tmp_path, "Open on a moving object.")
+    with _ctx(tmp_path, instructions=[rule]).step(
+        "s", inputs={"__sfvf_instructions__": "A"}
+    ) as step:
+        assert step.cached is False
+        step.set({"v": 1})
+    with _ctx(tmp_path, instructions=[rule]).step(
+        "s", inputs={"__sfvf_instructions__": "B"}
+    ) as step:
+        assert (
+            step.cached is False
+        )  # different caller value -> different key -> MISS, not a collision
