@@ -62,6 +62,15 @@ def test_messages_carry_roles_and_workflow_data() -> None:
     assert "explainer" in blob
 
 
+def test_system_prompt_encodes_user_preferences_faithfully() -> None:
+    # The optimiser must translate the user's stated preferences into rules FAITHFULLY — not
+    # editorialise or invert them. A user's "the video must state the date" has to become a rule
+    # that states the date, never its opposite. Pin that the standing instruction says so.
+    system = build_optimizer_messages(_input())[0]["content"].lower()
+    assert "faithful" in system  # encode the user's stated preferences faithfully
+    assert "invert" in system or "override" in system  # and never override/invert them
+
+
 def test_parse_object_with_edits() -> None:
     text = json.dumps(
         {
