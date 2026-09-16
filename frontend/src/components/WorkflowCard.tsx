@@ -58,6 +58,7 @@ export function WorkflowCard({ workflow, onStarted, onViewRuns }: WorkflowCardPr
       <RunLaunchForm
         workflowId={workflow.id}
         workflowName={title}
+        params={workflow.params}
         onCancel={() => {
           setLaunching(false);
         }}
