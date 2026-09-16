@@ -13,7 +13,34 @@ WORKFLOW_FIELDS = {
     "valid",
     "problems",
     "quality_factors",
+    "params",
 }
+
+PARAM_FIELDS = {
+    "key",
+    "type",
+    "label",
+    "required",
+    "default",
+    "help",
+    "affects_cost",
+    "min",
+    "max",
+    "step",
+    "options",
+    "options_from",
+    "placeholder",
+    "unit",
+}
+
+PARAMS_TOML = (
+    '[[params]]\nkey = "topic"\ntype = "text"\nlabel = "Topic"\nrequired = false\n'
+    'help = "Leave empty to let the agent choose."\n\n'
+    '[[params]]\nkey = "duration_s"\ntype = "number"\nlabel = "Duration (seconds)"\n'
+    'default = 30\naffects_cost = true\nmin = 10\nmax = 90\nstep = 5\nunit = "s"\n\n'
+    '[[params]]\nkey = "voice"\ntype = "select"\nlabel = "Narrator voice"\n'
+    'default = "narrator"\noptions = ["narrator", "casual"]'
+)
 
 QUALITY_FACTORS_TOML = (
     '[[quality_factors]]\nkey = "hook"\nquestion = "Did the first two seconds hook you? Why?"\n\n'
@@ -66,6 +93,39 @@ def test_declared_quality_factors_are_exposed(tmp_path: Path) -> None:
         {"key": "hook", "question": "Did the first two seconds hook you? Why?"},
         {"key": "pace", "question": "Did the pace hold? Where did it sag?"},
     ]
+
+
+def test_declared_params_are_exposed_with_defaults(tmp_path: Path) -> None:
+    # §8.2 launcher: the API exposes each declared [[params]] so the frontend can render a typed
+    # form (labels, types, declared defaults, help, and select options) instead of raw JSON. The
+    # declared default is what the launcher pre-fills, so a required-by-the-workflow param like
+    # duration_s is never silently missing.
+    write_plugin(tmp_path, "explainer", minimal_toml("explainer", extra=PARAMS_TOML))
+    item = client_for(tmp_path).get("/api/workflows").json()["workflows"][0]
+    params = item["params"]
+    assert [p["key"] for p in params] == ["topic", "duration_s", "voice"]  # declaration order
+    assert all(set(p) == PARAM_FIELDS for p in params)
+    topic, duration, voice = params
+    assert topic["type"] == "text" and topic["default"] is None
+    assert topic["help"] == "Leave empty to let the agent choose."
+    assert duration["type"] == "number" and duration["default"] == 30
+    assert duration["affects_cost"] is True
+    assert duration["min"] == 10 and duration["max"] == 90 and duration["step"] == 5
+    assert duration["unit"] == "s"
+    assert voice["type"] == "select" and voice["default"] == "narrator"
+    assert voice["options"] == ["narrator", "casual"]
+
+
+def test_workflow_without_params_has_empty_params(tmp_path: Path) -> None:
+    write_plugin(tmp_path, "explainer", minimal_toml("explainer"))
+    item = client_for(tmp_path).get("/api/workflows").json()["workflows"][0]
+    assert item["params"] == []
+
+
+def test_broken_workflow_has_empty_params(tmp_path: Path) -> None:
+    write_plugin(tmp_path, "broken", "[[[not toml")
+    item = client_for(tmp_path).get("/api/workflows").json()["workflows"][0]
+    assert item["params"] == []
 
 
 def test_broken_workflow_has_empty_quality_factors(tmp_path: Path) -> None:
