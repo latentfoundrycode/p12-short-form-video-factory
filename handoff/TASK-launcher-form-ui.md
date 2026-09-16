@@ -93,6 +93,28 @@ Reuse existing classes (`.panel`, `.launch-panel`, `.panel-head`, `.panel-body`,
 - Do NOT write into `app/web/` or touch `app/web/.gitkeep`; do not commit built assets.
 - No `any`; keep the React 19 + hooks idiom. Keep `npm run lint` / `npm run typecheck` clean.
 
+## Design follow-up (SECOND delegation — four small polish fixes)
+Your first implementation passed design review with no blockers. Apply these four polish items:
+
+1. **Dark native widgets.** The launcher introduces the app's first native `<input type="checkbox">`
+   and `<select>`, which render in the browser's light styling on the dark UI. Add
+   `color-scheme: dark;` to the `:root` rule in `frontend/src/index.css` (one line, near the top with
+   the other `:root` declarations) so native controls theme dark app-wide.
+2. **Bool field double label.** In `RunLaunchForm.tsx`, the bool case renders the label twice — once
+   in `.field-label` (via `controlLabel`) and again in the checkbox's `<span>{param.label}</span>`.
+   Drop the outer `.field-label` span for the bool case (keep the `.field-check` label with the
+   checkbox + `param.label`; if the param has a `unit` or is `required`, you may append that marker to
+   the checkbox's span text instead). No duplicate label text.
+3. **Enforce required multiselect.** In `collectParams`, a `required` multiselect must error when the
+   selected array is empty: `if (param.required && selected.length === 0) return { ok:false, error:
+   \`${param.label} is required.\` }`. (Otherwise the `*` marker promises a constraint the form never
+   enforces.)
+4. **`aria-required`.** Add `aria-required={param.required}` to each required-capable control
+   (text/textarea/number/select inputs, and the manual-fallback input) so assistive tech announces
+   requiredness.
+
+Keep everything else. Touch only `RunLaunchForm.tsx` and `index.css`. Keep lint/typecheck/build clean.
+
 ## Scope
 - `frontend/src/types.ts`
 - `frontend/src/components/WorkflowCard.tsx`
