@@ -105,6 +105,25 @@ classes/variables; keep it consistent with the visual system.
 - No `any`; React 19 + hooks idiom. Keep `npm run lint` / `npm run typecheck` clean.
 - The submit POST is CSRF-safe (same-origin); no extra headers needed beyond Content-Type.
 
+## Design follow-up (SECOND delegation — three polish fixes)
+Your first implementation passed design review and works end-to-end. Apply these:
+1. **Redo checkbox label:** in `GatePanel.tsx`, the Redo toggle's text uses `<span className=
+   "field-label">Redo</span>` (faint 10px uppercase). Every other `.field-check` in the app uses a
+   plain `<span>Redo</span>` at body size — change it to a plain `<span>Redo</span>` so the affordance
+   reads clearly and matches the other checkboxes.
+2. **Surface a gate-load error:** currently `if (!gate) return null` short-circuits before the
+   `.form-error` can render, so a `fetchPendingGates` failure while the run is parked shows nothing.
+   Before the `if (!gate) return null`, add: when `status === "error"`, return a small `.panel` with
+   the eyebrow "Decision needed" and the `error` message in a `.form-error` (so a load failure is
+   visible on a parked run). Keep returning `null` only when the fetch succeeded and there are no
+   pending gates.
+3. **Image aspect:** in `index.css`, give `.gate-item-img` a consistent thumbnail — set
+   `aspect-ratio: 1 / 1; object-fit: cover; max-height: 220px;` and change its `background` to a
+   distinct placeholder tone (`var(--surface)` instead of `var(--surface-2)`) so mixed-aspect
+   artifacts don't produce ragged card heights and the placeholder is visible.
+
+Touch only `GatePanel.tsx` and `index.css`. Keep lint/typecheck/build clean.
+
 ## Scope
 - `frontend/src/types.ts`
 - `frontend/src/api.ts`
