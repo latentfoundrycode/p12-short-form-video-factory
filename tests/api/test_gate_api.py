@@ -29,7 +29,7 @@ from tests.registry.fixtures import minimal_toml, write_plugin
 _RUN = "20260916-120000"
 
 
-def _seed(tmp_path: Path) -> tuple[TestClient, Path]:
+def _seed(tmp_path: Path, *, secrets: dict[str, str] | None = None) -> tuple[TestClient, Path]:
     workflows = tmp_path / "workflows"
     workflows.mkdir()
     write_plugin(workflows, "explainer", minimal_toml("explainer"))
@@ -76,7 +76,7 @@ def _seed(tmp_path: Path) -> tuple[TestClient, Path]:
     (run_dir / v2 / "gates").mkdir()
     (run_dir / v2 / "gates" / "pick-tone-0.json").write_text('{"choice": "warm"}', encoding="utf-8")
 
-    client = TestClient(create_app(workflows_dir=workflows, runs_dir=runs))
+    client = TestClient(create_app(workflows_dir=workflows, runs_dir=runs, secrets=secrets))
     return client, run_dir
 
 
@@ -142,3 +142,68 @@ def test_submit_rejects_unsafe_video_segment(tmp_path: Path) -> None:
         json={"video": "../evil", "token": "approve-script-0", "decision": {"choice": "approve"}},
     )
     assert response.status_code in (400, 404)
+
+
+def test_submit_rejects_traversal_token(tmp_path: Path) -> None:
+    # token is a path component of the response file; a traversal token must be refused.
+    client, _ = _seed(tmp_path)
+    v1 = format_video_dir(1, 2)
+    response = client.post(
+        f"/api/workflows/explainer/runs/{_RUN}/gates",
+        json={"video": v1, "token": "../../evil", "decision": {"choice": "approve"}},
+    )
+    assert response.status_code in (400, 404)
+
+
+def test_list_tolerates_a_malformed_gate_event(tmp_path: Path) -> None:
+    # A workflow that emits a raw/partial gate event must not 500 the listing or hide valid gates.
+    client, run_dir = _seed(tmp_path)
+    append_event(run_dir, {"t": "gate"}, source=format_video_dir(1, 2))  # no token/family/shape
+    response = client.get(f"/api/workflows/explainer/runs/{_RUN}/gates")
+    assert response.status_code == 200
+    assert [g["token"] for g in response.json()["gates"]] == ["approve-script-0"]
+
+
+def test_submit_redacts_secret_in_decision(tmp_path: Path) -> None:
+    # Standing rule: redact secrets on every write path. A secret in a note must not persist.
+    client, run_dir = _seed(tmp_path, secrets={"OPENROUTER_API_KEY": "sk-topsecret-123"})
+    v1 = format_video_dir(1, 2)
+    response = client.post(
+        f"/api/workflows/explainer/runs/{_RUN}/gates",
+        json={
+            "video": v1,
+            "token": "approve-script-0",
+            "decision": {"choice": "approve", "note": "key is sk-topsecret-123"},
+        },
+    )
+    assert response.status_code == 200
+    written = (run_dir / v1 / "gates" / "approve-script-0.json").read_text("utf-8")
+    assert "sk-topsecret-123" not in written
+
+
+def test_submit_selection_reject_with_keep_is_400(tmp_path: Path) -> None:
+    # A selection REJECT carrying keep/redo is contradictory and must be refused (strict boundary).
+    client, run_dir = _seed(tmp_path)
+    v1 = format_video_dir(1, 2)
+    append_event(
+        run_dir,
+        {
+            "t": "gate",
+            "family": "approve-sheets",
+            "token": "approve-sheets-0",
+            "shape": "selection",
+            "prompt": "Approve sheets.",
+            "items": [{"id": "bertie"}, {"id": "clementine"}],
+            "on_bypass": "approve-all",
+        },
+        source=v1,
+    )
+    response = client.post(
+        f"/api/workflows/explainer/runs/{_RUN}/gates",
+        json={
+            "video": v1,
+            "token": "approve-sheets-0",
+            "decision": {"choice": "reject", "keep": ["bertie"], "redo": []},
+        },
+    )
+    assert response.status_code == 400
