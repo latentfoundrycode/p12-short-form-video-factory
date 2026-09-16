@@ -31,6 +31,7 @@ from app.core.records import (
     read_events,
     read_request,
     read_video,
+    write_json_atomic,
 )
 from app.core.supervisor import (
     EnsureEnv,
@@ -40,6 +41,7 @@ from app.core.supervisor import (
     RunRequestResult,
     StopAccepted,
     StopMode,
+    _redact_secrets,
     run_request,
     stop,
 )
@@ -146,6 +148,33 @@ class RunFileOut(BaseModel):
 
 class RunFilesOut(BaseModel):
     files: list[RunFileOut]
+
+
+class PendingGateOut(BaseModel):
+    video: str
+    video_index: int
+    token: str
+    family: str
+    shape: str
+    prompt: str
+    payload: Any | None = None
+    options: list[Any] | None = None
+    items: list[Any] | None = None
+    on_bypass: str | None = None
+
+
+class GatesOut(BaseModel):
+    gates: list[PendingGateOut]
+
+
+class SubmitGateIn(BaseModel):
+    video: str
+    token: str
+    decision: dict[str, Any]
+
+
+class SubmitGateOut(BaseModel):
+    ok: bool
 
 
 def _holder(request: Request) -> RegistryHolder:
@@ -282,6 +311,17 @@ def _detail(run_dir: Path, record: RequestRecord) -> RunDetailOut:
     )
 
 
+def _is_well_formed_gate_event(source: object, event: object) -> bool:
+    return (
+        isinstance(source, str)
+        and isinstance(event, dict)
+        and event.get("t") == "gate"
+        and all(
+            isinstance(event.get(field), str) for field in ("token", "family", "shape", "prompt")
+        )
+    )
+
+
 @router.post("/workflows/{workflow_id}/runs")
 def launch_run(workflow_id: str, body: LaunchBody, request: Request) -> JSONResponse:
     entry = _require_workflow(request, workflow_id)
@@ -401,6 +441,156 @@ def get_run(workflow_id: str, run_id: str, request: Request) -> RunDetailOut:
     if not (run_dir / "request.json").is_file():
         raise HTTPException(status_code=404)
     return _detail(run_dir, read_request(run_dir))
+
+
+@router.get("/workflows/{workflow_id}/runs/{run_id}/gates", response_model=GatesOut)
+def list_pending_gates(workflow_id: str, run_id: str, request: Request) -> GatesOut:
+    _require_workflow(request, workflow_id)
+    if not is_safe_path_segment(run_id):
+        raise HTTPException(status_code=404)
+    run_dir = _runs_dir(request) / workflow_id / run_id
+    if not (run_dir / "request.json").is_file():
+        raise HTTPException(status_code=404)
+
+    pending: dict[tuple[str, str], PendingGateOut] = {}
+    order: list[tuple[str, str]] = []
+    for _ts, source, event in read_events(run_dir):
+        if not _is_well_formed_gate_event(source, event):
+            continue
+        token = event.get("token")
+        family = event.get("family")
+        shape = event.get("shape")
+        prompt = event.get("prompt")
+        if (
+            not isinstance(token, str)
+            or not isinstance(family, str)
+            or not isinstance(shape, str)
+            or not isinstance(prompt, str)
+        ):
+            continue
+        options = event.get("options")
+        items = event.get("items")
+        on_bypass = event.get("on_bypass")
+        if (
+            (options is not None and not isinstance(options, list))
+            or (items is not None and not isinstance(items, list))
+            or (on_bypass is not None and not isinstance(on_bypass, str))
+        ):
+            continue
+        if (run_dir / source / "gates" / f"{token}.json").exists():
+            continue
+        key = (source, token)
+        if key not in pending:
+            order.append(key)
+        pending[key] = PendingGateOut(
+            video=source,
+            video_index=int(source) if source.isdigit() else 0,
+            token=token,
+            family=family,
+            shape=shape,
+            prompt=prompt,
+            payload=event.get("payload"),
+            options=options,
+            items=items,
+            on_bypass=on_bypass,
+        )
+    return GatesOut(gates=[pending[key] for key in order])
+
+
+@router.post("/workflows/{workflow_id}/runs/{run_id}/gates", response_model=SubmitGateOut)
+def submit_gate(
+    workflow_id: str,
+    run_id: str,
+    body: SubmitGateIn,
+    request: Request,
+) -> SubmitGateOut:
+    _require_workflow(request, workflow_id)
+    if not is_safe_path_segment(run_id):
+        raise HTTPException(status_code=404)
+    run_dir = _runs_dir(request) / workflow_id / run_id
+    if not run_dir.is_dir():
+        raise HTTPException(status_code=404)
+    if not is_safe_path_segment(body.video):
+        raise HTTPException(status_code=400)
+    if not is_safe_path_segment(body.token):
+        raise HTTPException(status_code=400)
+
+    matching_gate: dict[str, Any] | None = None
+    response_path = run_dir / body.video / "gates" / f"{body.token}.json"
+    for _ts, source, event in read_events(run_dir):
+        if (
+            _is_well_formed_gate_event(source, event)
+            and source == body.video
+            and event.get("token") == body.token
+            and not response_path.exists()
+        ):
+            matching_gate = event
+    if matching_gate is None:
+        raise HTTPException(status_code=404)
+
+    decision = body.decision
+    choice = decision.get("choice")
+    if not isinstance(choice, str):
+        raise HTTPException(status_code=400)
+
+    shape = matching_gate.get("shape")
+    normalized_decision: dict[str, Any] = {"choice": choice}
+    if shape == "approval":
+        if choice not in {"approve", "reject"}:
+            raise HTTPException(status_code=400)
+        if isinstance(decision.get("note"), str):
+            normalized_decision["note"] = decision["note"]
+    elif shape == "choice":
+        options = matching_gate.get("options")
+        if not isinstance(options, list) or choice not in options:
+            raise HTTPException(status_code=400)
+        if isinstance(decision.get("note"), str):
+            normalized_decision["note"] = decision["note"]
+    elif shape == "selection":
+        if choice not in {"approve", "reject"}:
+            raise HTTPException(status_code=400)
+        if "note" in decision and not isinstance(decision["note"], str):
+            raise HTTPException(status_code=400)
+        if choice == "approve":
+            keep = decision.get("keep", [])
+            redo = decision.get("redo", [])
+            if not isinstance(keep, list) or not all(isinstance(item, str) for item in keep):
+                raise HTTPException(status_code=400)
+            if not isinstance(redo, list) or not all(isinstance(item, str) for item in redo):
+                raise HTTPException(status_code=400)
+            items = matching_gate.get("items")
+            if not isinstance(items, list) or not all(
+                isinstance(item, dict) and isinstance(item.get("id"), str) for item in items
+            ):
+                raise HTTPException(status_code=400)
+            declared_ids = {item["id"] for item in items}
+            if not set(keep) <= declared_ids or not set(redo) <= declared_ids:
+                raise HTTPException(status_code=400)
+            if not set(keep).isdisjoint(redo):
+                raise HTTPException(status_code=400)
+            normalized_decision = {
+                "choice": "approve",
+                "keep": keep,
+                "redo": redo,
+                "note": decision.get("note", ""),
+            }
+        else:
+            if decision.get("keep") or decision.get("redo"):
+                raise HTTPException(status_code=400)
+            normalized_decision = {"choice": "reject"}
+            if isinstance(decision.get("note"), str):
+                normalized_decision["note"] = decision["note"]
+    else:
+        raise HTTPException(status_code=400)
+
+    live = run_dir / body.video / "gates" / f"{body.token}.json"
+    gates_dir = run_dir / body.video / "gates"
+    if not live.resolve().is_relative_to(gates_dir.resolve()):
+        raise HTTPException(status_code=400)
+    secret_values = frozenset(v for v in _secrets(request).values() if v)
+    redacted_decision = _redact_secrets(normalized_decision, secret_values)
+    write_json_atomic(live, redacted_decision)
+    return SubmitGateOut(ok=True)
 
 
 def _sse_data_line(ts: str, source: str, event: dict[str, Any]) -> str:
