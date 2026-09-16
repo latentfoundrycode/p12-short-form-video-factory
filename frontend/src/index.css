@@ -1017,6 +1017,16 @@ textarea {
   align-items: start;
 }
 
+.video-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.video-review-fail {
+  color: var(--red);
+}
+
 .run-video {
   width: 100%;
   max-height: 70vh;
