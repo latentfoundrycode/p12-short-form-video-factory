@@ -88,6 +88,18 @@ def test_start_launches_known_workflow_through_admit(tmp_path: Path) -> None:
     assert call["runs_dir"] == tmp_path / "runs"
 
 
+def test_start_passes_gates_auto_through(tmp_path: Path) -> None:
+    # A scheduled run carries its per-schedule gate-bypass flag into admission, so an unattended
+    # run resolves gates via on_bypass instead of parking forever with nobody to answer.
+    wf_dir = tmp_path / "wf" / "explainer"
+    admit = _AdmitSpy()
+    start = make_scheduler_start(_deps(lambda wid: wf_dir, admit, tmp_path / "runs"))
+    start(_entry(gates_auto=True), True)
+    start(_entry(gates_auto=False), True)
+    assert admit.calls[0]["gates_auto"] is True
+    assert admit.calls[1]["gates_auto"] is False
+
+
 def test_start_forwards_real_spend_as_dry_run_false(tmp_path: Path) -> None:
     admit = _AdmitSpy()
     start = make_scheduler_start(_deps(lambda wid: tmp_path / wid, admit, tmp_path / "runs"))
