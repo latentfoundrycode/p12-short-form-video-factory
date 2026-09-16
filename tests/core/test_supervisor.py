@@ -289,6 +289,25 @@ def test_single_active_guard_refuses_second_run(tmp_path: Path) -> None:
     assert read_request(next((tmp_path / "runs" / "succeeds").iterdir())).status == "complete"
 
 
+def test_run_request_injects_gates_auto_into_context(tmp_path: Path) -> None:
+    # H-2: the scheduled-bypass flag reaches the worker via context.json, so ctx.gate() resolves
+    # from on_bypass without waiting for a user.
+    result = _run(STUBS / "succeeds", tmp_path, gates_auto=True)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    run_dir = next((tmp_path / "runs" / "succeeds").iterdir())
+    context = json.loads((run_dir / "01" / "context.json").read_text(encoding="utf-8"))
+    assert context["gates_auto"] is True
+
+
+def test_run_request_defaults_gates_auto_false(tmp_path: Path) -> None:
+    # An interactive (manual) run never bypasses gates.
+    result = _run(STUBS / "succeeds", tmp_path)
+    assert not isinstance(result, EnvBlocked | RunBusy)
+    run_dir = next((tmp_path / "runs" / "succeeds").iterdir())
+    context = json.loads((run_dir / "01" / "context.json").read_text(encoding="utf-8"))
+    assert context["gates_auto"] is False
+
+
 def test_prepare_feeds_shared_into_video_context(tmp_path: Path) -> None:
     seen_video_status: list[str] = []
 
