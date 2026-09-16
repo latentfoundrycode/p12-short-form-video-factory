@@ -68,6 +68,55 @@ Place the `add_middleware` call once, after `application` is created (e.g. right
   non-browser clients like the test suite keep working); block only `cross-site`/`same-site`.
 - Keep `ruff check .`, `ruff format --check .`, `mypy sdk app` clean; ≤100 cols.
 
+## Review follow-up (SECOND delegation — Origin/Referer fallback)
+Cross-family + security review found one residual gap: legacy browsers (Safari <16.4, old webviews)
+omit `Sec-Fetch-Site` entirely but STILL send `Origin` on a cross-site POST/form, so the current
+"absent → allow" fails open for them. Strengthen `app/core/csrf.py` so that when `Sec-Fetch-Site` is
+absent, it falls back to `Origin`, then `Referer`. Keep everything else. New frozen tests
+(`test_absent_fetch_site_*`) pin this.
+
+Replace the guard body with this logic (only the absent-`Sec-Fetch-Site` branch is new):
+
+```python
+from urllib.parse import urlsplit
+
+
+def _is_cross_origin(url_header: str, host: str) -> bool:
+    """True only when the header carries a determinable host that differs from the request Host.
+    An empty/opaque value (e.g. `Origin: null`) is not treated as cross-origin here (can't tell)."""
+    netloc = urlsplit(url_header).netloc
+    return netloc != "" and netloc != host
+
+
+async def csrf_guard(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    if request.method.upper() not in _SAFE_METHODS:
+        site = request.headers.get("sec-fetch-site")
+        blocked = False
+        if site is not None:
+            blocked = site in _BLOCKED_FETCH_SITES
+        else:
+            # Legacy/non-Fetch-Metadata clients: fall back to Origin, then Referer, vs the Host.
+            host = request.headers.get("host", "")
+            origin = request.headers.get("origin")
+            referer = request.headers.get("referer")
+            if origin is not None:
+                blocked = _is_cross_origin(origin, host)
+            elif referer is not None:
+                blocked = _is_cross_origin(referer, host)
+            # No Sec-Fetch-Site AND no Origin/Referer → a non-browser client → allowed.
+        if blocked:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "cross-site state-changing request refused"},
+            )
+    return await call_next(request)
+```
+
+Keep the `_SAFE_METHODS` / `_BLOCKED_FETCH_SITES` constants and the `JSONResponse` shape. `main.py`
+wiring is unchanged. Keep lint/format/mypy clean.
+
 ## Scope
 - `app/core/csrf.py`
 - `app/main.py`
