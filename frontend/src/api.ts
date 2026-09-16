@@ -296,6 +296,27 @@ export async function fetchRuns(id: string): Promise<RunList> {
   return data;
 }
 
+export async function deleteRun(workflowId: string, runId: string): Promise<void> {
+  const response = await fetch(
+    `/api/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}`,
+    { method: "DELETE" },
+  );
+  if (response.ok) return;
+  if (response.status === 409) throw new Error("This run is still active — stop it first.");
+  throw new Error(`Could not delete run (${response.status})`);
+}
+
+export async function clearFailedRuns(workflowId: string): Promise<string[]> {
+  const response = await fetch(
+    `/api/workflows/${encodeURIComponent(workflowId)}/runs/clear-failed`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) throw new Error(`Could not clear failed runs (${response.status})`);
+  const data = (await response.json()) as { deleted: string[] };
+  if (!Array.isArray(data.deleted)) throw new Error("Unexpected clear-failed response");
+  return data.deleted;
+}
+
 export async function submitQuality(
   workflowId: string,
   runId: string,
