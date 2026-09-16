@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
+import shutil
 import subprocess
 import threading
 import time
@@ -48,6 +49,7 @@ from app.registry.validate import WorkflowEntry
 router = APIRouter(prefix="/api")
 
 _TERMINAL_STATUSES = frozenset({"complete", "partial", "stopped", "stopped-budget", "failed"})
+_CLEARABLE = frozenset({"failed", "stopped", "stopped-budget"})
 _REQUEST_WAIT_SECONDS = 2.0
 _REQUEST_POLL_SECONDS = 0.05
 _LIVE_POLL_SECONDS = 0.25
@@ -96,6 +98,14 @@ class StopBody(BaseModel):
 class StopOut(BaseModel):
     run_id: str
     mode: StopMode
+
+
+class DeleteRunOut(BaseModel):
+    deleted: str
+
+
+class ClearFailedOut(BaseModel):
+    deleted: list[str]
 
 
 class VideoRefOut(BaseModel):
@@ -330,6 +340,47 @@ def list_runs(workflow_id: str, request: Request) -> RunListOut:
         summaries.append(_summary(read_request(child)))
     summaries.sort(key=lambda item: item.run_id, reverse=True)
     return RunListOut(runs=summaries)
+
+
+@router.delete("/workflows/{workflow_id}/runs/{run_id}", response_model=DeleteRunOut)
+def delete_run(workflow_id: str, run_id: str, request: Request) -> DeleteRunOut:
+    _require_workflow(request, workflow_id)
+    if not is_safe_path_segment(run_id):
+        raise HTTPException(status_code=404)
+    run_dir = _runs_dir(request) / workflow_id / run_id
+    if not (run_dir / "request.json").is_file():
+        raise HTTPException(status_code=404)
+    if read_request(run_dir).status == "running":
+        raise HTTPException(status_code=409, detail="run is still active")
+    resolved = run_dir.resolve()
+    if not resolved.is_relative_to((_runs_dir(request) / workflow_id).resolve()):
+        raise HTTPException(status_code=404)
+    shutil.rmtree(resolved)
+    return DeleteRunOut(deleted=run_id)
+
+
+@router.post("/workflows/{workflow_id}/runs/clear-failed", response_model=ClearFailedOut)
+def clear_failed_runs(workflow_id: str, request: Request) -> ClearFailedOut:
+    _require_workflow(request, workflow_id)
+    root = _runs_dir(request) / workflow_id
+    if not root.is_dir():
+        return ClearFailedOut(deleted=[])
+    deleted: list[str] = []
+    root_resolved = root.resolve()
+    for child in root.iterdir():
+        if not child.is_dir() or not (child / "request.json").is_file():
+            continue
+        try:
+            record = read_request(child)
+        except (OSError, ValueError):
+            continue
+        if record.status not in _CLEARABLE:
+            continue
+        if not child.resolve().is_relative_to(root_resolved):
+            continue
+        shutil.rmtree(child)
+        deleted.append(child.name)
+    return ClearFailedOut(deleted=sorted(deleted))
 
 
 @router.get("/workflows/{workflow_id}/runs/{run_id}", response_model=RunDetailOut)
