@@ -6,9 +6,10 @@ The Runs list needs a per-run Delete and a bulk "Clear failed". Both HARD-delete
 - A run that is still `running` is NEVER deleted (its process owns that directory) — per-run delete
   refuses it with 409; clear-failed only ever targets terminal failed/stopped states.
 - `DELETE /api/workflows/{workflow_id}/runs/{run_id}` removes exactly that run dir.
-- `POST /api/workflows/{workflow_id}/runs/clear-failed` removes every run whose status is
+- `DELETE /api/workflows/{workflow_id}/runs/clear-failed` removes every run whose status is
   `failed`, `stopped`, or `stopped-budget` (the disposable terminal states), leaving `complete`,
-  `partial`, and `running` runs untouched, and returns the deleted run ids.
+  `partial`, and `running` runs untouched, and returns the deleted run ids. (It is a DELETE, not a
+  POST, so a cross-origin drive-by cannot trigger it — DELETE is not a CORS "simple request".)
 """
 
 from __future__ import annotations
@@ -91,7 +92,7 @@ def test_clear_failed_deletes_failed_and_stopped_only(tmp_path: Path) -> None:
     partial = _seed_run(runs, "explainer", "20260916-104000", "partial")
     running = _seed_run(runs, "explainer", "20260916-105000", "running")
 
-    response = client.post("/api/workflows/explainer/runs/clear-failed")
+    response = client.delete("/api/workflows/explainer/runs/clear-failed")
     assert response.status_code == 200
     deleted = response.json()["deleted"]
     assert set(deleted) == {"20260916-100000", "20260916-101000", "20260916-102000"}
@@ -102,6 +103,6 @@ def test_clear_failed_deletes_failed_and_stopped_only(tmp_path: Path) -> None:
 def test_clear_failed_with_nothing_to_clear_is_empty(tmp_path: Path) -> None:
     client, runs = _client(tmp_path)
     _seed_run(runs, "explainer", "20260916-100000", "complete")
-    response = client.post("/api/workflows/explainer/runs/clear-failed")
+    response = client.delete("/api/workflows/explainer/runs/clear-failed")
     assert response.status_code == 200
     assert response.json()["deleted"] == []
