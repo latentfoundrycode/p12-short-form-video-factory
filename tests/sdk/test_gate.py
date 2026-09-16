@@ -101,7 +101,26 @@ def test_choice_shape_returns_chosen_option(tmp_path: Path) -> None:
     video.mkdir()
     _write_response(video, "pick-tone-0", {"choice": "warm"})
     ctx = _ctx(video)
-    assert ctx.gate("pick-tone", prompt="tone?", options=["warm", "cool"]) == {"choice": "warm"}
+    got = ctx.gate("pick-tone", prompt="tone?", options=["warm", "cool"], on_bypass="warm")
+    assert got == {"choice": "warm"}
+
+
+def test_choice_without_on_bypass_is_authoring_error_even_interactive(tmp_path: Path) -> None:
+    # on_bypass is mandatory for any gate that can return more than plain approval, and the check
+    # fires at the call (not only under gates_auto) so a schedule-time break is caught early.
+    video = tmp_path / "01"
+    video.mkdir()
+    ctx = _ctx(video)  # interactive (gates_auto False)
+    with pytest.raises(ValueError):
+        ctx.gate("pick-tone", prompt="tone?", options=["warm", "cool"])
+
+
+def test_choice_invalid_on_bypass_is_error(tmp_path: Path) -> None:
+    video = tmp_path / "01"
+    video.mkdir()
+    ctx = _ctx(video)
+    with pytest.raises(ValueError):
+        ctx.gate("pick-tone", prompt="tone?", options=["warm", "cool"], on_bypass="bogus")
 
 
 def test_selection_shape_returns_keep_and_redo(tmp_path: Path) -> None:
@@ -212,3 +231,15 @@ def test_gate_attempts_counts_redos_for_an_item(tmp_path: Path) -> None:
     )
     assert ctx.gate_attempts("approve-sheets", item="clementine") == 1
     assert ctx.gate_attempts("approve-sheets", item="bertie") == 0
+
+
+def test_gate_attempts_matches_family_exactly(tmp_path: Path) -> None:
+    # A shorter family must NOT match a longer one's files: gate_attempts("approve") must not count
+    # "approve-sheets-*.json", or it would silently perturb another step's cache key.
+    video = tmp_path / "01"
+    video.mkdir()
+    _write_response(video, "approve-sheets-0", {"choice": "approve", "redo": ["clementine"]})
+    _write_response(video, "approve-0", {"choice": "reject"})
+    ctx = _ctx(video)
+    assert ctx.gate_attempts("approve") == 1  # only approve-0, not approve-sheets-0
+    assert ctx.gate_attempts("approve-sheets") == 1  # only approve-sheets-0
