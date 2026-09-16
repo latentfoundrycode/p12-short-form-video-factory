@@ -80,6 +80,43 @@ class SubmitGateOut(BaseModel):
   the resolved-containment check are all required.
 - Keep `ruff check .`, `ruff format --check .`, `mypy sdk app` clean; ≤100 cols.
 
+## Review follow-up (SECOND delegation — four hardening fixes in `app/api/runs.py`)
+Cross-family + security review found four edges on this user-input write path. Apply all four; new
+frozen tests pin them.
+
+1. **Tolerate a malformed `gate` event (both routes).** GET currently does `event["token"]` etc., so a
+   workflow emitting a raw `{"t": "gate"}` (via `ctx.emit`) crashes the listing with a 500 and hides
+   every valid gate. In BOTH the GET loop and the POST matching loop, read the fields with `.get(...)`
+   and SKIP a gate event that is not a well-formed dict with string `token`, `family`, `shape`, and
+   `prompt` (and a str `source`). Never raise on a malformed event.
+
+2. **Refuse a traversal `token` + tighten the write containment to `gates/`.** Add
+   `if not is_safe_path_segment(body.token): raise HTTPException(400)` alongside the `body.video`
+   check. Change the containment base from the video dir to the gates dir:
+   `if not live.resolve().is_relative_to((run_dir / body.video / "gates").resolve()): raise
+   HTTPException(400)`.
+
+3. **Redact secrets in the written decision.** Per the standing rule "redact on every write path":
+   before writing, redact the decision — `secret_values = frozenset(v for v in
+   _secrets(request).values() if v)` (the helper already imported in this module) and
+   `_redact_secrets(body.decision, secret_values)` (import `_redact_secrets` from
+   `app.core.supervisor`, as `app/api/learning.py` does). Write the REDACTED decision.
+
+4. **Write only the validated keys (strict boundary).** Build the persisted decision from the fields
+   you validated, dropping any extra client keys, and reject a contradictory selection reject:
+   - approval / choice: write `{"choice": choice}` plus `{"note": <str>}` only if `decision` has a
+     string `note`.
+   - selection `reject`: write `{"choice": "reject"}` plus a string `note` if present — and 400 if the
+     client sent a non-empty `keep` or `redo` with a reject (contradictory).
+   - selection `approve`: write `{"choice": "approve", "keep": [...], "redo": [...], "note": <str or
+     "">}` from the validated lists.
+   Then redact THAT normalized dict (per #3) and `write_json_atomic` it.
+
+(Deliberately NOT fixed: the concurrent double-answer TOCTOU — single-user local tool, the write is
+idempotent-ish and the worker consumes whatever is present on its next poll. Accepted.)
+
+Keep everything else. Touch ONLY `app/api/runs.py`. Keep lint/format/mypy clean.
+
 ## Scope
 - `app/api/runs.py`
 
