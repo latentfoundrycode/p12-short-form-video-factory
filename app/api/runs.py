@@ -41,6 +41,7 @@ from app.core.supervisor import (
     RunRequestResult,
     StopAccepted,
     StopMode,
+    _redact_secrets,
     run_request,
     stop,
 )
@@ -310,6 +311,17 @@ def _detail(run_dir: Path, record: RequestRecord) -> RunDetailOut:
     )
 
 
+def _is_well_formed_gate_event(source: object, event: object) -> bool:
+    return (
+        isinstance(source, str)
+        and isinstance(event, dict)
+        and event.get("t") == "gate"
+        and all(
+            isinstance(event.get(field), str) for field in ("token", "family", "shape", "prompt")
+        )
+    )
+
+
 @router.post("/workflows/{workflow_id}/runs")
 def launch_run(workflow_id: str, body: LaunchBody, request: Request) -> JSONResponse:
     entry = _require_workflow(request, workflow_id)
@@ -443,9 +455,28 @@ def list_pending_gates(workflow_id: str, run_id: str, request: Request) -> Gates
     pending: dict[tuple[str, str], PendingGateOut] = {}
     order: list[tuple[str, str]] = []
     for _ts, source, event in read_events(run_dir):
-        if event.get("t") != "gate":
+        if not _is_well_formed_gate_event(source, event):
             continue
-        token = event["token"]
+        token = event.get("token")
+        family = event.get("family")
+        shape = event.get("shape")
+        prompt = event.get("prompt")
+        if (
+            not isinstance(token, str)
+            or not isinstance(family, str)
+            or not isinstance(shape, str)
+            or not isinstance(prompt, str)
+        ):
+            continue
+        options = event.get("options")
+        items = event.get("items")
+        on_bypass = event.get("on_bypass")
+        if (
+            (options is not None and not isinstance(options, list))
+            or (items is not None and not isinstance(items, list))
+            or (on_bypass is not None and not isinstance(on_bypass, str))
+        ):
+            continue
         if (run_dir / source / "gates" / f"{token}.json").exists():
             continue
         key = (source, token)
@@ -455,13 +486,13 @@ def list_pending_gates(workflow_id: str, run_id: str, request: Request) -> Gates
             video=source,
             video_index=int(source) if source.isdigit() else 0,
             token=token,
-            family=event["family"],
-            shape=event["shape"],
-            prompt=event["prompt"],
+            family=family,
+            shape=shape,
+            prompt=prompt,
             payload=event.get("payload"),
-            options=event.get("options"),
-            items=event.get("items"),
-            on_bypass=event.get("on_bypass"),
+            options=options,
+            items=items,
+            on_bypass=on_bypass,
         )
     return GatesOut(gates=[pending[key] for key in order])
 
@@ -481,12 +512,14 @@ def submit_gate(
         raise HTTPException(status_code=404)
     if not is_safe_path_segment(body.video):
         raise HTTPException(status_code=400)
+    if not is_safe_path_segment(body.token):
+        raise HTTPException(status_code=400)
 
     matching_gate: dict[str, Any] | None = None
     response_path = run_dir / body.video / "gates" / f"{body.token}.json"
     for _ts, source, event in read_events(run_dir):
         if (
-            event.get("t") == "gate"
+            _is_well_formed_gate_event(source, event)
             and source == body.video
             and event.get("token") == body.token
             and not response_path.exists()
@@ -501,13 +534,18 @@ def submit_gate(
         raise HTTPException(status_code=400)
 
     shape = matching_gate.get("shape")
+    normalized_decision: dict[str, Any] = {"choice": choice}
     if shape == "approval":
         if choice not in {"approve", "reject"}:
             raise HTTPException(status_code=400)
+        if isinstance(decision.get("note"), str):
+            normalized_decision["note"] = decision["note"]
     elif shape == "choice":
         options = matching_gate.get("options")
         if not isinstance(options, list) or choice not in options:
             raise HTTPException(status_code=400)
+        if isinstance(decision.get("note"), str):
+            normalized_decision["note"] = decision["note"]
     elif shape == "selection":
         if choice not in {"approve", "reject"}:
             raise HTTPException(status_code=400)
@@ -530,13 +568,28 @@ def submit_gate(
                 raise HTTPException(status_code=400)
             if not set(keep).isdisjoint(redo):
                 raise HTTPException(status_code=400)
+            normalized_decision = {
+                "choice": "approve",
+                "keep": keep,
+                "redo": redo,
+                "note": decision.get("note", ""),
+            }
+        else:
+            if decision.get("keep") or decision.get("redo"):
+                raise HTTPException(status_code=400)
+            normalized_decision = {"choice": "reject"}
+            if isinstance(decision.get("note"), str):
+                normalized_decision["note"] = decision["note"]
     else:
         raise HTTPException(status_code=400)
 
     live = run_dir / body.video / "gates" / f"{body.token}.json"
-    if not live.resolve().is_relative_to((run_dir / body.video).resolve()):
+    gates_dir = run_dir / body.video / "gates"
+    if not live.resolve().is_relative_to(gates_dir.resolve()):
         raise HTTPException(status_code=400)
-    write_json_atomic(live, body.decision)
+    secret_values = frozenset(v for v in _secrets(request).values() if v)
+    redacted_decision = _redact_secrets(normalized_decision, secret_values)
+    write_json_atomic(live, redacted_decision)
     return SubmitGateOut(ok=True)
 
 
