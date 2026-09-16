@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from sfvf.context import BudgetConfig
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.learning import (
     MakeLearningOptimizer,
@@ -22,6 +23,7 @@ from app.api.statistics import router as statistics_router
 from app.api.workflows import RegistryHolder
 from app.api.workflows import router as workflows_router
 from app.core.budget_config import load_budget_config
+from app.core.csrf import csrf_guard
 from app.core.env import ensure_env as default_ensure_env
 from app.core.scheduler_runner import SchedulerDeps, SchedulerDriver, make_scheduler_start
 from app.core.schedules import SCHEDULES_PATH
@@ -92,6 +94,7 @@ def create_app(
         application = FastAPI(title="Short-Form Video Factory", lifespan=scheduler_lifespan)
     else:
         application = FastAPI(title="Short-Form Video Factory")
+    application.add_middleware(BaseHTTPMiddleware, dispatch=csrf_guard)
     application.state.registry = RegistryHolder(workflows_dir or WORKFLOWS_DIR)
     application.state.runs_dir = runs_dir or RUNS_DIR
     application.state.schedules_path = schedules_path or SCHEDULES_PATH
