@@ -115,6 +115,45 @@ Your first implementation passed design review with no blockers. Apply these fou
 
 Keep everything else. Touch only `RunLaunchForm.tsx` and `index.css`. Keep lint/typecheck/build clean.
 
+## Review B follow-up (THIRD delegation — three correctness fixes in `RunLaunchForm.tsx`)
+Cross-family review found three real form-logic gaps. Apply all three (touch ONLY
+`RunLaunchForm.tsx`):
+
+A. **Manual multiselect must submit an array, not a string.** `usesManualInput` is true for a
+   multiselect with no `options` (dynamic `options_from`), and the manual branch of `collectParams`
+   currently stores a plain string — violating the `string[]` contract. In the manual branch, when
+   `param.type === "multiselect"`, parse the text into an array:
+   `text.split(",").map((s) => s.trim()).filter((s) => s !== "")`, require non-empty when
+   `param.required` (error `\`${param.label} is required.\``), and store the array; otherwise keep the
+   string behaviour for text/select/file. (The manual field's help already says "Enter value(s)
+   manually" — a comma-separated list is the intended entry.)
+
+B. **Reseed values for newly-declared params without wiping input.** `values` is seeded once via the
+   `useState` initializer, so if `params` changes while the launcher is open (a folder rescan), a
+   newly-declared param submits blank. Add `useEffect` (import it) keyed on `[params]` that merges a
+   seed for any `param.key` NOT already present in `values`, leaving existing entries untouched:
+   ```ts
+   useEffect(() => {
+     setValues((current) => {
+       let changed = false;
+       const next = { ...current };
+       for (const param of params) {
+         if (!(param.key in current)) { next[param.key] = seedValue(param); changed = true; }
+       }
+       return changed ? next : current;
+     });
+   }, [params]);
+   ```
+
+C. **Required select with no default must show an explicit placeholder.** A required `select` seeded
+   to `""` has no matching option, so the browser silently displays the first real option while the
+   form still treats it as unselected — the user sees a value but submit says "required". For a
+   required select, render a `<option value="" disabled>— select —</option>` as the first option
+   (keep the existing `<option value="">— none —</option>` for optional selects). This forces a real
+   choice and keeps the `*`/required validation honest.
+
+Keep everything else and the four polish fixes. Keep lint/typecheck/build clean.
+
 ## Scope
 - `frontend/src/types.ts`
 - `frontend/src/components/WorkflowCard.tsx`
