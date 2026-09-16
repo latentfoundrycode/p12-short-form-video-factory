@@ -56,6 +56,41 @@ Place both routes near the other `/runs` routes. Do NOT change any existing rout
 - Never delete a `running` run (per-run → 409; clear-failed only targets the terminal disposable set).
 - Keep `ruff check .`, `ruff format --check .`, `mypy sdk app` clean; ≤100 cols.
 
+## Review follow-up (SECOND delegation — apply these to `app/api/runs.py`)
+The first implementation is committed. Cross-family + security review found three fixes; apply all
+three (the frozen test now expects clear-failed as a DELETE):
+
+1. **clear-failed must be a `DELETE`, declared BEFORE the per-run delete route.** Change
+   `@router.post("/workflows/{workflow_id}/runs/clear-failed")` to
+   `@router.delete("/workflows/{workflow_id}/runs/clear-failed", response_model=ClearFailedOut)`
+   (DELETE is CORS-preflighted, so a cross-origin drive-by can't trigger it — the per-run delete is
+   already a DELETE). CRITICAL: the `clear-failed` route MUST be registered ABOVE the
+   `@router.delete("/workflows/{workflow_id}/runs/{run_id}")` route, otherwise `{run_id}` matches the
+   literal string "clear-failed" and shadows it. Put `clear_failed_runs` first.
+
+2. **Exact-path guard (not just containment) to defeat in-tree symlink/junction redirection.** A
+   junction `runs/<wf>/alias -> runs/<wf>/real-run` passes the current `is_relative_to` containment
+   check yet `rmtree`s the WRONG run (a junction to the workflow root deletes ALL runs). Require the
+   resolved path to EQUAL the expected literal path, in BOTH endpoints:
+   - per-run: replace the containment check with
+     `expected = (_runs_dir(request) / workflow_id).resolve() / run_id` and
+     `if run_dir.resolve() != expected: raise HTTPException(status_code=404)` (compute this BEFORE
+     the `request.json` check is fine, but it MUST be before `rmtree`).
+   - clear-failed sweep: for each `child`, require `child.resolve() == root_resolved / child.name`
+     else `continue` (skip a redirected entry).
+   (A legit run dir is not a link, so its `resolve()` equals the literal expected path; a junction
+   leaf resolves elsewhere and is rejected.)
+
+3. **Per-`rmtree` failure isolation.** A locked/undeletable file (common on Windows) makes
+   `shutil.rmtree` raise `OSError`. In the clear-failed sweep, wrap each `shutil.rmtree(child)` in
+   `try/except OSError: continue` so one bad run cannot abort the sweep or lose the already-deleted
+   ids (only add to `deleted` on success). In the per-run delete, wrap the single
+   `shutil.rmtree(resolved)` in `try/except OSError` and on failure
+   `raise HTTPException(status_code=500, detail="could not delete run")`.
+
+(Deliberately NOT changing: the run-id-reuse TOCTOU Review B raised — near-impossible given
+second-granularity timestamp run ids plus single-active-run admission; tracked as hardening.)
+
 ## Scope
 - `app/api/runs.py`
 
