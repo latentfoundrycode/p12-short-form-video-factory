@@ -1,6 +1,6 @@
 import mimetypes
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -40,6 +40,23 @@ class QualityFactorOut(BaseModel):
     question: str
 
 
+class ParamOut(BaseModel):
+    key: str
+    type: str
+    label: str
+    required: bool
+    default: Any
+    help: str | None
+    affects_cost: bool
+    min: float | None
+    max: float | None
+    step: float | None
+    options: list[Any] | None
+    options_from: str | None
+    placeholder: str | None
+    unit: str | None
+
+
 class WorkflowOut(BaseModel):
     id: str
     name: str | None
@@ -48,6 +65,7 @@ class WorkflowOut(BaseModel):
     valid: bool
     problems: list[ProblemOut]
     quality_factors: list[QualityFactorOut]
+    params: list[ParamOut]
 
 
 class WorkflowListOut(BaseModel):
@@ -78,6 +96,29 @@ def _serialize(entry: WorkflowEntry) -> WorkflowOut:
             if manifest is None
             else [
                 QualityFactorOut(key=f.key, question=f.question) for f in manifest.quality_factors
+            ]
+        ),
+        params=(
+            []
+            if manifest is None
+            else [
+                ParamOut(
+                    key=param.key,
+                    type=param.type,
+                    label=param.label,
+                    required=param.required,
+                    default=param.default,
+                    help=param.help,
+                    affects_cost=param.affects_cost,
+                    min=param.min,
+                    max=param.max,
+                    step=param.step,
+                    options=param.options,
+                    options_from=param.options_from,
+                    placeholder=param.placeholder,
+                    unit=param.unit,
+                )
+                for param in manifest.params
             ]
         ),
     )
