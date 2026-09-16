@@ -6,6 +6,8 @@ import subprocess
 import sys
 from typing import Any
 
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
 
 def kill_tree(proc: subprocess.Popen[Any]) -> None:
     """Kill a subprocess and its descendants. No-op if it has already exited."""
@@ -21,6 +23,7 @@ def kill_tree(proc: subprocess.Popen[Any]) -> None:
                 capture_output=True,
                 check=False,
                 timeout=15,
+                creationflags=_NO_WINDOW,
             )
         else:
             os.killpg(os.getpgid(pid), signal.SIGKILL)
