@@ -228,6 +228,18 @@ textarea {
   gap: 20px;
 }
 
+.page-head-actions,
+.clear-runs-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.page-head-actions {
+  flex-wrap: wrap;
+}
+
 .page-title {
   font-family: var(--font-display);
   font-size: 19px;
@@ -240,6 +252,10 @@ textarea {
   font-size: 12.5px;
   margin-top: 3px;
   max-width: 62ch;
+}
+
+.clear-runs-confirm .page-note {
+  margin-top: 0;
 }
 
 .eyebrow {
@@ -296,6 +312,18 @@ textarea {
 .btn-ghost:hover {
   background: var(--surface-2);
   border-color: var(--line);
+}
+
+.btn-danger {
+  color: var(--red);
+  background: var(--red-bg);
+  border-color: rgb(209 116 108 / 35%);
+}
+
+.btn-danger:hover {
+  color: var(--red);
+  background: rgb(209 116 108 / 18%);
+  border-color: var(--red);
 }
 
 .btn[disabled] {
@@ -1252,16 +1280,8 @@ textarea {
 .run-row {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 14px 16px;
   width: 100%;
-  text-align: left;
   border-bottom: 1px solid var(--line-soft);
-  transition: background 0.12s;
-}
-
-.run-row:hover {
-  background: var(--surface-2);
 }
 
 .run-row:last-child {
@@ -1271,6 +1291,25 @@ textarea {
 .run-row-main {
   flex: 1 1 auto;
   min-width: 0;
+  padding: 14px 16px;
+  text-align: left;
+  transition: background 0.12s;
+}
+
+.run-row-main:hover {
+  background: var(--surface-2);
+}
+
+.run-row-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  padding-right: 16px;
+}
+
+.run-list-error {
+  margin: 12px 16px 0;
 }
 
 .run-row-id {
