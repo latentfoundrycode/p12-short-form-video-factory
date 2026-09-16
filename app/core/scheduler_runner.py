@@ -48,6 +48,7 @@ def make_scheduler_start(deps: SchedulerDeps) -> StartFn:
             video_count=entry.video_count,
             concurrency=entry.concurrency,
             dry_run=dry_run,
+            gates_auto=entry.gates_auto,
             runs_dir=deps.runs_dir,
             ensure_env=deps.ensure_env,
             popen=deps.popen,

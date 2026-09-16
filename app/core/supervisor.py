@@ -92,6 +92,7 @@ class _ContextWiring:
     dry_run: bool
     step_concurrency: int
     secrets: dict[str, str]
+    gates_auto: bool = False
     budget: BudgetConfig | None = None
     # Library namespace root + declared facets, computed once per run and written into every
     # context.json so `ctx.library` is live. Not mode-scoped: dry/real is the overlay, not the path.
@@ -271,6 +272,7 @@ def _make_context(
         video_index=video_index,
         video_count=wiring.video_count,
         dry_run=wiring.dry_run,
+        gates_auto=wiring.gates_auto,
         step_concurrency=wiring.step_concurrency,
         settings=params,
         paths=ContextPaths(
@@ -388,6 +390,7 @@ def run_request(
     cache_dir: Path | None = None,
     library_dir: Path | None = None,
     dry_run: bool = False,
+    gates_auto: bool = False,
     step_concurrency: int = 1,
     secrets: Mapping[str, str] | None = None,
     budget: BudgetConfig | None = None,
@@ -438,6 +441,7 @@ def run_request(
             cache_root=cache_root,
             workflow_dir=workflow_dir,
             dry_run=dry_run,
+            gates_auto=gates_auto,
             step_concurrency=step_concurrency,
             secrets=injected,
             budget=budget,
