@@ -10,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
 
 def main() -> None:
     try:
@@ -26,7 +28,13 @@ def main() -> None:
         [sys.executable, "-m", "ruff", "format", file_path],
     ):
         try:
-            subprocess.run(args, capture_output=True, text=True, timeout=60)
+            subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                creationflags=_NO_WINDOW,
+            )
         except Exception:
             pass
 

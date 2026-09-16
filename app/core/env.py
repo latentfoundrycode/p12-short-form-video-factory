@@ -13,6 +13,7 @@ from app.paths import SDK_DIR, VENVS_DIR, is_safe_path_segment
 
 HASH_MARKER = ".requirements.sha256"
 ENV_SUBPROCESS_TIMEOUT = 600.0
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,7 @@ def default_find_python(version: str) -> Path | None:
                 timeout=15,
                 check=False,
                 env=subprocess_env(),
+                creationflags=_NO_WINDOW,
             )
         except OSError:
             completed = None
@@ -70,7 +72,13 @@ def default_find_python(version: str) -> Path | None:
 
 def _run_timed(command: list[str], *, timeout: float = ENV_SUBPROCESS_TIMEOUT) -> None:
     try:
-        subprocess.run(command, check=True, timeout=timeout, env=subprocess_env())
+        subprocess.run(
+            command,
+            check=True,
+            timeout=timeout,
+            env=subprocess_env(),
+            creationflags=_NO_WINDOW,
+        )
     except subprocess.TimeoutExpired as exc:
         raise TimeoutError(f"environment setup timed out after {timeout}s") from exc
 
