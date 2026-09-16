@@ -107,6 +107,43 @@ Missing `gates/` dir → 0. Ignore unreadable/malformed files.
 - No new third-party dependency.
 - Keep `ruff check .`, `ruff format --check .`, `mypy sdk app` clean; ≤100 cols.
 
+## Review B follow-up (SECOND delegation — four fixes to `sdk/sfvf/gate.py`)
+Cross-family review found four real edges. Apply all four; new frozen tests pin #2 and #4.
+
+1. **Validate `on_bypass` up-front, always (not only under `gates_auto`).** In `run_gate`, right after
+   shape validation and BEFORE the resume/bypass/interactive branches, for `shape in ("choice",
+   "selection")` require `on_bypass` and check its legality — choice: `on_bypass` must be one of
+   `options`; selection: `on_bypass` must be `"approve-all"` or `"reject"`. Raise `ValueError` on
+   missing/illegal. (Approval: `on_bypass` optional, must be None/`"approve"`/`"reject"` if given.)
+   This catches an authoring error that would otherwise only surface when the gate is scheduled, and
+   makes an interactive richer-shape gate with no `on_bypass` fail fast instead of blocking forever.
+   Then simplify `_bypass_decision` to trust the already-validated `on_bypass`.
+
+2. **`gate_attempts`: match the family EXACTLY.** `glob(f"{family}-*.json")` wrongly matches a longer
+   family (`gate_attempts("approve")` counts `approve-sheets-0.json`). Instead iterate `gates_dir.glob
+   ("*.json")`, and for each file parse the stem as `"<family>-<occurrence>"` by `rsplit("-", 1)`;
+   require the right part to be all digits and the LEFT part to equal `family` exactly; skip
+   non-matching. (Also avoids glob-metacharacter surprises in a family name.)
+
+3. **Tolerate torn reads + write bypass atomically.** A response file can momentarily exist empty or
+   half-written while the backend writes it. (a) In the interactive poll, wrap the
+   `json.loads(read_text(...))` for the appeared file in `try/except (OSError, ValueError,
+   json.JSONDecodeError)`: on failure, treat it as "not ready yet" — keep polling (do not crash). (b)
+   The bypass write must be atomic: write to a temp file in the same `gates/` dir then
+   `os.replace(tmp, response_path)`, so no reader ever sees a partial bypass file. (The resume
+   short-circuit read at the top may stay a plain read — if it is torn it is a genuinely corrupt file,
+   not a live-write race; but wrapping it in the same tolerant try and falling through to
+   poll/bypass is acceptable and preferred.)
+
+4. **Make the per-family occurrence counter increment atomic.** Two concurrent same-family `gate()`
+   calls can both read the same `occurrence` (a lost update → same token → same response file). Guard
+   the read-increment of `ctx._gate_counts[family]` with a module-level `threading.Lock`. (This
+   prevents token collision; note in a comment that gate ORDER across a resume still assumes gates are
+   called sequentially from the workflow's main flow, not concurrently from `ctx.map` workers — that
+   ordering guarantee is a documented limitation, not fixed here.)
+
+Keep everything else. Touch ONLY `sdk/sfvf/gate.py`. Keep lint/format/mypy clean.
+
 ## Scope
 - `sdk/sfvf/gate.py`
 - `sdk/sfvf/context.py`
