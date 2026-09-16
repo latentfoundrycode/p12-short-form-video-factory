@@ -6,6 +6,25 @@ export type Problem = {
 
 export type QualityFactor = { key: string; question: string };
 
+export type ParamType = "text" | "textarea" | "number" | "bool" | "select" | "multiselect" | "file";
+
+export type Param = {
+  key: string;
+  type: ParamType;
+  label: string;
+  required: boolean;
+  default: unknown;
+  help: string | null;
+  affects_cost: boolean;
+  min: number | null;
+  max: number | null;
+  step: number | null;
+  options: unknown[] | null;
+  options_from: string | null;
+  placeholder: string | null;
+  unit: string | null;
+};
+
 export type Workflow = {
   id: string;
   name: string | null;
@@ -14,6 +33,7 @@ export type Workflow = {
   valid: boolean;
   problems: Problem[];
   quality_factors: QualityFactor[];
+  params: Param[];
 };
 
 export type VideoQualityInput = {

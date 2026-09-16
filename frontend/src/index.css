@@ -1,5 +1,7 @@
 /* Tokens — ported from docs/SFVF_UI_Mockup.html */
 :root {
+  color-scheme: dark;
+
   --bg: #1a1b1d;
   --surface: #212326;
   --surface-2: #292b2f;
@@ -566,6 +568,17 @@ textarea {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-faint);
+}
+
+.field-help {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.field-check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .field-input {

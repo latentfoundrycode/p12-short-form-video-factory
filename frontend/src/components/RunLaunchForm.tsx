@@ -1,44 +1,350 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { startRun } from "../api";
-import { isStartRunOk } from "../types";
+import { isStartRunOk, type Param } from "../types";
+
+type FieldValue = string | boolean | string[];
 
 type RunLaunchFormProps = {
   workflowId: string;
   workflowName: string;
+  params: Param[];
   onStarted: (runId: string) => void;
   onCancel: () => void;
 };
 
-function parseParamsObject(raw: string): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw) as unknown;
-  } catch {
-    return { ok: false, error: "Params must be valid JSON." };
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function usesManualInput(param: Param): boolean {
+  return (
+    param.type === "file" ||
+    ((param.type === "select" || param.type === "multiselect") && param.options === null)
+  );
+}
+
+function seedValue(param: Param): FieldValue {
+  if (usesManualInput(param)) {
+    return String(param.default ?? "");
   }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return { ok: false, error: "Params must be a JSON object (e.g. {})." };
+  switch (param.type) {
+    case "number":
+      return typeof param.default === "number" && Number.isFinite(param.default)
+        ? String(param.default)
+        : "";
+    case "bool":
+      return Boolean(param.default);
+    case "multiselect":
+      return isStringArray(param.default) ? [...param.default] : [];
+    case "text":
+    case "textarea":
+    case "select":
+    case "file":
+      return String(param.default ?? "");
   }
-  return { ok: true, value: parsed as Record<string, unknown> };
+}
+
+function initialValues(params: Param[]): Record<string, FieldValue> {
+  const values: Record<string, FieldValue> = {};
+  for (const param of params) {
+    values[param.key] = seedValue(param);
+  }
+  return values;
+}
+
+function controlLabel(param: Param): string {
+  const unit = param.unit ? ` (${param.unit})` : "";
+  const required = param.required ? " *" : "";
+  return `${param.label}${unit}${required}`;
+}
+
+function collectParams(
+  declared: Param[],
+  values: Record<string, FieldValue>,
+): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
+  const result: Record<string, unknown> = {};
+  for (const param of declared) {
+    const raw = values[param.key];
+    if (usesManualInput(param)) {
+      const text = typeof raw === "string" ? raw : "";
+      if (param.type === "multiselect") {
+        const selected = text
+          .split(",")
+          .map((item) => item.trim())
+          .filter((item) => item !== "");
+        if (param.required && selected.length === 0) {
+          return { ok: false, error: `${param.label} is required.` };
+        }
+        result[param.key] = selected;
+        continue;
+      }
+      if (param.required && text.trim() === "") {
+        return { ok: false, error: `${param.label} is required.` };
+      }
+      result[param.key] = text;
+      continue;
+    }
+    switch (param.type) {
+      case "text":
+      case "textarea":
+      case "select": {
+        const text = typeof raw === "string" ? raw : "";
+        if (param.required && text.trim() === "") {
+          return { ok: false, error: `${param.label} is required.` };
+        }
+        result[param.key] = text;
+        break;
+      }
+      case "number": {
+        const text = typeof raw === "string" ? raw : "";
+        if (text.trim() === "") {
+          if (!param.required) {
+            break;
+          }
+          return { ok: false, error: `${param.label} is required.` };
+        }
+        const parsed = Number(text);
+        if (Number.isNaN(parsed)) {
+          return { ok: false, error: `${param.label} is not a number.` };
+        }
+        result[param.key] = parsed;
+        break;
+      }
+      case "bool":
+        result[param.key] = Boolean(raw);
+        break;
+      case "multiselect": {
+        const selected = isStringArray(raw) ? raw : [];
+        if (param.required && selected.length === 0) {
+          return { ok: false, error: `${param.label} is required.` };
+        }
+        result[param.key] = selected;
+        break;
+      }
+      case "file":
+        result[param.key] = typeof raw === "string" ? raw : "";
+        break;
+    }
+  }
+  return { ok: true, value: result };
+}
+
+function FieldHelp({ param, extra }: { param: Param; extra?: string }) {
+  return (
+    <>
+      {param.help ? <span className="field-help">{param.help}</span> : null}
+      {extra ? <span className="field-help">{extra}</span> : null}
+    </>
+  );
+}
+
+function ParamField({
+  param,
+  value,
+  disabled,
+  onChange,
+}: {
+  param: Param;
+  value: FieldValue;
+  disabled: boolean;
+  onChange: (value: FieldValue) => void;
+}) {
+  const label = controlLabel(param);
+  const text = typeof value === "string" ? value : "";
+  const extraHelp = usesManualInput(param) ? "Enter value(s) manually." : undefined;
+
+  if (usesManualInput(param)) {
+    return (
+      <label className="field">
+        <span className="field-label">{label}</span>
+        <input
+          className="field-input"
+          type="text"
+          placeholder={param.placeholder ?? ""}
+          value={text}
+          disabled={disabled}
+          aria-required={param.required}
+          onChange={(event) => {
+            onChange(event.target.value);
+          }}
+        />
+        <FieldHelp param={param} extra={extraHelp} />
+      </label>
+    );
+  }
+
+  switch (param.type) {
+    case "text":
+      return (
+        <label className="field">
+          <span className="field-label">{label}</span>
+          <input
+            className="field-input"
+            type="text"
+            placeholder={param.placeholder ?? ""}
+            value={text}
+            disabled={disabled}
+            aria-required={param.required}
+            onChange={(event) => {
+              onChange(event.target.value);
+            }}
+          />
+          <FieldHelp param={param} />
+        </label>
+      );
+    case "textarea":
+      return (
+        <label className="field">
+          <span className="field-label">{label}</span>
+          <textarea
+            className="field-input field-textarea"
+            rows={4}
+            value={text}
+            disabled={disabled}
+            aria-required={param.required}
+            onChange={(event) => {
+              onChange(event.target.value);
+            }}
+          />
+          <FieldHelp param={param} />
+        </label>
+      );
+    case "number":
+      return (
+        <label className="field">
+          <span className="field-label">{label}</span>
+          <input
+            className="field-input"
+            type="number"
+            min={param.min ?? undefined}
+            max={param.max ?? undefined}
+            step={param.step ?? undefined}
+            value={text}
+            disabled={disabled}
+            aria-required={param.required}
+            onChange={(event) => {
+              onChange(event.target.value);
+            }}
+          />
+          <FieldHelp param={param} />
+        </label>
+      );
+    case "bool":
+      return (
+        <div className="field">
+          <label className="field-check">
+            <input
+              type="checkbox"
+              checked={typeof value === "boolean" ? value : false}
+              disabled={disabled}
+              onChange={(event) => {
+                onChange(event.target.checked);
+              }}
+            />
+            <span>{label}</span>
+          </label>
+          <FieldHelp param={param} />
+        </div>
+      );
+    case "select":
+      return (
+        <label className="field">
+          <span className="field-label">{label}</span>
+          <select
+            className="field-input"
+            value={text}
+            disabled={disabled}
+            aria-required={param.required}
+            onChange={(event) => {
+              onChange(event.target.value);
+            }}
+          >
+            {param.required ? (
+              <option value="" disabled>
+                — select —
+              </option>
+            ) : (
+              <option value="">— none —</option>
+            )}
+            {(param.options ?? []).map((option, index) => {
+              const optionText = String(option);
+              return (
+                <option key={`${optionText}-${index}`} value={optionText}>
+                  {optionText}
+                </option>
+              );
+            })}
+          </select>
+          <FieldHelp param={param} />
+        </label>
+      );
+    case "multiselect": {
+      const selected = isStringArray(value) ? value : [];
+      return (
+        <div className="field">
+          <span className="field-label">{label}</span>
+          {(param.options ?? []).map((option, index) => {
+            const optionText = String(option);
+            return (
+              <label className="field-check" key={`${optionText}-${index}`}>
+                <input
+                  type="checkbox"
+                  checked={selected.includes(optionText)}
+                  disabled={disabled}
+                  onChange={() => {
+                    const next = selected.includes(optionText)
+                      ? selected.filter((item) => item !== optionText)
+                      : [...selected, optionText];
+                    onChange(next);
+                  }}
+                />
+                <span>{optionText}</span>
+              </label>
+            );
+          })}
+          <FieldHelp param={param} />
+        </div>
+      );
+    }
+    case "file":
+      return null;
+  }
 }
 
 export function RunLaunchForm({
   workflowId,
   workflowName,
+  params,
   onStarted,
   onCancel,
 }: RunLaunchFormProps) {
   const [videoCount, setVideoCount] = useState(1);
   const [concurrency, setConcurrency] = useState(1);
-  const [paramsText, setParamsText] = useState("{}");
+  const [values, setValues] = useState<Record<string, FieldValue>>(() => initialValues(params));
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    // This effect intentionally merges newly declared fields into user-owned form state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setValues((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const param of params) {
+        if (!(param.key in current)) {
+          next[param.key] = seedValue(param);
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [params]);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     setFormError(null);
 
-    const parsed = parseParamsObject(paramsText);
+    const parsed = collectParams(params, values);
     if (!parsed.ok) {
       setFormError(parsed.error);
       return;
@@ -75,18 +381,19 @@ export function RunLaunchForm({
     <div className="panel launch-panel">
       <div className="panel-head">
         <div>
-          <span className="eyebrow">Minimal launcher</span>
+          <span className="eyebrow">Launch</span>
           <div className="launch-title">Start {workflowName}</div>
         </div>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel} disabled={submitting}>
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          onClick={onCancel}
+          disabled={submitting}
+        >
           Cancel
         </button>
       </div>
       <form className="panel-body launch-form" onSubmit={(e) => void onSubmit(e)}>
-        <p className="page-note">
-          Temporary controls for video count, concurrency, and raw params JSON. The full
-          provider-driven Run pop-up comes later.
-        </p>
         <label className="field">
           <span className="field-label">Video count</span>
           <input
@@ -115,19 +422,17 @@ export function RunLaunchForm({
             }}
           />
         </label>
-        <label className="field">
-          <span className="field-label">Params (JSON object)</span>
-          <textarea
-            className="field-input field-textarea"
-            rows={5}
-            spellCheck={false}
-            value={paramsText}
+        {params.map((param) => (
+          <ParamField
+            key={param.key}
+            param={param}
+            value={values[param.key] ?? seedValue(param)}
             disabled={submitting}
-            onChange={(e) => {
-              setParamsText(e.target.value);
+            onChange={(next) => {
+              setValues((current) => ({ ...current, [param.key]: next }));
             }}
           />
-        </label>
+        ))}
         {formError ? <div className="form-error">{formError}</div> : null}
         <div className="card-foot launch-actions">
           <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
