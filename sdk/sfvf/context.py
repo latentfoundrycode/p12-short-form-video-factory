@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ._budget import BudgetError, BudgetGuard, Ceilings
 from .cache import CHEAP, PAID, StepCache, step_key
 from .emit import decision, emit, forecast, heartbeat, log, stage
+from .gate import gate_attempts, run_gate
 from .library import Asset, FacetSpec, LibraryStore
 
 _T = TypeVar("_T")
@@ -110,6 +111,10 @@ class ContextFile(_ContextModel):
     video_index: int = Field(default=0, description="1-based index of this video; 0 for prepare.")
     video_count: int = Field(default=0, description="How many videos this request produces.")
     dry_run: bool = Field(default=False, description="True when running with fake assets.")
+    gates_auto: bool = Field(
+        default=False,
+        description="True when scheduled-run gates should resolve without waiting for a user.",
+    )
     step_concurrency: int = Field(
         default=1,
         description="User's parallel-steps setting for ctx.map.",
@@ -473,6 +478,8 @@ class Context:
         self.video_index = file.video_index
         self.video_count = file.video_count
         self.dry_run = file.dry_run
+        self.gates_auto = file.gates_auto
+        self._gate_counts: dict[str, int] = {}
         self.step_concurrency = file.step_concurrency
         self.video_dir = file.paths.video
         self.shared_dir = file.paths.shared
@@ -557,6 +564,31 @@ class Context:
 
     def forecast(self, meter: str, unit: str, amount: float, note: str | None = None) -> None:
         forecast(meter, unit, amount, note=note)
+
+    def gate(
+        self,
+        family: str,
+        *,
+        prompt: str,
+        payload: Any = None,
+        options: list[str] | None = None,
+        items: list[dict[str, Any]] | None = None,
+        select: str | None = None,
+        on_bypass: str | None = None,
+    ) -> dict[str, Any]:
+        return run_gate(
+            self,
+            family,
+            prompt=prompt,
+            payload=payload,
+            options=options,
+            items=items,
+            select=select,
+            on_bypass=on_bypass,
+        )
+
+    def gate_attempts(self, family: str, *, item: str | None = None) -> int:
+        return gate_attempts(self, family, item=item)
 
     def step(
         self,
