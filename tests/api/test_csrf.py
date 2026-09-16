@@ -7,11 +7,12 @@ Browsers stamp every fetch/form submission with a `Sec-Fetch-Site` header the pa
 CANNOT forge (it is a forbidden header), so it is a reliable origin signal.
 
 The guard runs as middleware on EVERY request: for a state-changing method (anything other than the
-safe GET/HEAD/OPTIONS/TRACE), a `Sec-Fetch-Site` of `cross-site` or `same-site` is refused with 403.
-`same-origin` (the app's own frontend, served from the same origin), `none` (a direct user
-navigation), and an ABSENT header (a non-browser client such as curl or the test suite — not the
-CSRF vector) all pass. Safe methods are never guarded (reads are not state-changing, and OPTIONS is
-the CORS preflight). One control point protects every current and future mutating route.
+safe GET/HEAD/OPTIONS/TRACE), a `Sec-Fetch-Site` of `cross-site` or `same-site` is refused with 403;
+`same-origin` and `none` pass. When `Sec-Fetch-Site` is ABSENT (legacy browsers that omit Fetch
+Metadata, or non-browser clients), it falls back to `Origin` then `Referer`: a present-but-
+mismatched host is refused, and only a request carrying NONE of the three signals (curl, the test
+suite) passes. Safe methods are never guarded (reads are not state-changing, and OPTIONS is the CORS
+preflight). One control point protects every current and future mutating route.
 """
 
 from __future__ import annotations
@@ -48,11 +49,37 @@ def test_same_origin_mutation_is_allowed(tmp_path: Path) -> None:
     assert response.status_code == 200
 
 
-def test_missing_fetch_site_is_allowed(tmp_path: Path) -> None:
-    # Non-browser clients (curl, the test suite) do not send the header and are not the CSRF vector.
+def test_missing_all_origin_signals_is_allowed(tmp_path: Path) -> None:
+    # Non-browser clients (curl, the test suite) send no Sec-Fetch-Site AND no Origin/Referer, so
+    # nothing identifies them as cross-site — they are not the CSRF vector and pass.
     client = _client(tmp_path)
     response = client.post("/api/workflows/rescan")
     assert response.status_code == 200
+
+
+def test_absent_fetch_site_cross_origin_via_origin_is_refused(tmp_path: Path) -> None:
+    # Legacy browsers (Safari <16.4, old webviews) omit Sec-Fetch-Site but STILL send Origin on a
+    # cross-site POST/form. Fall back to Origin: a mismatched host is refused.
+    client = _client(tmp_path)
+    response = client.post("/api/workflows/rescan", headers={"Origin": "https://evil.example"})
+    assert response.status_code == 403
+
+
+def test_absent_fetch_site_same_origin_via_origin_is_allowed(tmp_path: Path) -> None:
+    # The frontend's own origin (same host as the request) passes the fallback. TestClient's Host
+    # is "testserver", so a matching Origin is same-origin.
+    client = _client(tmp_path)
+    response = client.post("/api/workflows/rescan", headers={"Origin": "http://testserver"})
+    assert response.status_code == 200
+
+
+def test_absent_fetch_site_cross_origin_via_referer_is_refused(tmp_path: Path) -> None:
+    # When only Referer is present (no Sec-Fetch-Site, no Origin), a mismatched host is refused.
+    client = _client(tmp_path)
+    response = client.post(
+        "/api/workflows/rescan", headers={"Referer": "https://evil.example/page"}
+    )
+    assert response.status_code == 403
 
 
 def test_none_fetch_site_is_allowed(tmp_path: Path) -> None:
