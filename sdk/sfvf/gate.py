@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from typing import TYPE_CHECKING, Any
+
+from .cache import _write_json_atomic
 
 if TYPE_CHECKING:
     from .context import Context
 
 _GATE_POLL_SECONDS = 0.05
+_GATE_COUNTS_LOCK = threading.Lock()
 # The stop sentinel is part of the workflow/chassis wire protocol.
 _STOP_SENTINEL = ".stop"
 
@@ -47,22 +51,12 @@ def _bypass_decision(
     on_bypass: str | None,
 ) -> dict[str, Any]:
     if shape == "approval":
-        if on_bypass in (None, "approve"):
-            return {"choice": "approve"}
-        if on_bypass == "reject":
-            return {"choice": "reject"}
-        raise ValueError("approval gate on_bypass must be 'approve' or 'reject'")
+        return {"choice": "reject" if on_bypass == "reject" else "approve"}
 
     if shape == "choice":
-        if on_bypass is None:
-            raise ValueError("choice gate requires on_bypass")
-        if items is None or on_bypass not in items:
-            raise ValueError("choice gate on_bypass must be one of its options")
         return {"choice": on_bypass}
 
     if shape == "selection":
-        if on_bypass is None:
-            raise ValueError("selection gate requires on_bypass")
         if on_bypass == "approve-all":
             return {
                 "choice": "approve",
@@ -70,9 +64,7 @@ def _bypass_decision(
                 "redo": [],
                 "note": "",
             }
-        if on_bypass == "reject":
-            return {"choice": "reject"}
-        raise ValueError("selection gate on_bypass must be 'approve-all' or 'reject'")
+        return {"choice": "reject"}
 
     raise ValueError(f"unknown gate shape: {shape}")
 
@@ -102,8 +94,24 @@ def run_gate(
                 raise ValueError("each gate item must be an object with a string 'id'")
 
     shape = "choice" if options is not None else "selection" if items is not None else "approval"
-    occurrence = ctx._gate_counts.get(family, 0)
-    ctx._gate_counts[family] = occurrence + 1
+    if shape == "approval" and on_bypass not in (None, "approve", "reject"):
+        raise ValueError("approval gate on_bypass must be 'approve' or 'reject'")
+    if shape == "choice":
+        if on_bypass is None:
+            raise ValueError("choice gate requires on_bypass")
+        if options is None or on_bypass not in options:
+            raise ValueError("choice gate on_bypass must be one of its options")
+    if shape == "selection":
+        if on_bypass is None:
+            raise ValueError("selection gate requires on_bypass")
+        if on_bypass not in ("approve-all", "reject"):
+            raise ValueError("selection gate on_bypass must be 'approve-all' or 'reject'")
+
+    # This prevents token collisions. Stable ordering across a resume still assumes gates are called
+    # sequentially from the workflow's main flow, not concurrently from ctx.map workers.
+    with _GATE_COUNTS_LOCK:
+        occurrence = ctx._gate_counts.get(family, 0)
+        ctx._gate_counts[family] = occurrence + 1
     token = f"{family}-{occurrence}"
     response_path = ctx.video_dir / "gates" / f"{token}.json"
 
@@ -114,8 +122,7 @@ def run_gate(
     if ctx.gates_auto:
         bypass_items: list[Any] | None = options if shape == "choice" else items
         decision = _bypass_decision(shape, bypass_items, on_bypass)
-        response_path.parent.mkdir(parents=True, exist_ok=True)
-        response_path.write_text(json.dumps(decision), encoding="utf-8")
+        _write_json_atomic(response_path, decision)
         return _finish(decision, shape)
 
     event: dict[str, Any] = {
@@ -135,13 +142,16 @@ def run_gate(
         event["on_bypass"] = on_bypass
     ctx.emit(event)
 
-    while not response_path.is_file():
+    while True:
+        try:
+            decision = json.loads(response_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+        else:
+            return _finish(decision, shape)
         if (ctx.video_dir / _STOP_SENTINEL).exists():
             raise GateRejected("run stopped at gate")
         time.sleep(_GATE_POLL_SECONDS)
-
-    decision = json.loads(response_path.read_text(encoding="utf-8"))
-    return _finish(decision, shape)
 
 
 def gate_attempts(ctx: Context, family: str, *, item: str | None = None) -> int:
@@ -150,7 +160,13 @@ def gate_attempts(ctx: Context, family: str, *, item: str | None = None) -> int:
         return 0
 
     attempts = 0
-    for response_path in gates_dir.glob(f"{family}-*.json"):
+    for response_path in gates_dir.glob("*.json"):
+        try:
+            response_family, occurrence_text = response_path.stem.rsplit("-", 1)
+        except ValueError:
+            continue
+        if response_family != family or not occurrence_text.isdigit():
+            continue
         try:
             decision = json.loads(response_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
