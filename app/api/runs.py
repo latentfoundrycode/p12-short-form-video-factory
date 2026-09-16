@@ -342,24 +342,7 @@ def list_runs(workflow_id: str, request: Request) -> RunListOut:
     return RunListOut(runs=summaries)
 
 
-@router.delete("/workflows/{workflow_id}/runs/{run_id}", response_model=DeleteRunOut)
-def delete_run(workflow_id: str, run_id: str, request: Request) -> DeleteRunOut:
-    _require_workflow(request, workflow_id)
-    if not is_safe_path_segment(run_id):
-        raise HTTPException(status_code=404)
-    run_dir = _runs_dir(request) / workflow_id / run_id
-    if not (run_dir / "request.json").is_file():
-        raise HTTPException(status_code=404)
-    if read_request(run_dir).status == "running":
-        raise HTTPException(status_code=409, detail="run is still active")
-    resolved = run_dir.resolve()
-    if not resolved.is_relative_to((_runs_dir(request) / workflow_id).resolve()):
-        raise HTTPException(status_code=404)
-    shutil.rmtree(resolved)
-    return DeleteRunOut(deleted=run_id)
-
-
-@router.post("/workflows/{workflow_id}/runs/clear-failed", response_model=ClearFailedOut)
+@router.delete("/workflows/{workflow_id}/runs/clear-failed", response_model=ClearFailedOut)
 def clear_failed_runs(workflow_id: str, request: Request) -> ClearFailedOut:
     _require_workflow(request, workflow_id)
     root = _runs_dir(request) / workflow_id
@@ -376,11 +359,35 @@ def clear_failed_runs(workflow_id: str, request: Request) -> ClearFailedOut:
             continue
         if record.status not in _CLEARABLE:
             continue
-        if not child.resolve().is_relative_to(root_resolved):
+        if child.resolve() != root_resolved / child.name:
             continue
-        shutil.rmtree(child)
+        try:
+            shutil.rmtree(child)
+        except OSError:
+            continue
         deleted.append(child.name)
     return ClearFailedOut(deleted=sorted(deleted))
+
+
+@router.delete("/workflows/{workflow_id}/runs/{run_id}", response_model=DeleteRunOut)
+def delete_run(workflow_id: str, run_id: str, request: Request) -> DeleteRunOut:
+    _require_workflow(request, workflow_id)
+    if not is_safe_path_segment(run_id):
+        raise HTTPException(status_code=404)
+    run_dir = _runs_dir(request) / workflow_id / run_id
+    expected = (_runs_dir(request) / workflow_id).resolve() / run_id
+    if run_dir.resolve() != expected:
+        raise HTTPException(status_code=404)
+    if not (run_dir / "request.json").is_file():
+        raise HTTPException(status_code=404)
+    if read_request(run_dir).status == "running":
+        raise HTTPException(status_code=409, detail="run is still active")
+    resolved = run_dir.resolve()
+    try:
+        shutil.rmtree(resolved)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="could not delete run") from exc
+    return DeleteRunOut(deleted=run_id)
 
 
 @router.get("/workflows/{workflow_id}/runs/{run_id}", response_model=RunDetailOut)
