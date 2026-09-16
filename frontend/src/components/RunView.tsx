@@ -3,6 +3,7 @@ import { fetchRun, runEventsUrl, startRun, stopRun } from "../api";
 import { RunRecordView, RunStatusPanel } from "./RunRecordView";
 import type { RunDetail, SseEnvelope, StageEvent } from "../types";
 import { isStartRunOk, isTerminalStatus } from "../types";
+import { GatePanel } from "./GatePanel";
 
 type RunViewProps = {
   workflowId: string;
@@ -151,6 +152,7 @@ export function RunView({ workflowId, runId, onClose, onReplay }: RunViewProps) 
 
   const active = run !== null && !isTerminalStatus(run.status);
   const terminal = run !== null && isTerminalStatus(run.status);
+  const gateEventCount = events.filter((event) => event.event.t === "gate").length;
 
   async function onStop(mode: "graceful" | "hard") {
     setStopError(null);
@@ -232,6 +234,14 @@ export function RunView({ workflowId, runId, onClose, onReplay }: RunViewProps) 
           </div>
         ) : (
           <div className="run-layout">
+            <GatePanel
+              workflowId={workflowId}
+              runId={runId}
+              gateEventCount={gateEventCount}
+              onResolved={() => {
+                void fetchRun(workflowId, runId).then(setRun);
+              }}
+            />
             <RunStatusPanel
               run={run}
               stage={stage}

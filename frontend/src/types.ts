@@ -187,6 +187,19 @@ export type StopRunResult = {
   mode: StopMode;
 };
 
+export type PendingGate = {
+  video: string;
+  video_index: number;
+  token: string;
+  family: string;
+  shape: "approval" | "choice" | "selection";
+  prompt: string;
+  payload?: unknown;
+  options?: string[] | null;
+  items?: { id: string; label?: string; artifact?: string }[] | null;
+  on_bypass?: string | null;
+};
+
 /** Typed shapes for known `event.t` values; unknown types stay generic. */
 export type StageEvent = { t: "stage"; index: number; total: number; label: string };
 export type LogEvent = { t: "log"; level: string; msg: string };

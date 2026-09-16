@@ -5,6 +5,7 @@ import type {
   LearningList,
   LearningRow,
   LaunchBody,
+  PendingGate,
   QualitySubmission,
   RunDetail,
   RunFiles,
@@ -200,6 +201,34 @@ export function runVideoDirectory(index: number): string {
 export function runFileUrl(workflowId: string, runId: string, path: string): string {
   const encPath = path.split("/").map(encodeURIComponent).join("/");
   return `/api/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/files/${encPath}`;
+}
+
+export async function fetchPendingGates(workflowId: string, runId: string): Promise<PendingGate[]> {
+  const response = await fetch(
+    `/api/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/gates`,
+  );
+  if (!response.ok) throw new Error(`Could not load gates (${response.status})`);
+  const data = (await response.json()) as { gates: PendingGate[] };
+  if (!Array.isArray(data.gates)) throw new Error("Unexpected gates response");
+  return data.gates;
+}
+
+export async function submitGate(
+  workflowId: string,
+  runId: string,
+  video: string,
+  token: string,
+  decision: unknown,
+): Promise<void> {
+  const response = await fetch(
+    `/api/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/gates`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ video, token, decision }),
+    },
+  );
+  if (!response.ok) throw new Error(`Could not submit decision (${response.status})`);
 }
 
 export async function startRun(id: string, body: LaunchBody): Promise<StartRunResult> {
