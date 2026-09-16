@@ -88,6 +88,23 @@ unless a `--red`-based rule is trivial); keep it minimal and consistent with exi
 - No `any`; keep the React 19 idiom. Keep `npm run lint` / `npm run typecheck` clean.
 - The whole-row open navigation must keep working; Delete/Confirm/Cancel must not open the run.
 
+## Design follow-up (SECOND delegation — four small polish items)
+Your first implementation passed design review with no blockers and works end-to-end. Apply these:
+1. **Destructive-confirm consistency:** give the per-row **Confirm** button `className="btn btn-sm
+   btn-danger"` (currently neutral `btn btn-sm`) so both destructive confirmations (per-run Confirm
+   and bulk Clear) read with the same red-tinted weight.
+2. **Focus the Confirm control when a confirm opens** (a11y — otherwise focus falls to `<body>`).
+   Add `autoFocus` to the per-row **Confirm** button and to the bulk **Clear** button (both only
+   render while their confirm is open, so `autoFocus` fires on open). No refs needed.
+3. **Prompt vertical alignment:** in `index.css`, add `.clear-runs-confirm .page-note { margin-top:
+   0; }` so the confirm sentence sits centered with the Clear/Cancel buttons (the base `.page-note`
+   has `margin-top: 3px`).
+4. **Head wrap on narrow width:** add `flex-wrap: wrap; gap: 8px;` to `.page-head` (or, if that risks
+   disturbing other pages, add `flex-wrap: wrap;` to `.page-head-actions` only) so the open bulk-clear
+   confirm row doesn't crowd the title on a narrow viewport.
+
+Touch only `RunsListView.tsx` and `index.css`. Keep lint/typecheck/build clean.
+
 ## Scope
 - `frontend/src/api.ts`
 - `frontend/src/components/RunsListView.tsx`
