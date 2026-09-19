@@ -8,7 +8,7 @@ from typing import Any
 
 from .._ratelimit import LIMITER
 from ._auth import HeaderAuth
-from ._http import parse_json, request
+from ._http import download_bytes, parse_json, request
 from .base import AdapterError, Output
 
 _MEDIA_TYPE = "image/png"
@@ -65,15 +65,10 @@ def _submit_poll_download(client: Any, auth: Any, path: str, body: dict[str, Any
         raise AdapterError(
             "bfl", where="poll", detail="no result.sample in Ready response"
         ) from exc
-    download = client.get(sample_url)  # signed URL, no auth header
-    if download.status_code // 100 != 2:
-        raise AdapterError(
-            "bfl",
-            status=download.status_code,
-            where="download",
-            detail="image download failed",
-        )
-    return Output(data=download.content, media_type=_MEDIA_TYPE)
+    return Output(
+        data=download_bytes(client, sample_url, provider="bfl", media="image"),
+        media_type=_MEDIA_TYPE,
+    )
 
 
 def generate(

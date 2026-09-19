@@ -98,3 +98,21 @@ def parse_json(response: Any, *, provider: str, where: str) -> dict[str, Any]:
             detail="non-object JSON body",
         )
     return data
+
+
+def download_bytes(client: Any, url: str, *, provider: str, media: str) -> bytes:
+    """GET a signed/public asset URL (no auth header) and return its bytes,
+    or raise AdapterError.
+    """
+    response = client.get(url)
+    if not 200 <= response.status_code < 300:
+        from .base import AdapterError
+
+        raise AdapterError(
+            provider,
+            status=response.status_code,
+            where="download",
+            detail=f"{media} download failed",
+        )
+    content: bytes = response.content
+    return content

@@ -7,7 +7,8 @@ from typing import Any
 
 from .._ratelimit import LIMITER
 from ._auth import BearerAuth
-from ._http import parse_json, request
+from ._content import build_media_content
+from ._http import download_bytes, parse_json, request
 from .base import AdapterError, Cost, Output
 
 _POLL_INTERVAL_S = 5.0  # monkeypatched to 0 in tests
@@ -41,25 +42,7 @@ def generate_video(
     ctx: Any,
 ) -> tuple[Output, Cost]:
     auth = BearerAuth(secrets["BYTEPLUS_ARK_API_KEY"])
-    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-    if first_frame_url:
-        content.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": first_frame_url},
-                "role": "first_frame",
-            }
-        )
-    if last_frame_url:
-        content.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": last_frame_url},
-                "role": "last_frame",
-            }
-        )
-    for url in ref_urls:
-        content.append({"type": "image_url", "image_url": {"url": url}})
+    content = build_media_content(prompt, first_frame_url, last_frame_url, ref_urls)
     body: dict[str, Any] = {"model": model.slug, "content": content}
     if duration_s is not None:
         body["duration"] = round(duration_s)
@@ -99,15 +82,7 @@ def generate_video(
             video_url = payload["content"]["video_url"]
         except (KeyError, TypeError) as exc:
             raise AdapterError("byteplus", where="poll", detail="no video_url in result") from exc
-        download = client.get(video_url)  # signed/public URL, no auth header
-        if download.status_code // 100 != 2:
-            raise AdapterError(
-                "byteplus",
-                status=download.status_code,
-                where="download",
-                detail="video download failed",
-            )
-        data = download.content
+        data = download_bytes(client, video_url, provider="byteplus", media="video")
     total_tokens = float((payload.get("usage") or {}).get("total_tokens") or 0.0)
     amount = total_tokens / 1_000_000 * model.price.amount
     return Output(data=data, media_type="video/mp4"), Cost(amount=amount, source="metered")
