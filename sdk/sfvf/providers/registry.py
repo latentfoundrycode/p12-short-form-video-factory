@@ -31,6 +31,7 @@ class Provider:
     adapter: str
     capabilities: frozenset[str] = frozenset()
     legacy_slugs: frozenset[str] = frozenset()
+    region: str = ""
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,7 @@ PROVIDERS: dict[str, Provider] = {
         "usd",
         "https://aiplatform.googleapis.com",
         "google",
+        region="us-central1",
     ),
     "bfl": Provider(
         "bfl",
@@ -169,6 +171,24 @@ MODELS: dict[str, Model] = {
         notes=(
             "priced per image; a single figure for now — size/quality-dependent pricing is a "
             "later refinement, and the real per-image cost is confirmed at the attended live smoke"
+        ),
+    ),
+    "google/gemini-3.1-flash-image": Model(
+        id="google/gemini-3.1-flash-image",
+        provider="google",
+        slug="gemini-3.1-flash-image",
+        kind="image",
+        capabilities=frozenset({"image.generate", "image.edit", "image.refs"}),
+        label="Google Gemini 3.1 Flash Image (Nano Banana 2)",
+        price=PriceHint(
+            unit="usd",
+            basis="per_image",
+            amount=0.067,
+            verified="2026-09-19",
+        ),
+        notes=(
+            "Vertex :generateContent; ~$0.067/1MP output, flat-priced; the real price is "
+            "confirmed at the live smoke; 2.5-flash-image is deprecated (retire 2027-03-15)"
         ),
     ),
     "bfl/flux-1.1-pro": Model(
