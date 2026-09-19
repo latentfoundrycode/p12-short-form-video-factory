@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import importlib
 import time
 from typing import TYPE_CHECKING, Any
 
 from .._ffmpeg import color_bars
 from .._ratelimit import LIMITER as _LIMITER
 from .._runtime import current_context
+from ..providers import CapabilityError, resolve
+from ..providers._refs import image_ref_url
 from .graphics import _artifact, _sha8
 
 if TYPE_CHECKING:
@@ -37,28 +40,19 @@ def _http_client() -> httpx2.Client:
     )
 
 
-def generate(
+def _higgsfield_generate(
+    ctx: Any,
     prompt: str,
     *,
     model: str,
-    first_frame: str | None = None,
-    last_frame: str | None = None,
-    refs: list[Any] | None = None,
-    duration_s: float | None = None,
-    extra: dict[str, Any] | None = None,
+    first_frame: str | None,
+    last_frame: str | None,
+    refs: list[Any] | None,
+    duration_s: float | None,
+    extra: dict[str, Any] | None,
+    dest: Any,
+    rel: str,
 ) -> str:
-    ctx = current_context()
-    dest, rel = _artifact(ctx, f"video-{_sha8([prompt, model, duration_s, extra])}.mp4")
-    if ctx.dry_run:
-        color_bars(
-            dest,
-            duration_s=duration_s or _DEFAULT_DURATION_S,
-            width=_WIDTH,
-            height=_HEIGHT,
-            fps=_FPS,
-        )
-        return rel
-
     if first_frame is not None or last_frame is not None or refs is not None:
         raise NotImplementedError(
             "frame/ref-conditioned generation is not yet supported by the Higgsfield adapter"
@@ -112,4 +106,72 @@ def generate(
         dest.write_bytes(download.content)
 
     ctx.log(f"Higgsfield video model={model} request_id={request_id}")
+    return rel
+
+
+def generate(
+    prompt: str,
+    *,
+    model: str,
+    first_frame: str | None = None,
+    last_frame: str | None = None,
+    refs: list[Any] | None = None,
+    duration_s: float | None = None,
+    extra: dict[str, Any] | None = None,
+) -> str:
+    ctx = current_context()
+    dest, rel = _artifact(
+        ctx,
+        f"video-{_sha8([prompt, model, first_frame, last_frame, refs, duration_s, extra])}.mp4",
+    )
+    if ctx.dry_run:
+        color_bars(
+            dest,
+            duration_s=duration_s or _DEFAULT_DURATION_S,
+            width=_WIDTH,
+            height=_HEIGHT,
+            fps=_FPS,
+        )
+        return rel
+    provider, mdl = resolve(model)
+    if provider.id == "higgsfield":  # legacy inline path (unchanged behaviour)
+        return _higgsfield_generate(
+            ctx,
+            prompt,
+            model=mdl.slug,
+            first_frame=first_frame,
+            last_frame=last_frame,
+            refs=refs,
+            duration_s=duration_s,
+            extra=extra,
+            dest=dest,
+            rel=rel,
+        )
+    if mdl.kind != "video" or "video.generate" not in mdl.capabilities:
+        raise CapabilityError(f"model {model!r} cannot generate video")
+    if refs and "video.refs" not in mdl.capabilities:
+        raise CapabilityError(f"model {model!r} does not support reference conditioning")
+    if (first_frame or last_frame) and "video.first_frame" not in mdl.capabilities:
+        raise CapabilityError(f"model {model!r} does not support first/last-frame conditioning")
+    secrets = {n: ctx.secret(n) for n in provider.secret_names}
+    first_url = image_ref_url(ctx, first_frame) if first_frame else None
+    last_url = image_ref_url(ctx, last_frame) if last_frame else None
+    ref_urls = [image_ref_url(ctx, r["path"]) for r in (refs or [])]
+    adapter = importlib.import_module(f"sfvf.providers.{provider.adapter}")
+    estimate = adapter.video_estimate(mdl, duration_s, extra)
+    token = ctx._budget_reserve(provider.meter, provider.unit, estimate=estimate)
+    out, cost = adapter.generate_video(
+        prompt,
+        model=mdl,
+        provider=provider,
+        first_frame_url=first_url,
+        last_frame_url=last_url,
+        ref_urls=ref_urls,
+        duration_s=duration_s,
+        extra=extra,
+        secrets=secrets,
+        ctx=ctx,
+    )
+    dest.write_bytes(out.data)
+    ctx.record_cost(provider.meter, provider.unit, cost.amount, cost.source, token=token)
     return rel
