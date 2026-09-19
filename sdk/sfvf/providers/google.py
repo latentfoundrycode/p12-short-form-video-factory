@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 from typing import Any, cast
 
@@ -25,7 +26,11 @@ def _client(base_url: str) -> Any:
 
 
 def _sa(secrets: dict[str, str]) -> dict[str, Any]:
-    return cast(dict[str, Any], json.loads(secrets["GOOGLE_SA_JSON"]))
+    raw = secrets["GOOGLE_SA_JSON"]
+    try:
+        return cast(dict[str, Any], json.loads(raw))
+    except json.JSONDecodeError:
+        raise AdapterError("google", where="config", detail="invalid GOOGLE_SA_JSON") from None
 
 
 def _auth(sa: dict[str, Any]) -> GoogleSaAuth:
@@ -67,13 +72,16 @@ def _inline(data: bytes) -> dict[str, Any]:
 
 def _extract_image(payload: dict[str, Any]) -> Output:
     for cand in payload.get("candidates", []):
-        for part in cand.get("content", {}).get("parts", []):
+        for part in (cand.get("content") or {}).get("parts", []):
             inline = part.get("inlineData")
             if inline and inline.get("data"):
-                return Output(
-                    data=base64.b64decode(inline["data"]),
-                    media_type=inline.get("mimeType", "image/png"),
-                )
+                try:
+                    raw = base64.b64decode(inline["data"])
+                except (binascii.Error, ValueError):
+                    raise AdapterError(
+                        "google", where="generate", detail="invalid base64 image data"
+                    ) from None
+                return Output(data=raw, media_type=inline.get("mimeType", "image/png"))
     raise AdapterError("google", where="generate", detail="no inlineData image in response")
 
 
