@@ -171,6 +171,28 @@ MODELS: dict[str, Model] = {
             "later refinement, and the real per-image cost is confirmed at the attended live smoke"
         ),
     ),
+    "bfl/flux-1.1-pro": Model(
+        id="bfl/flux-1.1-pro",
+        provider="bfl",
+        slug="flux-pro-1.1",
+        kind="image",
+        capabilities=frozenset({"image.generate"}),
+        label="BFL FLUX1.1 [pro]",
+        price=PriceHint(unit="credits", basis="per_image", amount=4.0, verified="2026-09-19"),
+        notes="priced ~4 credits/image (1 credit = $0.01); confirm at the attended live smoke",
+    ),
+    "bfl/flux-kontext-pro": Model(
+        id="bfl/flux-kontext-pro",
+        provider="bfl",
+        slug="flux-kontext-pro",
+        kind="image",
+        capabilities=frozenset({"image.edit"}),
+        label="BFL FLUX.1 Kontext [pro]",
+        price=PriceHint(unit="credits", basis="per_image", amount=4.0, verified="2026-09-19"),
+        notes=(
+            "reference editing via input_image; priced ~4 credits/image; confirm at the live smoke"
+        ),
+    ),
     "byteplus/seedance-2.5": Model(
         id="byteplus/seedance-2.5",
         provider="byteplus",
