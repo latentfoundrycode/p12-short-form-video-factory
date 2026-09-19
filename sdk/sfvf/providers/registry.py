@@ -137,6 +137,19 @@ PROVIDERS: dict[str, Provider] = {
         "https://api-singapore.klingai.com",
         "kling",
     ),
+    "higgsfield": Provider(
+        "higgsfield",
+        "Higgsfield (deprecated)",
+        ("HIGGSFIELD_API_KEY",),
+        "higgsfield",
+        "credit",
+        "credits",
+        "https://api.higgsfield.ai",
+        "higgsfield",
+        legacy_slugs=frozenset(
+            {"sora-2/text-to-video", "kling-video/v2.5-turbo/pro/text-to-video"}
+        ),
+    ),
 }
 
 MODELS: dict[str, Model] = {
@@ -156,6 +169,23 @@ MODELS: dict[str, Model] = {
         notes=(
             "priced per image; a single figure for now — size/quality-dependent pricing is a "
             "later refinement, and the real per-image cost is confirmed at the attended live smoke"
+        ),
+    ),
+    "byteplus/seedance-2.5": Model(
+        id="byteplus/seedance-2.5",
+        provider="byteplus",
+        slug="dreamina-seedance-2-5-260628",
+        kind="video",
+        capabilities=frozenset({"video.generate", "video.refs", "video.first_frame"}),
+        label="BytePlus Seedance 2.5",
+        price=PriceHint(
+            unit="usd",
+            basis="per_1m_tokens",
+            amount=10.70,
+            verified="2026-09-19",
+        ),
+        notes=(
+            "metered per 1M video tokens; the real rate is confirmed at the attended live smoke"
         ),
     ),
 }
