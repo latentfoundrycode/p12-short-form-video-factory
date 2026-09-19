@@ -1,0 +1,224 @@
+"""Provider and model registry mechanics."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from difflib import get_close_matches
+from importlib.util import find_spec
+
+
+@dataclass(frozen=True)
+class PriceHint:
+    """A provider's last verified indicative model price."""
+
+    unit: str
+    basis: str
+    amount: float
+    verified: str
+
+
+@dataclass(frozen=True)
+class Provider:
+    """Connection and metering metadata for an API provider."""
+
+    id: str
+    label: str
+    secret_names: tuple[str, ...]
+    meter: str
+    meter_kind: str
+    unit: str
+    base_url: str
+    adapter: str
+    capabilities: frozenset[str] = frozenset()
+    legacy_slugs: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
+class Model:
+    """A stable model identity and its provider-facing metadata."""
+
+    id: str
+    provider: str
+    slug: str
+    kind: str
+    capabilities: frozenset[str]
+    label: str
+    price: PriceHint
+    notes: str = ""
+
+
+class UnknownModelError(LookupError):
+    """Raised when a model id is absent from the registry."""
+
+
+class CapabilityError(RuntimeError):
+    """Raised when a model cannot provide a requested capability."""
+
+
+_REF_KINDS = frozenset({"character", "style", "motion", "video"})
+
+
+def Ref(kind: str, path: str) -> dict[str, str]:  # noqa: N802 - frozen public API
+    """Return a cache-safe reference whose path string is its identity."""
+    if kind not in _REF_KINDS:
+        raise ValueError(f"unknown reference kind {kind!r}")
+    return {"kind": kind, "path": path}
+
+
+PROVIDERS: dict[str, Provider] = {
+    "openrouter": Provider(
+        "openrouter",
+        "OpenRouter",
+        ("OPENROUTER_API_KEY",),
+        "openrouter",
+        "fiat",
+        "usd",
+        "https://openrouter.ai/api/v1",
+        "openrouter",
+        capabilities=frozenset({"agents.structured"}),
+    ),
+    "openai": Provider(
+        "openai",
+        "OpenAI",
+        ("OPENAI_API_KEY",),
+        "openai",
+        "fiat",
+        "usd",
+        "https://api.openai.com",
+        "openai",
+    ),
+    "google": Provider(
+        "google",
+        "Google (Agent Platform / Vertex)",
+        ("GOOGLE_SA_JSON",),
+        "google",
+        "fiat",
+        "usd",
+        "https://aiplatform.googleapis.com",
+        "google",
+    ),
+    "bfl": Provider(
+        "bfl",
+        "Black Forest Labs",
+        ("BFL_API_KEY",),
+        "bfl",
+        "credit",
+        "credits",
+        "https://api.bfl.ai",
+        "bfl",
+    ),
+    "byteplus": Provider(
+        "byteplus",
+        "BytePlus ModelArk",
+        ("BYTEPLUS_ARK_API_KEY",),
+        "byteplus",
+        "fiat",
+        "usd",
+        "https://ark.ap-southeast.bytepluses.com/api/v3",
+        "byteplus",
+    ),
+    "minimax": Provider(
+        "minimax",
+        "MiniMax",
+        ("MINIMAX_API_KEY",),
+        "minimax",
+        "credit",
+        "credits",
+        "https://api.minimax.io",
+        "minimax",
+    ),
+    "kling": Provider(
+        "kling",
+        "Kling",
+        ("KLING_ACCESS_KEY", "KLING_SECRET_KEY"),
+        "kling",
+        "credit",
+        "credits",
+        "https://api-singapore.klingai.com",
+        "kling",
+    ),
+}
+
+MODELS: dict[str, Model] = {}
+
+
+def resolve(
+    model_id: str,
+    *,
+    providers: dict[str, Provider] = PROVIDERS,
+    models: dict[str, Model] = MODELS,
+) -> tuple[Provider, Model]:
+    """Resolve a registered model id or an explicitly allowlisted legacy slug."""
+    model = models.get(model_id)
+    if model is not None:
+        return providers[model.provider], model
+
+    for provider in providers.values():
+        if model_id in provider.legacy_slugs:
+            return provider, Model(
+                id=model_id,
+                provider=provider.id,
+                slug=model_id,
+                kind="video",
+                capabilities=frozenset(),
+                label=model_id,
+                price=PriceHint("credits", "per_second", 0.0, "legacy"),
+                notes="legacy",
+            )
+
+    matches = get_close_matches(model_id, list(models), n=3)
+    suggestion = f"; nearest: {', '.join(matches)}" if matches else ""
+    raise UnknownModelError(f"unknown model {model_id!r}{suggestion}")
+
+
+def list_models(
+    kind: str | None = None,
+    *,
+    models: dict[str, Model] = MODELS,
+) -> list[Model]:
+    """List registered models, optionally restricted to one media kind."""
+    if kind is None:
+        return list(models.values())
+    return [model for model in models.values() if model.kind == kind]
+
+
+def provider_configured(provider: Provider, configured: set[str]) -> bool:
+    """Return whether all secrets required by a provider are configured."""
+    return all(name in configured for name in provider.secret_names)
+
+
+def capabilities_offered(
+    configured: set[str],
+    *,
+    providers: dict[str, Provider] = PROVIDERS,
+    models: dict[str, Model] = MODELS,
+) -> frozenset[str]:
+    """Return capabilities offered by the configured providers and models."""
+    capabilities: set[str] = set()
+    configured_providers: set[str] = set()
+
+    for provider_id, provider in providers.items():
+        if provider_configured(provider, configured):
+            configured_providers.add(provider_id)
+            capabilities.update(provider.capabilities)
+
+    for model in models.values():
+        if model.provider in configured_providers:
+            capabilities.update(model.capabilities)
+
+    return frozenset(capabilities)
+
+
+def capable_models_without_adapter(
+    *,
+    providers: dict[str, Provider] = PROVIDERS,
+    models: dict[str, Model] = MODELS,
+) -> list[str]:
+    """List capable models whose provider adapter module cannot be imported."""
+    offenders = [
+        model.id
+        for model in models.values()
+        if model.capabilities
+        and find_spec(f"sfvf.providers.{providers[model.provider].adapter}") is None
+    ]
+    return sorted(offenders)
