@@ -122,8 +122,8 @@ PROVIDERS: dict[str, Provider] = {
         "MiniMax",
         ("MINIMAX_API_KEY",),
         "minimax",
-        "credit",
-        "credits",
+        "fiat",
+        "usd",
         "https://api.minimax.io",
         "minimax",
     ),
@@ -208,6 +208,18 @@ MODELS: dict[str, Model] = {
         ),
         notes=(
             "metered per 1M video tokens; the real rate is confirmed at the attended live smoke"
+        ),
+    ),
+    "minimax/hailuo-h3": Model(
+        id="minimax/hailuo-h3",
+        provider="minimax",
+        slug="MiniMax-H3",
+        kind="video",
+        capabilities=frozenset({"video.generate", "video.refs", "video.first_frame"}),
+        label="MiniMax Hailuo H3",
+        price=PriceHint(unit="usd", basis="per_second", amount=0.05, verified="2026-09-19"),
+        notes=(
+            "metered per output second (usage block); the real $/s is confirmed at the live smoke"
         ),
     ),
 }
