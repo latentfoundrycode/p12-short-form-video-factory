@@ -37,6 +37,12 @@ class MeterInfo:
 # quota (tracked, not summed as spend).
 METERS: dict[str, MeterInfo] = {
     "openrouter": MeterInfo(kind="fiat", provider="OpenRouter", unit="usd"),
+    "openai": MeterInfo(kind="fiat", provider="OpenAI", unit="usd"),
+    "google": MeterInfo(kind="fiat", provider="Google (Agent Platform / Vertex)", unit="usd"),
+    "bfl": MeterInfo(kind="credit", provider="Black Forest Labs", unit="credits"),
+    "byteplus": MeterInfo(kind="fiat", provider="BytePlus ModelArk", unit="usd"),
+    "minimax": MeterInfo(kind="fiat", provider="MiniMax", unit="usd"),
+    "kling": MeterInfo(kind="credit", provider="Kling", unit="credits"),
     "higgsfield": MeterInfo(kind="credit", provider="Higgsfield", unit="credits"),
     "elevenlabs": MeterInfo(kind="quota", provider="ElevenLabs", unit="chars"),
 }
