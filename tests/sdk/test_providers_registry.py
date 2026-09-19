@@ -174,10 +174,15 @@ def test_the_decided_meter_kinds_and_secret_names_are_pinned() -> None:
     assert PROVIDERS["kling"].secret_names == ("KLING_ACCESS_KEY", "KLING_SECRET_KEY")
 
 
-def test_no_models_are_seeded_yet_and_none_carry_capabilities() -> None:
-    # SEEDING RULE (§3.2): a model appears only once its adapter exists. P-1 has no adapters.
-    assert MODELS == {}
-    assert list_models() == []
+def test_seeded_models_are_well_formed_and_respect_the_seeding_rule() -> None:
+    # SEEDING RULE (§3.2): a model is added only once its adapter exists (P-1 had none; adapters
+    # land per increment and seed their rows). Whatever is seeded must be well formed — provider
+    # registered, kind a media kind — and no CAPABLE model may name a missing adapter.
+    for model in MODELS.values():
+        assert model.provider in PROVIDERS
+        assert model.kind in {"image", "video"}
+    assert list_models() == list(MODELS.values())
+    assert capable_models_without_adapter() == []
 
 
 def test_each_real_provider_meter_equals_its_id() -> None:

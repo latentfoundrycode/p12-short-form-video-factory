@@ -5,6 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+@dataclass(frozen=True)
+class Output:
+    data: bytes
+    media_type: str
+
+
 class AdapterError(RuntimeError):
     """A provider call failed without exposing credentials or unbounded response data."""
 

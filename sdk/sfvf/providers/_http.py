@@ -31,6 +31,8 @@ def request(
     auth: Any,
     limiter: Any,
     json: Any = None,
+    files: Any = None,
+    data: Any = None,
     headers: dict[str, str] | None = None,
     max_attempts: int = 4,
 ) -> Any:
@@ -41,7 +43,14 @@ def request(
 
     for attempt in range(max_attempts):
         with limiter.slot(provider):
-            response = client.request(method, url, headers=merged, json=json)
+            response = client.request(
+                method,
+                url,
+                headers=merged,
+                json=json,
+                files=files,
+                data=data,
+            )
         if 200 <= response.status_code < 300:
             return response
         if response.status_code == 429 and attempt < max_attempts - 1:
