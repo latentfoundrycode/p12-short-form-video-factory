@@ -15,6 +15,7 @@ class _ProviderState:
     lock: threading.Lock = field(default_factory=threading.Lock)
     semaphore: threading.Semaphore = field(default_factory=lambda: threading.Semaphore(1))
     max_concurrency: int = 1
+    active_holders: int = 0
     min_interval_s: float = 0.0
     not_before: float = 0.0
     last_start: float = -math.inf
@@ -49,6 +50,8 @@ class RateLimiter:
     ) -> None:
         state = self._state(provider)
         with state.lock:
+            if state.active_holders > 0:
+                raise RuntimeError(f"cannot reconfigure provider {provider!r} while in use")
             state.max_concurrency = max_concurrency
             state.min_interval_s = min_interval_s
             state.semaphore = threading.Semaphore(max_concurrency)
@@ -60,6 +63,7 @@ class RateLimiter:
         semaphore.acquire()
         try:
             with state.lock:
+                state.active_holders += 1
                 now = self._monotonic()
                 wait = max(
                     0.0,
@@ -71,7 +75,9 @@ class RateLimiter:
                 state.last_start = self._monotonic()
             yield
         finally:
-            semaphore.release()
+            with state.lock:
+                state.active_holders -= 1
+                semaphore.release()
 
     def penalize(self, provider: str, retry_after_s: float) -> None:
         state = self._state(provider)
