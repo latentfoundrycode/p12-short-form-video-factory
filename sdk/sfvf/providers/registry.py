@@ -139,7 +139,26 @@ PROVIDERS: dict[str, Provider] = {
     ),
 }
 
-MODELS: dict[str, Model] = {}
+MODELS: dict[str, Model] = {
+    "openai/gpt-image-2": Model(
+        id="openai/gpt-image-2",
+        provider="openai",
+        slug="gpt-image-2",
+        kind="image",
+        capabilities=frozenset({"image.generate", "image.edit"}),
+        label="OpenAI GPT Image 2",
+        price=PriceHint(
+            unit="usd",
+            basis="per_image",
+            amount=0.04,
+            verified="2026-09-19",
+        ),
+        notes=(
+            "priced per image; a single figure for now — size/quality-dependent pricing is a "
+            "later refinement, and the real per-image cost is confirmed at the attended live smoke"
+        ),
+    ),
+}
 
 
 def resolve(
