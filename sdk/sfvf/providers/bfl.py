@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import base64
-import time
 from typing import Any
 
 from .._ratelimit import LIMITER
 from ._auth import HeaderAuth
 from ._http import download_bytes, parse_json, request
+from ._poll import poll_until
 from .base import AdapterError, Output
 
 _MEDIA_TYPE = "image/png"
@@ -38,27 +38,27 @@ def _parse_size(size: str | None) -> tuple[int, int]:
 def _submit_poll_download(client: Any, auth: Any, path: str, body: dict[str, Any]) -> Output:
     submit = request(client, "POST", path, provider="bfl", auth=auth, limiter=LIMITER, json=body)
     task_id = parse_json(submit, provider="bfl", where="submit")["id"]
-    deadline = time.monotonic() + _POLL_TIMEOUT_S
-    while True:
-        if time.monotonic() > deadline:
-            raise AdapterError("bfl", where="poll", detail="task timed out")
-        # id is a task handle, not a secret; putting it in the query is fine
-        # (auth is the x-key header).
-        poll = request(
-            client,
-            "GET",
-            f"/v1/get_result?id={task_id}",
-            provider="bfl",
-            auth=auth,
-            limiter=LIMITER,
-        )
-        payload = parse_json(poll, provider="bfl", where="poll")
+
+    def _done(payload: dict[str, Any]) -> bool:
         status = payload.get("status")
         if status == _READY:
-            break
+            return True
         if status in _TERMINAL_FAIL:
             raise AdapterError("bfl", where="poll", detail=f"status {status}")
-        time.sleep(_POLL_INTERVAL_S)
+        return False
+
+    # id is a task handle, not a secret; putting it in the query is fine
+    # (auth is the x-key header).
+    payload = poll_until(
+        client,
+        method="GET",
+        path=f"/v1/get_result?id={task_id}",
+        provider="bfl",
+        auth=auth,
+        is_done=_done,
+        interval=_POLL_INTERVAL_S,
+        timeout=_POLL_TIMEOUT_S,
+    )
     try:
         sample_url = payload["result"]["sample"]
     except (KeyError, TypeError) as exc:

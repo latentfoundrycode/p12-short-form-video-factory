@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 from .._ratelimit import LIMITER
 from ._auth import BearerAuth
 from ._content import build_media_content
 from ._http import download_bytes, parse_json, request
+from ._poll import poll_until
 from .base import AdapterError, Cost, Output
 
 _POLL_INTERVAL_S = 5.0  # monkeypatched to 0 in tests
@@ -58,27 +58,28 @@ def generate_video(
             json=body,
         )
         task_id = parse_json(submit, provider="minimax", where="submit")["task_id"]
-        deadline = time.monotonic() + _POLL_TIMEOUT_S
-        task: dict[str, Any] = {}
-        while True:
-            if time.monotonic() > deadline:
-                raise AdapterError("minimax", where="poll", detail="task timed out")
-            poll = request(
-                client,
-                "GET",
-                f"/v2/query/video_generation/{task_id}",
-                provider="minimax",
-                auth=auth,
-                limiter=LIMITER,
-            )
-            task = parse_json(poll, provider="minimax", where="poll").get("task") or {}
+
+        def _done(payload: dict[str, Any]) -> bool:
+            task = payload.get("task") or {}
             status = task.get("status")
             if status == "succeeded":
-                break
+                return True
             if status in _TERMINAL_FAIL:
                 raise AdapterError("minimax", where="poll", detail=f"task {status}")
-            ctx.heartbeat("video", waiting_on="minimax")
-            time.sleep(_POLL_INTERVAL_S)
+            return False
+
+        payload = poll_until(
+            client,
+            method="GET",
+            path=f"/v2/query/video_generation/{task_id}",
+            provider="minimax",
+            auth=auth,
+            is_done=_done,
+            heartbeat=lambda: ctx.heartbeat("video", waiting_on="minimax"),
+            interval=_POLL_INTERVAL_S,
+            timeout=_POLL_TIMEOUT_S,
+        )
+        task = payload.get("task") or {}
         try:
             video_url = task["content"]["url"]
         except (KeyError, TypeError) as exc:

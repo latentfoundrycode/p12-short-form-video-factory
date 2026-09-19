@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 from .._ratelimit import LIMITER
 from ._auth import BearerAuth
 from ._content import build_media_content
 from ._http import download_bytes, parse_json, request
+from ._poll import poll_until
 from .base import AdapterError, Cost, Output
 
 _POLL_INTERVAL_S = 5.0  # monkeypatched to 0 in tests
@@ -58,26 +58,26 @@ def generate_video(
             json=body,
         )
         task_id = parse_json(submit, provider="byteplus", where="submit")["id"]
-        deadline = time.monotonic() + _POLL_TIMEOUT_S
-        while True:
-            if time.monotonic() > deadline:
-                raise AdapterError("byteplus", where="poll", detail="task timed out")
-            poll = request(
-                client,
-                "GET",
-                f"/contents/generations/tasks/{task_id}",
-                provider="byteplus",
-                auth=auth,
-                limiter=LIMITER,
-            )
-            payload = parse_json(poll, provider="byteplus", where="poll")
+
+        def _done(payload: dict[str, Any]) -> bool:
             status = payload.get("status")
             if status == "succeeded":
-                break
+                return True
             if status in _TERMINAL_FAIL:
                 raise AdapterError("byteplus", where="poll", detail=f"task {status}")
-            ctx.heartbeat("video", waiting_on="byteplus")
-            time.sleep(_POLL_INTERVAL_S)
+            return False
+
+        payload = poll_until(
+            client,
+            method="GET",
+            path=f"/contents/generations/tasks/{task_id}",
+            provider="byteplus",
+            auth=auth,
+            is_done=_done,
+            heartbeat=lambda: ctx.heartbeat("video", waiting_on="byteplus"),
+            interval=_POLL_INTERVAL_S,
+            timeout=_POLL_TIMEOUT_S,
+        )
         try:
             video_url = payload["content"]["video_url"]
         except (KeyError, TypeError) as exc:

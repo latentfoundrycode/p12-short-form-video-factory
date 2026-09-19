@@ -5,12 +5,12 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-import time
 from typing import Any, cast
 
 from .._ratelimit import LIMITER
 from ._auth import GoogleSaAuth
 from ._http import parse_json, request
+from ._poll import poll_until
 from .base import AdapterError, Cost, Output
 from .registry import CapabilityError
 
@@ -208,25 +208,19 @@ def generate_video(
             json=body,
         )
         name = parse_json(submit, provider="google", where="submit")["name"]
-        deadline = time.monotonic() + _POLL_TIMEOUT_S
-        op: dict[str, Any] = {}
-        while True:
-            if time.monotonic() > deadline:
-                raise AdapterError("google", where="poll", detail="operation timed out")
-            poll = request(
-                client,
-                "POST",
-                poll_path,
-                provider="google",
-                auth=auth,
-                limiter=LIMITER,
-                json={"operationName": name},
-            )
-            op = parse_json(poll, provider="google", where="poll")
-            if op.get("done"):
-                break
-            ctx.heartbeat("video", waiting_on="google")
-            time.sleep(_POLL_INTERVAL_S)
+        op = poll_until(
+            client,
+            method="POST",
+            path=poll_path,
+            provider="google",
+            auth=auth,
+            is_done=lambda payload: bool(payload.get("done")),
+            json={"operationName": name},
+            heartbeat=lambda: ctx.heartbeat("video", waiting_on="google"),
+            interval=_POLL_INTERVAL_S,
+            timeout=_POLL_TIMEOUT_S,
+            timeout_detail="operation timed out",
+        )
     if "error" in op:
         raise AdapterError("google", where="poll", detail="operation failed")
     try:
