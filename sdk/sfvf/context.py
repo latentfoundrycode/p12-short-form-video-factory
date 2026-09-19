@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import shutil
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -504,7 +505,7 @@ class Context:
         """
         return str(self._file.secrets[name])
 
-    def _budget_reserve(self, meter: str, unit: str) -> str:
+    def _budget_reserve(self, meter: str, unit: str, estimate: float | None = None) -> str:
         """Reserve the configured estimate for `meter` before a paid call (T2b-1).
 
         No budget config → raise BudgetError (fail-closed; refuse the paid call). Otherwise reserve
@@ -518,20 +519,60 @@ class Context:
                 f"no budget configured; refusing paid call for meter {meter!r} "
                 "— set SFVF_BUDGET_CONFIG"
             )
-        estimate = cfg.estimates.get(meter)
-        if estimate is None or not (estimate > 0):
+        has_ceiling = meter in cfg.per_run or meter in cfg.per_day
+        configured = cfg.estimates.get(meter)
+        if estimate is not None:
+            if (
+                isinstance(estimate, bool)
+                or not isinstance(estimate, int | float)
+                or not math.isfinite(estimate)
+                or estimate <= 0
+            ):
+                raise BudgetError(f"per-call estimate for meter {meter!r} must be finite and > 0")
+            if not has_ceiling:
+                raise BudgetError(
+                    f"per-call estimate for meter {meter!r} "
+                    "needs a configured per_run/per_day ceiling"
+                )
+            reserve_amount = estimate
+            if configured is not None and configured > 0:
+                reserve_amount = max(estimate, configured)
+        elif configured is None or not (configured > 0):
             # Configured budget but no positive estimate for this meter → fail closed
             # (never reserve 0 as "unknown"): reserving nothing would let the call through ungated.
             raise BudgetError(f"no positive budget estimate configured for meter {meter!r}")
+        else:
+            reserve_amount = configured
         guard = self._budget_guard(cfg)
-        return guard.reserve(run_id=self.run_id, meter=meter, unit=unit, estimate=estimate)
+        return guard.reserve(run_id=self.run_id, meter=meter, unit=unit, estimate=reserve_amount)
 
-    def _budget_reconcile(self, token: str | None, *, actual: float) -> None:
+    def _budget_reconcile(self, token: str | None, *, actual: float, note: str = "") -> None:
         """Reconcile a reservation with the real amount. No-op when token is None."""
         cfg = self._file.budget
         if token is None or cfg is None:
             return
-        self._budget_guard(cfg).reconcile(token, actual=actual)
+        self._budget_guard(cfg).reconcile(token, actual=actual, note=note)
+
+    def record_cost(
+        self,
+        meter: str,
+        unit: str,
+        amount: float,
+        source: str,
+        *,
+        token: str | None = None,
+    ) -> None:
+        self.emit(
+            {
+                "t": "cost",
+                "meter": meter,
+                "unit": unit,
+                "amount": amount,
+                "source": source,
+                "cached": False,
+            }
+        )
+        self._budget_reconcile(token, actual=amount, note=source)
 
     def _budget_guard(self, cfg: BudgetConfig) -> BudgetGuard:
         return BudgetGuard(
