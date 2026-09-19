@@ -5,14 +5,18 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import time
 from typing import Any, cast
 
 from .._ratelimit import LIMITER
 from ._auth import GoogleSaAuth
 from ._http import parse_json, request
-from .base import AdapterError, Output
+from .base import AdapterError, Cost, Output
+from .registry import CapabilityError
 
 _API_VERSION = "v1"
+_POLL_INTERVAL_S = 5.0  # monkeypatched to 0 in tests
+_POLL_TIMEOUT_S = 1800.0
 
 
 def _transport() -> Any | None:
@@ -141,3 +145,98 @@ def edit(
     parts: list[dict[str, Any]] = [{"text": prompt}, _inline(image)]
     parts.extend(_inline(ref) for ref in refs_bytes)
     return _generate_content(provider, model, parts, secrets)
+
+
+def video_estimate(model: Any, duration_s: float | None, extra: dict[str, Any] | None) -> float:
+    return float(model.price.amount * (duration_s or 8.0))
+
+
+def _image_part_from_url(url: str) -> dict[str, Any]:
+    if url.startswith("data:"):
+        header, _, b64 = url.partition(",")
+        mime = header[len("data:") :].split(";", 1)[0] or "application/octet-stream"
+        return {"bytesBase64Encoded": b64, "mimeType": mime}
+    import httpx2
+
+    with httpx2.Client(transport=_transport()) as client:
+        resp = client.get(url)
+    if resp.status_code // 100 != 2:
+        raise AdapterError(
+            "google", status=resp.status_code, where="frame fetch", detail="frame download failed"
+        )
+    data = resp.content
+    return {"bytesBase64Encoded": base64.b64encode(data).decode(), "mimeType": _sniff(data)}
+
+
+def generate_video(
+    prompt: str,
+    *,
+    model: Any,
+    provider: Any,
+    first_frame_url: str | None,
+    last_frame_url: str | None,
+    ref_urls: list[str],
+    duration_s: float | None,
+    extra: dict[str, Any] | None,
+    secrets: dict[str, str],
+    ctx: Any,
+) -> tuple[Output, Cost]:
+    if last_frame_url is not None:
+        raise CapabilityError("veo does not support last-frame conditioning")
+    sa = _sa(secrets)
+    project = sa["project_id"]
+    region = provider.region or "us-central1"
+    base, submit_path = _endpoint(region, project, model.slug, "predictLongRunning")
+    _, poll_path = _endpoint(region, project, model.slug, "fetchPredictOperation")
+    auth = _auth(sa)
+    instance: dict[str, Any] = {"prompt": prompt}
+    if first_frame_url:
+        instance["image"] = _image_part_from_url(first_frame_url)
+    parameters: dict[str, Any] = {"sampleCount": 1, "personGeneration": "allow_adult"}
+    if duration_s is not None:
+        parameters["durationSeconds"] = round(duration_s)
+    parameters.update(extra or {})  # aspectRatio / negativePrompt / resolution passthrough
+    body = {"instances": [instance], "parameters": parameters}
+    with _client(base) as client:
+        submit = request(
+            client,
+            "POST",
+            submit_path,
+            provider="google",
+            auth=auth,
+            limiter=LIMITER,
+            json=body,
+        )
+        name = parse_json(submit, provider="google", where="submit")["name"]
+        deadline = time.monotonic() + _POLL_TIMEOUT_S
+        op: dict[str, Any] = {}
+        while True:
+            if time.monotonic() > deadline:
+                raise AdapterError("google", where="poll", detail="operation timed out")
+            poll = request(
+                client,
+                "POST",
+                poll_path,
+                provider="google",
+                auth=auth,
+                limiter=LIMITER,
+                json={"operationName": name},
+            )
+            op = parse_json(poll, provider="google", where="poll")
+            if op.get("done"):
+                break
+            ctx.heartbeat("video", waiting_on="google")
+            time.sleep(_POLL_INTERVAL_S)
+    if "error" in op:
+        raise AdapterError("google", where="poll", detail="operation failed")
+    try:
+        video = op["response"]["videos"][0]
+        data = base64.b64decode(video["bytesBase64Encoded"])
+    except (KeyError, IndexError, TypeError, binascii.Error, ValueError):
+        raise AdapterError(
+            "google", where="poll", detail="no inline video in operation response"
+        ) from None
+    amount = (duration_s or 8.0) * model.price.amount
+    return Output(data=data, media_type=video.get("mimeType", "video/mp4")), Cost(
+        amount=amount, source="priced"
+    )

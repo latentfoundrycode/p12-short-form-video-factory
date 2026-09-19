@@ -191,6 +191,24 @@ MODELS: dict[str, Model] = {
             "confirmed at the live smoke; 2.5-flash-image is deprecated (retire 2027-03-15)"
         ),
     ),
+    "google/veo-3.1-generate-001": Model(
+        id="google/veo-3.1-generate-001",
+        provider="google",
+        slug="veo-3.1-generate-001",
+        kind="video",
+        capabilities=frozenset({"video.generate", "video.first_frame"}),
+        label="Google Veo 3.1",
+        price=PriceHint(
+            unit="usd",
+            basis="per_second",
+            amount=0.40,
+            verified="2026-09-19",
+        ),
+        notes=(
+            "Vertex :predictLongRunning; priced per second of output (default 8s); no video.refs / "
+            "last-frame (unconfirmed fields); the real $/s is confirmed at the live smoke"
+        ),
+    ),
     "bfl/flux-1.1-pro": Model(
         id="bfl/flux-1.1-pro",
         provider="bfl",
