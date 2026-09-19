@@ -1,16 +1,17 @@
 """Frozen contract — Stage P, P-1: the model registry mechanics (pure data, no network).
 
-The provider layer (Architecture §5.5 amendment 2026-09-19; docs/PROVIDER_LAYER_PLAN.md) chooses among
-many models from many API providers as a capability of SFVF core. P-1 lands ONLY the registry mechanics:
-the `Provider`/`Model`/`PriceHint` shapes, the seven live `Provider` rows, `Ref`, resolution + the routing
-rule (incl. the legacy-Higgsfield allowlist mechanism), `provider_configured`, `capabilities_offered`, and
-the "a capable model must name an adapter that exists" invariant. Adapters and model rows arrive in later
-increments; per the SEEDING RULE, no model carries a capability until its adapter exists — so `MODELS` is
-empty here and the capability invariant is exercised against controlled in-test registries.
+The provider layer (Architecture §5.5 amendment 2026-09-19; docs/PROVIDER_LAYER_PLAN.md) chooses
+among many models from many API providers as a capability of SFVF core. P-1 lands ONLY the registry
+mechanics: the Provider/Model/PriceHint shapes, the seven live Provider rows, Ref, resolution + the
+routing rule (incl. the legacy-Higgsfield allowlist mechanism), provider_configured,
+capabilities_offered, and the "a capable model must name an adapter that exists" invariant. Adapters
+and model rows arrive in later increments; per the SEEDING RULE, no model carries a capability until
+its adapter exists — so MODELS is empty here and the capability invariant is exercised against
+controlled in-test registries.
 
-Registry functions take optional `providers=`/`models=`/`configured=` arguments (mirroring
-`app.core.meters.meter_info(..., registry=…)`), so behaviour is pinned against a controlled fake registry
-without depending on which real models happen to be seeded yet. No network, no secrets, no app import.
+Registry functions take optional providers=/models=/configured= arguments (mirroring
+app.core.meters.meter_info(..., registry=...)), so behaviour is pinned against a controlled fake
+registry without depending on which real models happen to be seeded yet. No network, no secrets.
 """
 
 from __future__ import annotations
@@ -18,8 +19,7 @@ from __future__ import annotations
 import json
 
 import pytest
-
-from sfvf.cache import _canonicalize, _canonical_json
+from sfvf.cache import _canonical_json, _canonicalize
 from sfvf.providers import (
     MODELS,
     PROVIDERS,
@@ -37,8 +37,8 @@ from sfvf.providers import (
 )
 
 # ---------------------------------------------------------------------------
-# A controlled fake registry: two media providers (one configured in tests, one not) plus a
-# provider-level capability provider and a deprecated legacy provider. Nothing here touches the
+# A controlled fake registry: two media providers (one configured in tests, one not), a
+# provider-level capability provider, and a deprecated legacy provider. Nothing here touches the
 # real rows, so these assertions stay stable as real providers/models are added in later increments.
 # ---------------------------------------------------------------------------
 
@@ -47,26 +47,51 @@ _PRICE = PriceHint(unit="usd", basis="per_image", amount=0.04, verified="2026-09
 
 def _fake_providers() -> dict[str, Provider]:
     return {
+        # adapter="openrouter" names a module that EXISTS in sfvf.providers, so the capable-model
+        # check passes for these fakes.
         "acme": Provider(
-            id="acme", label="Acme", secret_names=("ACME_API_KEY",), meter="acme",
-            meter_kind="fiat", unit="usd", base_url="https://api.acme.test",
-            adapter="openrouter",  # a module that EXISTS in sfvf.providers, so the capable-model check passes
+            id="acme",
+            label="Acme",
+            secret_names=("ACME_API_KEY",),
+            meter="acme",
+            meter_kind="fiat",
+            unit="usd",
+            base_url="https://api.acme.test",
+            adapter="openrouter",
         ),
         "beta": Provider(
-            id="beta", label="Beta", secret_names=("BETA_ID", "BETA_SECRET"), meter="beta",
-            meter_kind="credit", unit="credits", base_url="https://api.beta.test",
+            id="beta",
+            label="Beta",
+            secret_names=("BETA_ID", "BETA_SECRET"),
+            meter="beta",
+            meter_kind="credit",
+            unit="credits",
+            base_url="https://api.beta.test",
             adapter="openrouter",
         ),
         "words": Provider(
-            id="words", label="Words", secret_names=("WORDS_API_KEY",), meter="words",
-            meter_kind="fiat", unit="usd", base_url="https://api.words.test",
-            adapter="openrouter", capabilities=frozenset({"agents.structured"}),
+            id="words",
+            label="Words",
+            secret_names=("WORDS_API_KEY",),
+            meter="words",
+            meter_kind="fiat",
+            unit="usd",
+            base_url="https://api.words.test",
+            adapter="openrouter",
+            capabilities=frozenset({"agents.structured"}),
         ),
         "higgsfield": Provider(
-            id="higgsfield", label="Higgsfield (deprecated)", secret_names=("HIGGSFIELD_API_KEY",),
-            meter="higgsfield", meter_kind="credit", unit="credits",
-            base_url="https://api.higgsfield.ai", adapter="higgsfield",
-            legacy_slugs=frozenset({"sora-2/text-to-video", "kling-video/v2.5-turbo/pro/text-to-video"}),
+            id="higgsfield",
+            label="Higgsfield (deprecated)",
+            secret_names=("HIGGSFIELD_API_KEY",),
+            meter="higgsfield",
+            meter_kind="credit",
+            unit="credits",
+            base_url="https://api.higgsfield.ai",
+            adapter="higgsfield",
+            legacy_slugs=frozenset(
+                {"sora-2/text-to-video", "kling-video/v2.5-turbo/pro/text-to-video"}
+            ),
         ),
     }
 
@@ -74,12 +99,22 @@ def _fake_providers() -> dict[str, Provider]:
 def _fake_models() -> dict[str, Model]:
     return {
         "acme/photo": Model(
-            id="acme/photo", provider="acme", slug="photo-1", kind="image",
-            capabilities=frozenset({"image.generate", "image.edit"}), label="Acme Photo", price=_PRICE,
+            id="acme/photo",
+            provider="acme",
+            slug="photo-1",
+            kind="image",
+            capabilities=frozenset({"image.generate", "image.edit"}),
+            label="Acme Photo",
+            price=_PRICE,
         ),
         "beta/clip": Model(
-            id="beta/clip", provider="beta", slug="clip-1", kind="video",
-            capabilities=frozenset({"video.generate", "video.refs"}), label="Beta Clip", price=_PRICE,
+            id="beta/clip",
+            provider="beta",
+            slug="clip-1",
+            kind="video",
+            capabilities=frozenset({"video.generate", "video.refs"}),
+            label="Beta Clip",
+            price=_PRICE,
         ),
     }
 
@@ -94,7 +129,7 @@ _EXPECTED_PROVIDER_IDS = frozenset(
 
 
 def test_exactly_the_seven_live_providers_are_registered() -> None:
-    # The deprecated `higgsfield` row is added in P-4a (to carry the legacy path) and deleted in P-11;
+    # The deprecated higgsfield row is added in P-4a (to carry the legacy path) and deleted in P-11;
     # it must NOT be present at P-1.
     assert set(PROVIDERS) == _EXPECTED_PROVIDER_IDS
     for pid, provider in PROVIDERS.items():
@@ -114,8 +149,8 @@ def test_every_provider_row_is_well_formed() -> None:
 
 
 def test_openrouter_offers_structured_output_only_not_vision() -> None:
-    # OpenRouter is registered so `agents.structured` is honestly accounted for; `agents.vision` is
-    # deliberately NOT offered because `agents.llm` still raises on image attachments (plan §2, §3.7).
+    # OpenRouter is registered so agents.structured is honestly accounted for; agents.vision is
+    # deliberately NOT offered because agents.llm still raises on image attachments (plan §2, §3.7).
     openrouter = PROVIDERS["openrouter"]
     assert openrouter.capabilities == frozenset({"agents.structured"})
     assert "agents.vision" not in openrouter.capabilities
@@ -146,7 +181,7 @@ def test_no_models_are_seeded_yet_and_none_carry_capabilities() -> None:
 
 
 def test_each_real_provider_meter_equals_its_id() -> None:
-    # One meter per provider, meter id == provider id (drives the per-provider budget cap + Statistics).
+    # One meter per provider, meter id == provider id (drives the per-provider cap + Statistics).
     for pid, provider in PROVIDERS.items():
         assert provider.meter == pid
 
@@ -154,6 +189,7 @@ def test_each_real_provider_meter_equals_its_id() -> None:
 # ---------------------------------------------------------------------------
 # Resolution + the routing rule.
 # ---------------------------------------------------------------------------
+
 
 def test_resolve_returns_provider_and_model() -> None:
     providers, models = _fake_providers(), _fake_models()
@@ -172,8 +208,8 @@ def test_resolve_unknown_model_under_a_known_provider_suggests_nearest() -> None
 
 
 def test_resolve_rejects_an_unregistered_provider_prefix() -> None:
-    # Routing rule: an id resolves only if the segment before the first '/' is a registered provider.
-    # A typo in a new-style id must be an UnknownModelError, never a paid submit to the wrong provider.
+    # Routing rule: an id resolves only if the segment before the first '/' is a registered
+    # provider. A typo in a new-style id must be UnknownModelError, never a submit to the wrong one.
     providers, models = _fake_providers(), _fake_models()
     with pytest.raises(UnknownModelError):
         resolve("acmee/photo", providers=providers, models=models)
@@ -184,10 +220,10 @@ def test_unknown_model_error_is_a_lookup_error() -> None:
 
 
 def test_legacy_higgsfield_slug_resolves_only_from_the_allowlist() -> None:
-    # The legacy path (Architecture pre-2026-09-19) uses bare slugs that themselves contain '/', e.g.
-    # `sora-2/text-to-video`, whose prefix is NOT a provider. Such an id resolves to the deprecated
-    # `higgsfield` provider ONLY when it is in that provider's `legacy_slugs`. Mechanism lives here;
-    # the real higgsfield row + allowlist are added in P-4a and deleted in P-11.
+    # The legacy path uses bare slugs that themselves contain '/', e.g. sora-2/text-to-video, whose
+    # prefix is NOT a provider. Such an id resolves to the deprecated higgsfield provider ONLY when
+    # it is in that provider's legacy_slugs. The mechanism lives here; the real higgsfield row +
+    # allowlist are added in P-4a and deleted in P-11.
     providers, models = _fake_providers(), _fake_models()
     provider, model = resolve("sora-2/text-to-video", providers=providers, models=models)
     assert provider.id == "higgsfield"
@@ -207,6 +243,7 @@ def test_without_a_higgsfield_row_legacy_slugs_do_not_resolve() -> None:
 # ---------------------------------------------------------------------------
 # Configuration + capability offering.
 # ---------------------------------------------------------------------------
+
 
 def test_provider_configured_requires_every_secret_name() -> None:
     providers = _fake_providers()
@@ -250,21 +287,33 @@ def test_real_registry_offers_structured_output_when_openrouter_configured() -> 
 # The "a capable model must name an adapter that exists" invariant.
 # ---------------------------------------------------------------------------
 
+
 def test_capable_models_without_adapter_flags_a_missing_adapter() -> None:
     providers = _fake_providers()
     # A model with a capability whose provider names a non-existent adapter module is an offender.
     providers["ghosted"] = Provider(
-        id="ghosted", label="Ghost", secret_names=("G",), meter="ghosted", meter_kind="fiat",
-        unit="usd", base_url="https://api.ghost.test", adapter="does_not_exist",
+        id="ghosted",
+        label="Ghost",
+        secret_names=("G",),
+        meter="ghosted",
+        meter_kind="fiat",
+        unit="usd",
+        base_url="https://api.ghost.test",
+        adapter="does_not_exist",
     )
     models = _fake_models()
     models["ghosted/x"] = Model(
-        id="ghosted/x", provider="ghosted", slug="x", kind="image",
-        capabilities=frozenset({"image.generate"}), label="X", price=_PRICE,
+        id="ghosted/x",
+        provider="ghosted",
+        slug="x",
+        kind="image",
+        capabilities=frozenset({"image.generate"}),
+        label="X",
+        price=_PRICE,
     )
     offenders = capable_models_without_adapter(providers=providers, models=models)
     assert "ghosted/x" in offenders
-    assert "acme/photo" not in offenders  # names the existing `openrouter` adapter module
+    assert "acme/photo" not in offenders  # names the existing openrouter adapter module
 
 
 def test_the_real_registry_has_no_capable_model_without_an_adapter() -> None:
@@ -275,6 +324,7 @@ def test_the_real_registry_has_no_capable_model_without_an_adapter() -> None:
 # ---------------------------------------------------------------------------
 # Ref — the reference/frame value handed to media.image / media.video.
 # ---------------------------------------------------------------------------
+
 
 def test_ref_is_a_plain_json_value_that_round_trips_the_step_cache() -> None:
     ref = Ref("character", "artifacts/sheet.png")
@@ -291,15 +341,21 @@ def test_ref_accepts_the_four_kinds_and_rejects_others() -> None:
 
 
 def test_ref_path_is_identity_not_content() -> None:
-    # A Ref's path is a STRING, so the step cache hashes it as text — the referenced file is NOT
-    # content-digested (that is why a step re-running when the sheet changes must put the Path in
-    # `inputs`; SDK §6.3). Canonicalising a Ref leaves the path string verbatim.
+    # A Ref's path is a STRING, so the step cache hashes it as literal text — the referenced file is
+    # NOT content-digested the way a Path is (that is why a step re-running when the sheet changes
+    # must put the Path in `inputs`; SDK §6.3). Canonicalising a Ref keeps the path string
+    # verbatim, and is identical to canonicalising the equivalent plain dict — Ref adds no magic
+    # that the cache would treat specially.
     ref = Ref("character", "artifacts/sheet.png")
     assert isinstance(ref["path"], str)
-    assert _canonicalize(ref) == {"kind": "character", "path": "artifacts/sheet.png"}
+    canonical = _canonical_json(_canonicalize(ref))
+    assert "artifacts/sheet.png" in canonical  # verbatim, not replaced by a digest
+    assert canonical == _canonical_json(
+        _canonicalize({"kind": "character", "path": "artifacts/sheet.png"})
+    )
 
 
 def test_capability_error_is_defined_for_the_call_sites() -> None:
     # Raised at the call by media.image/media.video for an unsupported ref/kind combination (§6.3);
-    # a RuntimeError so existing `pytest.raises(RuntimeError)` adapter contracts hold.
+    # a RuntimeError so existing pytest.raises(RuntimeError) adapter contracts hold.
     assert issubclass(CapabilityError, RuntimeError)
