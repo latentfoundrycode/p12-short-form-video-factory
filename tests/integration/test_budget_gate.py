@@ -254,7 +254,10 @@ def test_video_blocked_when_budget_exhausted(tmp_path: Path, monkeypatch: pytest
     token = set_active(ctx)
     try:
         with pytest.raises(BudgetExceededError):
-            video.generate("a cat", model="turbo")
+            # A legacy Higgsfield slug routes to the inline Higgsfield path, which reserves the
+            # "higgsfield" meter before any HTTP; the exhausted ceiling refuses it. (Since P-4 made
+            # media.video a registry router, the model must resolve — a bare placeholder does not.)
+            video.generate("a cat", model="sora-2/text-to-video")
     finally:
         reset_active(token)
     assert _ledger_lines(budget.ledger_path) == []
