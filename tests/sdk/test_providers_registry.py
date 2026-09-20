@@ -3,7 +3,7 @@
 The provider layer (Architecture §5.5 amendment 2026-09-19; docs/PROVIDER_LAYER_PLAN.md) chooses
 among many models from many API providers as a capability of SFVF core. P-1 lands ONLY the registry
 mechanics: the Provider/Model/PriceHint shapes, the seven live Provider rows, Ref, resolution + the
-routing rule (incl. the legacy-Higgsfield allowlist mechanism), provider_configured,
+routing rule, provider_configured,
 capabilities_offered, and the "a capable model must name an adapter that exists" invariant. Adapters
 and model rows arrive in later increments; per the SEEDING RULE, no model carries a capability until
 its adapter exists — so MODELS is empty here and the capability invariant is exercised against
@@ -37,9 +37,9 @@ from sfvf.providers import (
 )
 
 # ---------------------------------------------------------------------------
-# A controlled fake registry: two media providers (one configured in tests, one not), a
-# provider-level capability provider, and a deprecated legacy provider. Nothing here touches the
-# real rows, so these assertions stay stable as real providers/models are added in later increments.
+# A controlled fake registry: two media providers (one configured in tests, one not) and a
+# provider-level capability provider. Nothing here touches the real rows, so these assertions stay
+# stable as real providers/models are added in later increments.
 # ---------------------------------------------------------------------------
 
 _PRICE = PriceHint(unit="usd", basis="per_image", amount=0.04, verified="2026-09-19")
