@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from typing import Any
+from urllib.parse import urlsplit
 
 from .._ratelimit import LIMITER
 from ._auth import HeaderAuth
@@ -16,6 +17,15 @@ _POLL_INTERVAL_S = 1.0  # monkeypatched to 0 in tests
 _POLL_TIMEOUT_S = 300.0
 _READY = "Ready"
 _TERMINAL_FAIL = frozenset({"Error", "Request Moderated", "Content Moderated", "Task not found"})
+
+
+def _require_bfl_host(url: str) -> None:
+    """Refuse a polling_url that is not https on a BFL-designated host, so the x-key never leaves
+    *.bfl.ai over https (defends against a spoofed/MITM'd submit response)."""
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    if parts.scheme != "https" or not (host == "bfl.ai" or host.endswith(".bfl.ai")):
+        raise AdapterError("bfl", where="submit", detail="polling_url is not an https bfl.ai host")
 
 
 def _client(base_url: str) -> Any:
@@ -41,6 +51,7 @@ def _submit_poll_download(client: Any, auth: Any, path: str, body: dict[str, Any
     polling_url = submit_json.get("polling_url")
     if not polling_url:
         raise AdapterError("bfl", where="submit", detail="no polling_url in submit response")
+    _require_bfl_host(polling_url)
 
     def _done(payload: dict[str, Any]) -> bool:
         status = payload.get("status")
