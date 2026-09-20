@@ -254,6 +254,24 @@ function RegistryOptionsField({
     );
   }
 
+  if ((optionsState as RegistryOptionsState).status === "loading") {
+    return (
+      <label className="field">
+        <span className="field-label">{label}</span>
+        <select
+          className="field-input"
+          value={text}
+          disabled
+          aria-required={param.required}
+          onChange={() => {}}
+        >
+          <option value={text}>Loading…</option>
+        </select>
+        <FieldHelp param={param} />
+      </label>
+    );
+  }
+
   const currentWasRemoved =
     text !== "" && !optionsState.options.some((option) => option.id === text);
 
