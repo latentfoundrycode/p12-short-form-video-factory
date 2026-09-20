@@ -419,3 +419,29 @@ def test_llm_rejects_too_many_attachments_before_any_call(
     with pytest.raises(ValueError):
         _run(ctx, lambda: agents.llm("x", agent="w", model="m", attach=["a.png", "b.png"]))
     assert seen == []
+
+
+def test_llm_rejects_image_named_symlink_to_nonimage_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # H55(a/c) defence-in-depth: the suffix allow-list must judge the RESOLVED target, not the
+    # symbolic name — else a within-workspace symlink `masq.png` -> `secret.env` passes the label
+    # check on ".png" and egresses the non-image target's bytes mislabeled as an image. The MIME
+    # must be taken from the resolved path's suffix, so this is rejected. (Symlink creation is
+    # unprivileged on Linux CI; skipped where the platform/permissions disallow it, e.g. Windows.)
+    secret = tmp_path / "secret.env"
+    secret.write_bytes(b"OPENROUTER_API_KEY=must-not-egress")
+    masq = tmp_path / "masq.png"
+    try:
+        masq.symlink_to(secret)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not supported / not permitted on this platform")
+
+    def boom(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        raise AssertionError("a symlink to a non-image target must fail before any network call")
+
+    seen = _install_mock(monkeypatch, boom)
+    ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(ValueError):
+        _run(ctx, lambda: agents.llm("x", agent="w", model="m", attach=["masq.png"]))
+    assert seen == []

@@ -470,17 +470,22 @@ increments that logged them.
   *Non-verbatim reflection*: `_redact` is exact-match, so a credential the server echoes re-encoded /
   case-folded / whitespace-split survives — acceptable given high-entropy alphanumeric tokens and the
   declared "precise, only-what-we-sent" boundary. Fold the guard in next time `_http.py` is touched.
-- **H55 — `agents.llm` image-attachment residuals** (from TASK-agents-vision; security-auditor +
-  secret-sentinel advisories on the merged multimodal fix, non-blocking). (a) *MIME fallback*: an
-  unknown/empty attach suffix falls back to `image/png` in `_IMAGE_MIME.get(..., "image/png")`
-  (`agents.py`), which can mislabel a non-PNG file to the provider; consider rejecting unknown
-  suffixes (an explicit allow-list error) rather than a silent default. (b) *No size bound*: attach
-  bytes are `read_bytes()` then base64-encoded straight into the request body with no max-bytes
-  guard, so a large file inflates memory and the OpenRouter payload; add a per-attachment size
-  ceiling. (c) *Path containment (cross-cutting)*: `(ctx.paths.video / path).read_bytes()` resolves
-  attach names within the run workspace, matching the accepted `media/image.py` convention — but
-  Python's `/` discards the base when `path` is absolute, and `../` is not neutralized, so a
-  caller-supplied absolute/traversing attach path could read an arbitrary file. This is IDENTICAL to
-  the existing image/refs trust model (not a regression introduced here); if that convention is ever
-  hardened (`resolve()` + a containment check under `ctx.paths.video`), apply the same guard to
-  `agents.llm` attach, `media/image.py`, and `_refs.py` together. All three low risk, advisory.
+- **H55 — `agents.llm` image-attachment controls** (from TASK-agents-vision). Originally three
+  advisories on the multimodal fix; cross-family Review B escalated them because `agents.llm` reads a
+  caller-named path and EGRESSES its bytes to OpenRouter, so they are now ENFORCED controls in
+  `agents.llm` (validated before any read/network, each raising `ValueError`): (a) *Suffix
+  allow-list, on the resolved target* — the `image/png` fallback is removed; a suffix not in
+  `_IMAGE_MIME` is rejected, and the suffix is taken from the RESOLVED path (`resolved.suffix`) not
+  the symbolic name, so a within-workspace symlink `masq.png` → `secret.env` is rejected on `.env`
+  rather than egressing non-image bytes mislabeled as an image. A non-image (incl. a video clip, or
+  `context.json`/`.env`) is never shipped. (b)
+  *Bounds* — a per-attachment size ceiling (`_MAX_ATTACH_BYTES`, `stat()` checked before
+  `read_bytes()`) and a per-call count ceiling (`_MAX_ATTACH_COUNT`) bound memory and payload. (c)
+  *Path containment* — each path resolves under `ctx.paths.video` and must satisfy
+  `resolved.is_relative_to(ctx.paths.video.resolve())` and `is_file()`; `.resolve()` collapses `..`
+  and follows symlinks, so an absolute path, a `..` escape, or a symlink leaving the workspace is
+  rejected, and bytes are read from the validated `resolved` (not the raw join). **Remaining
+  cross-cutting note:** `media/image.py` and `_refs.py` still resolve refs on the accepted
+  trusted-workflow model (they also egress refs to the provider); extend the same confinement +
+  suffix guard to them in the Phase 4 refactor pass for consistency. A `stat`-vs-`read` TOCTOU window
+  remains, acceptable under the trusted-workflow model.

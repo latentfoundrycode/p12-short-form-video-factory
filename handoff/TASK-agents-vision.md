@@ -48,8 +48,11 @@ transport is touched. Every rejection raises `ValueError` (idiomatic for bad arg
       (`.resolve()` collapses `..` and follows symlinks, so an absolute path, a `..` escape, or a
       symlink leaving `ctx.paths.video` all fail `is_relative_to`. `is_relative_to` needs 3.9+; the
       repo is 3.12.)
-   c. **Suffix allow-list (no silent fallback):** look the suffix up in `_IMAGE_MIME`; if it is not
-      present, raise `ValueError` naming the item (this is what rejects `.json`, `.env`, video, etc.).
+   c. **Suffix allow-list (no silent fallback), from the RESOLVED target:** look up
+      `_IMAGE_MIME.get(resolved.suffix.lower())` — take the suffix from `resolved`, NOT from the
+      pre-resolve `path`, so it judges the file actually read (a within-workspace symlink `masq.png`
+      → `secret.env` must be rejected on its `.env` target, not accepted on its `.png` name). If the
+      lookup is `None`, raise `ValueError` naming the item (rejects `.json`, `.env`, video, etc.).
       Do NOT keep the `_IMAGE_MIME.get(..., "image/png")` default any more.
    d. **Size gate:** `size = resolved.stat().st_size; if size > _MAX_ATTACH_BYTES: raise ValueError`.
       (Check `stat().st_size` before `read_bytes()` so an oversize file is never loaded into memory.)

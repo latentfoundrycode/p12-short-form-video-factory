@@ -12,10 +12,15 @@ so a plain relative name works. `attach` items may be a `Path` OR a bare `str`: 
 primary usage passes the `str` return of `media.image.generate()` (`SFVF_Workflow_SDK.md`: one paid
 vision pass over the artefact at intake), so each item is normalised via `Path(item)` before use —
 caught by cross-family review, which found the first cut crashed on a str with `AttributeError`.
-Dry-run is unchanged (still a no-network stub that accepts and ignores `attach`). This unblocks
-vision agents (e.g. a captioner describing a rendered frame) and is the foundation for the parked
-web-image-sourcing relevance check. Residual advisories recorded as H55 (MIME allow-list, attachment
-size bound, cross-cutting path containment).
+Dry-run is unchanged (still a no-network stub that accepts and ignores `attach`). Because the file's
+bytes are egressed to OpenRouter, the `attach` contract is confined and validated before any read or
+network call (each violation raises `ValueError`): an image-suffix allow-list with no silent fallback
+(non-images, incl. video clips, are rejected — video attach is deferred to its own increment), a
+workspace-confinement check (`resolve()` + `is_relative_to(ctx.paths.video)` + `is_file()`, rejecting
+absolute/`..`/symlink escapes so `context.json`/keys can't be egressed), and per-attachment size +
+per-call count ceilings. These enforce what were the H55 advisories. This unblocks vision agents
+(e.g. a captioner describing a rendered frame) and is the foundation for the parked web-image-sourcing
+relevance check. The SDK reference (§6.1) is narrowed to images-only accordingly.
 
 ## 2026-09-06 — Narration: speak clean prose, not the LLM's stage directions
 
