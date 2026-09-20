@@ -1,0 +1,13 @@
+#!/bin/sh
+# Bridge lint gate. Runs the project's settled, activation-independent lint command;
+# a non-zero result blocks the commit. Pre-delegation checkpoint commits bypass this
+# with `git commit --no-verify` (they are recovery anchors and must always succeed).
+if ! .venv/Scripts/python.exe -m ruff check .; then
+  echo "pre-commit: lint gate failed — fix the findings. Use --no-verify ONLY for a checkpoint snapshot." 1>&2
+  exit 1
+fi
+# Windowless gate: no hook or tooling may launch a visible console (KP-014).
+if ! .venv/Scripts/python.exe .cursor/hooks/windowless-check.py .cursor/hooks; then
+  echo "pre-commit: a subprocess launch is missing the windowless flag (or a 'windowless: visible-ok <reason>' marker)." 1>&2
+  exit 1
+fi

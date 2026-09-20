@@ -1,0 +1,16 @@
+---
+description: Workspace boundary — never read or write outside this workspace
+alwaysApply: true
+---
+
+# Workspace boundary
+
+This workspace (the folder you were started in) is the only place you read from or write
+to. Everything you need for a task is inside it; everything you produce goes inside it.
+Never open, create, or modify a file outside it — not the parent folder, not a sibling
+folder such as `../Documents`, not a home-directory or system path. If a task seems to
+require it, stop and say so in your final summary instead.
+
+If the brief, a rule, or the tooling got in your way — contradictory instructions, a check
+that fired wrongly, a step that cost time for no reason — append one dated line describing
+it to `docs/BUILDER_NOTES.md`. Do not try to fix the tooling yourself.

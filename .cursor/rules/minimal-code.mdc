@@ -1,0 +1,67 @@
+---
+description: Minimal-code rule — write the least code that meets the acceptance criteria; safety rules always win
+alwaysApply: false
+globs: **/*.ts, **/*.tsx, **/*.js, **/*.jsx, **/*.py, **/*.go, **/*.rb, **/*.java
+---
+
+<!-- Bundled minimal-code rule body — the frozen source cursor-configurator writes into each
+project's `.cursor/rules/minimal-code.mdc`. Bridge-authored (inspired by the "laziest senior
+dev" decision-ladder idea), NOT an imported third-party file: it is owned, frozen, and
+auditable like the interface and secure-coding rules, so nothing drifts on someone else's
+schedule. Snapshot dated 11 September 2026.
+
+It is a cost/quality lever, not a correctness gate: less generated code means fewer tokens,
+less to review, and usually fewer defects. It is ADVISORY in review (a NOTED item), never a
+FAIL on its own — and it sits BELOW every safety rule (see Precedence). -->
+
+# Minimal Code — write the least code that meets the acceptance criteria
+
+## Precedence (read this first)
+
+The brief's **acceptance criteria**, the project's **security controls** (`secure-coding.mdc`,
+ASVS), the **observability invariants**, and **accessibility / interface** requirements
+(`vercel-interface.mdc`) **always win.** Minimize only *within* what they already require.
+
+- NEVER drop, weaken, or skip a required validation, authorization check, invariant
+  assertion, accessible name, or error path because it would be "simpler."
+- NEVER add a **new** dependency to avoid writing a few lines — the dependency-admission gate
+  still applies; rung 5 below means *already-installed* dependencies only.
+- "Simpler" is a reason to reuse and to omit the speculative, never a reason to omit the
+  required.
+
+## The decision ladder — run it BEFORE writing anything new
+
+Understand the problem first; then, for each piece of code you are about to write, stop at
+the first rung that satisfies it:
+
+1. **Does it need to exist at all?** If no stated requirement needs it, do not write it
+   (YAGNI). No speculative options, no "while I'm here," no future-proofing nobody asked for.
+2. **Is it already in the codebase?** Reuse the existing helper, type, module, or pattern.
+   Extend before you duplicate.
+3. **Is it in the standard library?** Use it. Do not reimplement parsing, formatting, date
+   math, path handling, or collection utilities the runtime already ships.
+4. **Is it a native platform feature?** Prefer the platform's built-in over a hand-rolled
+   equivalent (native form validation, `<dialog>`, `Intl`, OS/filesystem primitives).
+5. **Is it in an already-installed dependency?** Use the capability you already pay for.
+   (Never *add* a dependency for this — see Precedence.)
+6. **Can it be a one-liner?** Then it is a one-liner.
+7. **Only then: the minimum viable code** that meets the acceptance criteria — the smallest
+   correct implementation, no abstraction until a second real use exists.
+
+## What this looks like in practice
+
+- MUST: Prefer deleting or reusing code to writing it; prefer a flat, direct implementation
+  to a layered one until a real second use appears.
+- MUST: No speculative abstraction — no base classes, plugin systems, config knobs, or
+  "extensibility" for requirements that do not exist yet.
+- MUST: No new files, modules, or dependencies that a rung 2–5 answer makes unnecessary.
+- SHOULD: When two correct solutions exist, take the one with less code and fewer moving
+  parts; note the trade-off in the summary if the longer one was tempting.
+- SHOULD: Match the codebase's existing idiom rather than introducing a new one for the
+  same job.
+
+## Review note (for `diff-reviewer` / `plan-critic`)
+
+Flag reinvented wheels, speculative abstraction, and new code where reuse existed — as
+**advisory**, never a `FAIL` on its own, and never when the "extra" code is a required
+security, observability, or accessibility control.
