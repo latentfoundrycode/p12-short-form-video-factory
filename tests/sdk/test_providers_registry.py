@@ -135,12 +135,11 @@ def test_every_provider_row_is_well_formed() -> None:
         assert isinstance(provider.capabilities, frozenset)
 
 
-def test_openrouter_offers_structured_output_only_not_vision() -> None:
-    # OpenRouter is registered so agents.structured is honestly accounted for; agents.vision is
-    # deliberately NOT offered because agents.llm still raises on image attachments (plan §2, §3.7).
+def test_openrouter_offers_structured_output_and_vision() -> None:
+    # OpenRouter offers agents.structured and, since agents.llm image attachments were built
+    # (TASK-agents-vision), agents.vision — both provider-level.
     openrouter = PROVIDERS["openrouter"]
-    assert openrouter.capabilities == frozenset({"agents.structured"})
-    assert "agents.vision" not in openrouter.capabilities
+    assert openrouter.capabilities == frozenset({"agents.structured", "agents.vision"})
 
 
 def test_media_providers_declare_no_provider_level_capabilities() -> None:
@@ -248,9 +247,12 @@ def test_capabilities_offered_ignores_a_partially_configured_provider() -> None:
     ) == frozenset({"video.generate", "video.refs"})
 
 
-def test_real_registry_offers_structured_output_when_openrouter_configured() -> None:
-    # Against the REAL rows: media providers have no models yet, so only OpenRouter contributes.
-    assert capabilities_offered({"OPENROUTER_API_KEY"}) == frozenset({"agents.structured"})
+def test_real_registry_offers_structured_output_and_vision_when_openrouter_configured() -> None:
+    # Against the REAL rows: media providers have no models yet, so only OpenRouter contributes —
+    # now both its provider-level capabilities.
+    assert capabilities_offered({"OPENROUTER_API_KEY"}) == frozenset(
+        {"agents.structured", "agents.vision"}
+    )
     assert capabilities_offered(set()) == frozenset()
 
 
