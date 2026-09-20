@@ -707,7 +707,7 @@ Character turnarounds, location plates, style references, and the first frames y
 
 Which provider backs this is an adapter decision and may change; your code should not care. Costs are reported in whatever unit that provider uses.
 
-### 6.3 `sfvf.media.video` — Higgsfield
+### 6.3 `sfvf.media.video`
 
 ```python
 generate(prompt, *, model,
@@ -715,7 +715,7 @@ generate(prompt, *, model,
          refs=None, duration_s=None, extra=None) -> Path
 ```
 
-Handles the entire awkward part: submitting the job, polling until it finishes, timing out sensibly, retrying, and downloading the result. This is the single most tedious thing to reimplement and the most common source of silent failure, which is why it lives in the chassis. It also heartbeats while polling, which is what keeps a legitimately slow job from being killed by its time limit (§2.8).
+Routes the request through the registered model provider's adapter. The adapter handles submission, completion tracking, timeouts, retries, and downloading the result. This is the single most tedious thing to reimplement and the most common source of silent failure, which is why it lives in the chassis. Long-running adapters also heartbeat while waiting, which keeps a legitimately slow job from being killed by its time limit (§2.8).
 
 `refs` conditions the generation on existing material:
 
@@ -726,11 +726,11 @@ refs=[Ref(kind="character", path=sheet),
 
 `kind` is one of `character`, `style`, `motion`, `video`. Requires the `video.refs` capability, and not every model supports every kind — the adapter reports what it can do, and an unsupported combination fails at the call rather than quietly generating something unconditioned.
 
-`extra` is a raw passthrough of model-specific arguments, recorded verbatim in the decision log. It exists because Higgsfield's tool surface is expected to move and its own client fetches the schema at run time rather than hard-coding it, so waiting for an SDK release to use a new argument would be the wrong trade. The cost is that a call using `extra` is not portable to another provider. Make that trade knowingly, and record why with `ctx.decision()`.
+`extra` is a raw passthrough of model-specific arguments, recorded verbatim in the decision log. It allows a provider's newer arguments to be used without waiting for an SDK release. The cost is that a call using `extra` is not portable to another provider. Make that trade knowingly, and record why with `ctx.decision()`.
 
-Clips are capped at roughly fifteen seconds. Build longer sequences by chaining, using `media.analyze.frame(clip, -1)` as the next clip's `first_frame`, which keeps the visual continuous across the join.
+Clip duration limits vary by provider and model. Build longer sequences by chaining, using `media.analyze.frame(clip, -1)` as the next clip's `first_frame`, which keeps the visual continuous across the join.
 
-Costs are in credits rather than currency.
+Costs are reported in the provider's configured unit.
 
 ### 6.3a Reproducing an existing shot's timing
 

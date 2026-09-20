@@ -1,112 +1,18 @@
 from __future__ import annotations
 
 import importlib
-import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from .._ffmpeg import color_bars
-from .._ratelimit import LIMITER as _LIMITER
 from .._runtime import current_context
 from ..providers import CapabilityError, resolve
 from ..providers._refs import image_ref_url
 from .graphics import _artifact, _sha8
 
-if TYPE_CHECKING:
-    import httpx2
-
-_LIMITER.configure("higgsfield", max_concurrency=2, min_interval_s=0.0)
-
-_HTTP_TIMEOUT_S = 60.0
-_POLL_INTERVAL_S = 2.0
-_POLL_TIMEOUT_S = 1800.0
 _DEFAULT_DURATION_S = 5.0
 _WIDTH = 1080
 _HEIGHT = 1920
 _FPS = 30
-_TERMINAL_ERRORS = frozenset({"failed", "nsfw", "canceled"})
-
-
-def _http_client() -> httpx2.Client:
-    try:
-        import httpx2
-    except ImportError as exc:
-        raise RuntimeError(
-            "media.video.generate requires the 'httpx2' package. Install the SDK "
-            "'openrouter' extra: pip install 'sfvf[openrouter]'."
-        ) from exc
-    return httpx2.Client(
-        base_url="https://api.higgsfield.ai",
-        timeout=_HTTP_TIMEOUT_S,
-    )
-
-
-def _higgsfield_generate(
-    ctx: Any,
-    prompt: str,
-    *,
-    model: str,
-    first_frame: str | None,
-    last_frame: str | None,
-    refs: list[Any] | None,
-    duration_s: float | None,
-    extra: dict[str, Any] | None,
-    dest: Any,
-    rel: str,
-) -> str:
-    if first_frame is not None or last_frame is not None or refs is not None:
-        raise NotImplementedError(
-            "frame/ref-conditioned generation is not yet supported by the Higgsfield adapter"
-        )
-
-    key = ctx.secret("HIGGSFIELD_API_KEY")
-    ctx._budget_reserve("higgsfield", "credits")
-    body: dict[str, Any] = {"prompt": prompt}
-    if duration_s is not None:
-        body["duration"] = duration_s
-    body.update(extra or {})
-    auth = {"Authorization": f"Key {key}"}
-
-    with _http_client() as client:
-        with _LIMITER.slot("higgsfield"):
-            resp = client.post(
-                "/" + model,
-                headers=auth,
-                json=body,
-            )
-        if resp.status_code // 100 != 2:
-            raise RuntimeError(f"Higgsfield submit {resp.status_code}: {resp.text}")
-        submitted: dict[str, Any] = resp.json()
-        request_id = submitted["request_id"]
-        status_url = submitted["status_url"]
-
-        deadline = time.monotonic() + _POLL_TIMEOUT_S
-        completed: dict[str, Any]
-        while True:
-            if time.monotonic() > deadline:
-                raise RuntimeError(
-                    f"Higgsfield poll timed out after {_POLL_TIMEOUT_S:.0f}s "
-                    f"(request_id={request_id})"
-                )
-            poll = client.get(status_url, headers=auth)
-            if poll.status_code // 100 != 2:
-                raise RuntimeError(f"Higgsfield poll {poll.status_code}: {poll.text}")
-            payload: dict[str, Any] = poll.json()
-            status = payload["status"]
-            if status == "completed":
-                completed = payload
-                break
-            if status in _TERMINAL_ERRORS:
-                raise RuntimeError(f"Higgsfield {status}: {payload.get('error')}")
-            ctx.heartbeat("video", waiting_on="higgsfield")
-            time.sleep(_POLL_INTERVAL_S)
-
-        download = client.get(completed["video"]["url"])
-        if download.status_code // 100 != 2:
-            raise RuntimeError(f"Higgsfield download {download.status_code}: {download.text}")
-        dest.write_bytes(download.content)
-
-    ctx.log(f"Higgsfield video model={model} request_id={request_id}")
-    return rel
 
 
 def generate(
@@ -134,19 +40,6 @@ def generate(
         )
         return rel
     provider, mdl = resolve(model)
-    if provider.id == "higgsfield":  # legacy inline path (unchanged behaviour)
-        return _higgsfield_generate(
-            ctx,
-            prompt,
-            model=mdl.slug,
-            first_frame=first_frame,
-            last_frame=last_frame,
-            refs=refs,
-            duration_s=duration_s,
-            extra=extra,
-            dest=dest,
-            rel=rel,
-        )
     if mdl.kind != "video" or "video.generate" not in mdl.capabilities:
         raise CapabilityError(f"model {model!r} cannot generate video")
     if refs and "video.refs" not in mdl.capabilities:

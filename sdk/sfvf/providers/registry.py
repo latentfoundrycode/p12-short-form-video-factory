@@ -139,19 +139,6 @@ PROVIDERS: dict[str, Provider] = {
         "https://api-singapore.klingai.com",
         "kling",
     ),
-    "higgsfield": Provider(
-        "higgsfield",
-        "Higgsfield (deprecated)",
-        ("HIGGSFIELD_API_KEY",),
-        "higgsfield",
-        "credit",
-        "credits",
-        "https://api.higgsfield.ai",
-        "higgsfield",
-        legacy_slugs=frozenset(
-            {"sora-2/text-to-video", "kling-video/v2.5-turbo/pro/text-to-video"}
-        ),
-    ),
 }
 
 MODELS: dict[str, Model] = {
