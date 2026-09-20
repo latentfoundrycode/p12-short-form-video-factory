@@ -59,11 +59,17 @@ def request(
 
         from .base import AdapterError
 
+        if response.status_code == 401:
+            detail = "authentication failed"
+        elif response.status_code == 403:
+            detail = "authorization failed"
+        else:
+            detail = _truncate(response.text)
         raise AdapterError(
             provider,
             status=response.status_code,
             where=where,
-            detail=_truncate(response.text),
+            detail=detail,
         )
 
     from .base import AdapterError
