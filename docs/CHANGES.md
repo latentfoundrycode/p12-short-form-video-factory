@@ -735,3 +735,11 @@ duration. **BFL image is confirmed working live** ($0.04, matching the pinned pr
 expected to complete on the next re-run. Google (Gemini image + Veo) reaches Vertex now but is
 blocked on a Google-Cloud-side authorization issue on the owner's project (Vertex AI enablement /
 service-account role / billing) — no SFVF code change needed there.
+
+## TASK-Pb3 — Google models route to the correct region (Gemini image = global)
+The live re-run (after the owner granted the SA the "Agent Platform User" role, which cleared a 403)
+showed `gemini-3.1-flash-image` returns 404 on `us-central1` but 200 on `global` — it is served only
+on the `global` endpoint, while Veo is `us-central1`-only. Since both share the `google` provider,
+a per-model `region` override was added: the Gemini image model now targets `global`
+(`https://aiplatform.googleapis.com` + `locations/global`) and Veo continues on `us-central1`.
+Google image is expected to complete on the next live re-run.
