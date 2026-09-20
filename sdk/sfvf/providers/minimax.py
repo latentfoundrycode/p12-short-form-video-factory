@@ -63,7 +63,18 @@ def generate_video(
             limiter=LIMITER,
             json=body,
         )
-        task_id = parse_json(submit, provider="minimax", where="submit")["task_id"]
+        submit_json = parse_json(submit, provider="minimax", where="submit")
+        base_resp = submit_json.get("base_resp") or {}
+        if base_resp.get("status_code", 0) != 0:
+            raise AdapterError(
+                "minimax",
+                where="submit",
+                detail=f"submit rejected (base_resp {base_resp.get('status_code')}: "
+                f"{base_resp.get('status_msg') or 'unknown'})",
+            )
+        task_id = submit_json.get("task_id")
+        if not task_id:
+            raise AdapterError("minimax", where="submit", detail="no task_id in submit response")
 
         def _done(payload: dict[str, Any]) -> bool:
             task = payload.get("task") or {}

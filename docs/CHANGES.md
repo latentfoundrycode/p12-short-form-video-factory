@@ -765,3 +765,8 @@ sent (the auth header value and the token after a `Bearer`/`Basic` scheme) from 
 body — so a provider that reflects the key on a 400/500 no longer leaks it into an SFVF error or log,
 while the rest of the error body is preserved for debugging. Security hardening only, no user-visible
 change.
+
+## MiniMax — clean error on a rejected submit
+A MiniMax video submit that the API rejects with an HTTP 200 + a non-zero `base_resp.status_code`
+(e.g. insufficient balance) now surfaces a clear provider error instead of an internal `KeyError`, so
+a failed MiniMax run reports why. Robustness only, no user-visible feature change.
