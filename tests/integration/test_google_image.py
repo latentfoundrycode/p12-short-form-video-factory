@@ -114,7 +114,9 @@ def _handler():
         if request.method == "POST" and path == "/token":
             return httpx2.Response(200, json={"access_token": _TOKEN, "expires_in": 3600})
         if request.method == "POST" and path.endswith(":generateContent"):
-            assert host == "us-central1-aiplatform.googleapis.com"
+            # Live smoke (2026-09-20): gemini-3.1-flash-image is served on `global`, not
+            # us-central1 (which 404s); the image model overrides the provider region.
+            assert host == "aiplatform.googleapis.com"
             return httpx2.Response(200, json=_image_response())
         raise AssertionError(f"unexpected request: {request.method} {host}{path}")
 
@@ -215,10 +217,11 @@ def test_generate_real_exchanges_token_calls_generatecontent_decodes_image(
     # SA token was exchanged at the SA's token_uri before the API call.
     assert any(r.method == "POST" and r.url.path == "/token" for r in seen)
     call = next(r for r in seen if r.url.path.endswith(":generateContent"))
-    assert call.url.host == "us-central1-aiplatform.googleapis.com"
-    # project comes from the SA-JSON's project_id; region from the Provider row.
+    assert call.url.host == "aiplatform.googleapis.com"
+    # project comes from the SA-JSON's project_id; the image model overrides region to `global`
+    # (confirmed live: gemini-3.1-flash-image is global-only; us-central1 404s).
     assert call.url.path == (
-        "/v1/projects/sfvf-test-project/locations/us-central1"
+        "/v1/projects/sfvf-test-project/locations/global"
         "/publishers/google/models/gemini-3.1-flash-image:generateContent"
     )
     assert call.headers.get("authorization") == f"Bearer {_TOKEN}"
