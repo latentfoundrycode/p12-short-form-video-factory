@@ -190,8 +190,11 @@ def llm(
             raise ValueError(f"too many attachments: {len(attach)} (max {_MAX_ATTACH_COUNT})")
         parts: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
         base = ctx.paths.video.resolve()
+        validated: list[tuple[Path, str]] = []
         for item in attach:
             path = Path(item)
+            if path.anchor:
+                raise ValueError(f"attach must be a workspace-relative path: {item!r}")
             resolved = (ctx.paths.video / path).resolve()
             if not resolved.is_relative_to(base):
                 raise ValueError(f"attach path escapes the workspace: {item!r}")
@@ -205,6 +208,8 @@ def llm(
                 raise ValueError(
                     f"attach exceeds size limit ({size} > {_MAX_ATTACH_BYTES}): {item!r}"
                 )
+            validated.append((resolved, mime))
+        for resolved, mime in validated:
             encoded = base64.b64encode(resolved.read_bytes()).decode()
             parts.append(
                 {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}}
