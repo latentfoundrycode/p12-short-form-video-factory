@@ -743,3 +743,11 @@ on the `global` endpoint, while Veo is `us-central1`-only. Since both share the 
 a per-model `region` override was added: the Gemini image model now targets `global`
 (`https://aiplatform.googleapis.com` + `locations/global`) and Veo continues on `us-central1`.
 Google image is expected to complete on the next live re-run.
+
+## TASK-Ph — a failed paid call no longer leaks its budget reserve
+When a provider image/video call fails, the SDK now RELEASES the budget reserve it took before the
+call, so failed runs no longer accumulate against the per-day spend ceiling (previously a failed
+run's reserve lingered and, after enough failures, could block legitimate runs). On success the real
+cost is reconciled the moment the paid call returns — before the artifact is written — so a disk/IO
+failure after a successful (billed) generation records the true charge instead of zeroing it. No
+user-visible feature change; budget-accounting accuracy only.
