@@ -186,12 +186,13 @@ def llm(
         return stub
 
     if attach:
-        if len(attach) > _MAX_ATTACH_COUNT:
-            raise ValueError(f"too many attachments: {len(attach)} (max {_MAX_ATTACH_COUNT})")
+        items = tuple(attach)
+        if len(items) > _MAX_ATTACH_COUNT:
+            raise ValueError(f"too many attachments: {len(items)} (max {_MAX_ATTACH_COUNT})")
         parts: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
         base = ctx.paths.video.resolve()
         validated: list[tuple[Path, str]] = []
-        for item in attach:
+        for item in items:
             path = Path(item)
             if path.anchor:
                 raise ValueError(f"attach must be a workspace-relative path: {item!r}")
