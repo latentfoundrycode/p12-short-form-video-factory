@@ -423,3 +423,11 @@ increments that logged them.
   `stopped-budget` by T2b-2c) instead of passing through ungated. Enforced at the reserve site (after the
   key read, non-dry path only); passthrough contract reversed, three real-adapter integration suites
   migrated to a permissive budget, secret suites untouched.
+- **H50 — non-auth error bodies still surfaced verbatim** (follow-up from TASK-Ph1; security-auditor
+  advisory, non-blocking). TASK-Ph1 scrubbed the reflected credential from 401/403 error detail in
+  `_http.request()` — the observed live leak. Two defence-in-depth gaps remain, deliberately left for
+  a later increment because TASK-Ph1 preserves 400/5xx bodies for diagnostics on purpose: (a) a
+  provider that reflects the `Authorization` header on a 400/402/5xx would still leak the key via
+  `detail=_truncate(response.text)` — prefer redacting a known credential-token pattern from ALL
+  non-2xx bodies (keeps diagnostics, fails safe) over status-gating; (b) 407 Proxy-Authentication is
+  not in the fixed-detail branch (low risk — reflects proxy creds, not the submitted API key).

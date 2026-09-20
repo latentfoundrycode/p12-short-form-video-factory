@@ -709,3 +709,10 @@ Two gaps are inherent to the current test suite and are **not** exercised by CI 
   tsc only (lint + types), not runtime behaviour (verified manually in a browser).
 
 No tests are skipped, weakened, or disabled to make CI green — all 150 run.
+
+## TASK-Ph1 — provider error hygiene (401/403 credential scrub)
+A 401 or 403 from an image/video provider now surfaces a fixed detail ("authentication failed" /
+"authorization failed") instead of the raw response body. A provider that echoes the submitted API
+key in its auth-failure body therefore no longer leaks that key into the SFVF error or its logs.
+Other error statuses (400/5xx) are unchanged and still carry the truncated body for diagnostics.
+No user-visible feature change; internal error text only.
