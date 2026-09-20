@@ -20,9 +20,11 @@ from __future__ import annotations
 import json
 
 import httpx2
+import pytest
 from sfvf.providers import bfl as bfl_adapter
 from sfvf.providers import minimax as mm_adapter
 from sfvf.providers import resolve
+from sfvf.providers.base import AdapterError
 
 _BFL_KEY = "bfl-fake-not-real"
 _MM_KEY = "mm-fake-not-real"
@@ -175,3 +177,42 @@ def test_minimax_sends_default_ratio_and_duration(monkeypatch) -> None:
     body = bodies[0]
     assert "ratio" in body, "submit must carry a default ratio — MiniMax 400s without it for t2va"
     assert "duration" in body, "submit must carry a duration for predictable metered cost"
+
+
+@pytest.mark.parametrize(
+    "bad_polling_url",
+    [
+        "https://evil.example.com/v1/get_result?id=bfl-xyz",  # foreign host
+        "http://api.bfl.ai/v1/get_result?id=bfl-xyz",  # bfl host but plaintext http
+    ],
+)
+def test_bfl_refuses_a_polling_url_not_on_an_https_bfl_host(
+    monkeypatch, bad_polling_url: str
+) -> None:
+    # H51: request() merges the x-key (BFL_API_KEY) header onto EVERY request, including the poll to
+    # the provider-returned polling_url. A spoofed/MITM'd submit response could name a foreign or
+    # plaintext host and harvest the key. The adapter must refuse a polling_url that is not https
+    # on a *.bfl.ai host BEFORE polling — so the key never leaves BFL-designated https hosts.
+    provider, model = resolve("bfl/flux-1.1-pro")
+
+    def handler(request: httpx2.Request, seen: list[httpx2.Request]) -> httpx2.Response:
+        method, path = request.method, request.url.path
+        if method == "POST" and path.startswith("/v1/flux"):
+            return httpx2.Response(200, json={"id": "bfl-xyz", "polling_url": bad_polling_url})
+        # If the adapter (unguarded) polls the bad host, answer Ready so it would "succeed" — which
+        # means the key already left. The test asserts below that no such request was ever made.
+        return httpx2.Response(
+            200, json={"id": "bfl-xyz", "status": "Ready", "result": {"sample": bad_polling_url}}
+        )
+
+    seen = _install(monkeypatch, bfl_adapter, handler)
+    with pytest.raises(AdapterError) as exc:
+        bfl_adapter.generate(
+            "a cat", model=model, provider=provider, size=None, secrets={"BFL_API_KEY": _BFL_KEY}
+        )
+    assert "bfl" in str(exc.value)
+    # The credential-bearing poll must NOT have reached the disallowed host.
+    bad_host = httpx2.URL(bad_polling_url).host
+    assert not any(r.method == "GET" and r.url.host == bad_host for r in seen), (
+        "adapter must refuse the polling_url before sending the x-key to a disallowed host"
+    )
