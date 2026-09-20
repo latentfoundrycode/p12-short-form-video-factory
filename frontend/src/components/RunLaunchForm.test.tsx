@@ -1,0 +1,162 @@
+// Frozen contract — Stage P, P-9b: RunLaunchForm renders registry-backed model selects.
+//
+// A manifest param whose `options_from` is a models source is no longer a manual text box: the form
+// fetches `/api/providers/options/{source}` (via api.fetchProviderOptions) and renders a real select
+// of models across providers. The §3.7 acceptance (PROVIDER_LAYER_PLAN.md:289-291):
+//   - the select submits the `id` and shows the `label`;
+//   - unconfigured entries are disabled with a visible suffix;
+//   - a recorded-but-removed id (the current value, absent from the options) is shown, marked;
+//   - a failed options fetch → manual text input plus a notice;
+//   - no console.error in the happy path.
+//
+// The API is mocked (no network). DOM contract strings the implementation must produce:
+//   unconfigured option text  = `${label} (not configured)`  and the <option> is disabled
+//   removed current value     = an <option> whose text contains the id and "(removed)"
+//   fetch-failure notice      = a field-help note whose text contains "manual"
+
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { RunLaunchForm } from "./RunLaunchForm";
+import type { Param } from "../types";
+
+vi.mock("../api", () => ({
+  startRun: vi.fn(),
+  fetchProviderOptions: vi.fn(),
+}));
+
+// Imported after the mock is registered; typed via vi.mocked below.
+import { fetchProviderOptions, startRun } from "../api";
+
+const mockFetchOptions = vi.mocked(fetchProviderOptions);
+const mockStartRun = vi.mocked(startRun);
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
+function modelParam(overrides: Partial<Param> = {}): Param {
+  return {
+    key: "model",
+    type: "select",
+    label: "Model",
+    required: false,
+    default: null,
+    help: null,
+    affects_cost: false,
+    min: null,
+    max: null,
+    step: null,
+    options: null,
+    options_from: "sfvf.models:video",
+    placeholder: null,
+    unit: null,
+    ...overrides,
+  };
+}
+
+function renderForm(param: Param, onStarted = vi.fn()) {
+  render(
+    <RunLaunchForm
+      workflowId="wf"
+      workflowName="WF"
+      params={[param]}
+      onStarted={onStarted}
+      onCancel={() => {}}
+    />,
+  );
+  return onStarted;
+}
+
+describe("RunLaunchForm options_from model select", () => {
+  it("shows the label and submits the id", async () => {
+    mockFetchOptions.mockResolvedValue([
+      { id: "byteplus/seedance-2.5", label: "Seedance 2.5", configured: true, offered: true },
+    ]);
+    mockStartRun.mockResolvedValue({ run_id: "r1" });
+    renderForm(modelParam());
+
+    const option = await screen.findByRole("option", { name: "Seedance 2.5" });
+    expect(option).toBeInTheDocument();
+    expect(option).toHaveValue("byteplus/seedance-2.5");
+
+    const select = screen.getByRole("combobox", { name: /Model/ });
+    await userEvent.selectOptions(select, "byteplus/seedance-2.5");
+    await userEvent.click(screen.getByRole("button", { name: /start run/i }));
+
+    await waitFor(() => {
+      expect(mockStartRun).toHaveBeenCalled();
+    });
+    const body = mockStartRun.mock.calls[0][1] as { params: Record<string, unknown> };
+    expect(body.params.model).toBe("byteplus/seedance-2.5");
+  });
+
+  it("requests the options for the param's source", async () => {
+    mockFetchOptions.mockResolvedValue([]);
+    renderForm(modelParam());
+    await waitFor(() => {
+      expect(mockFetchOptions).toHaveBeenCalledWith("sfvf.models:video");
+    });
+  });
+
+  it("disables an unconfigured option and marks it with a suffix", async () => {
+    mockFetchOptions.mockResolvedValue([
+      { id: "google/veo-3.1-generate-001", label: "Veo 3.1", configured: false, offered: true },
+    ]);
+    renderForm(modelParam());
+
+    const option = await screen.findByRole("option", { name: /Veo 3\.1.*not configured/i });
+    expect(option).toBeDisabled();
+  });
+
+  it("shows a recorded value that is no longer offered, marked", async () => {
+    mockFetchOptions.mockResolvedValue([
+      { id: "byteplus/seedance-2.5", label: "Seedance 2.5", configured: true, offered: true },
+    ]);
+    renderForm(modelParam({ default: "legacy/removed-model" }));
+
+    const option = await screen.findByRole("option", { name: /legacy\/removed-model.*removed/i });
+    expect(option).toBeInTheDocument();
+  });
+
+  it("falls back to manual input with a notice when the options fetch fails", async () => {
+    mockFetchOptions.mockRejectedValue(new Error("not found"));
+    renderForm(modelParam());
+
+    const input = await screen.findByRole("textbox", { name: /Model/ });
+    expect(input).toBeInTheDocument();
+    expect(screen.getByText(/manual/i)).toBeInTheDocument();
+  });
+
+  it("logs no console.error in the happy path", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockFetchOptions.mockResolvedValue([
+      { id: "a/b", label: "Model AB", configured: true, offered: true },
+    ]);
+    renderForm(modelParam());
+
+    await screen.findByRole("option", { name: "Model AB" });
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("renders fetched options as checkboxes for a multiselect", async () => {
+    mockFetchOptions.mockResolvedValue([
+      { id: "a/b", label: "Model AB", configured: true, offered: true },
+    ]);
+    renderForm(modelParam({ type: "multiselect" }));
+
+    const checkbox = await screen.findByRole("checkbox", { name: /Model AB/ });
+    expect(checkbox).toBeInTheDocument();
+  });
+
+  it("does not fetch options for a param without options_from", async () => {
+    renderForm({ ...modelParam(), type: "text", options_from: null });
+    // let any effects settle
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: /Model/ })).toBeInTheDocument();
+    });
+    expect(mockFetchOptions).not.toHaveBeenCalled();
+  });
+});
