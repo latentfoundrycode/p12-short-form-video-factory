@@ -126,3 +126,52 @@ def test_minimax_sends_a_default_resolution(monkeypatch) -> None:
     assert "resolution" in bodies[0], (
         "submit must carry a default resolution — MiniMax 400s without it"
     )
+
+
+def test_minimax_sends_default_ratio_and_duration(monkeypatch) -> None:
+    # The live smoke proved MiniMax also 400s on a missing `ratio` ("required for t2va, cannot be
+    # 'adaptive'"); and a video request should carry a concrete `duration` for predictable metered
+    # cost. Both must be present by default (overridable via extra / duration_s).
+    provider, model = resolve("minimax/hailuo-h3")
+    video_url = "https://cdn.minimax.example.test/o2.mp4"
+    bodies: list[dict] = []
+
+    def handler(request: httpx2.Request, seen: list[httpx2.Request]) -> httpx2.Response:
+        method, path = request.method, request.url.path
+        if method == "POST" and path == "/v2/video_generation":
+            bodies.append(json.loads(request.read()))
+            return httpx2.Response(200, json={"task_id": "mm-2", "base_resp": {"status_code": 0}})
+        if method == "GET" and path.startswith("/v2/query/video_generation/"):
+            return httpx2.Response(
+                200,
+                json={
+                    "task": {
+                        "id": "mm-2",
+                        "status": "succeeded",
+                        "content": {"url": video_url},
+                        "usage": {"total_seconds": 6.0},
+                    },
+                    "base_resp": {"status_code": 0},
+                },
+            )
+        if method == "GET" and path == "/o2.mp4":
+            return httpx2.Response(200, content=_MP4)
+        raise AssertionError(f"unexpected {method} {path}")
+
+    _install(monkeypatch, mm_adapter, handler)
+    mm_adapter.generate_video(
+        "a wave",
+        model=model,
+        provider=provider,
+        first_frame_url=None,
+        last_frame_url=None,
+        ref_urls=[],
+        duration_s=None,
+        extra=None,
+        secrets={"MINIMAX_API_KEY": _MM_KEY},
+        ctx=_Ctx(),
+    )
+    assert bodies, "no submit body captured"
+    body = bodies[0]
+    assert "ratio" in body, "submit must carry a default ratio — MiniMax 400s without it for t2va"
+    assert "duration" in body, "submit must carry a duration for predictable metered cost"

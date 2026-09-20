@@ -15,6 +15,8 @@ _POLL_INTERVAL_S = 5.0  # monkeypatched to 0 in tests
 _POLL_TIMEOUT_S = 1800.0
 _TERMINAL_FAIL = frozenset({"failed", "cancelled"})
 _DEFAULT_RESOLUTION = "768P"
+_DEFAULT_RATIO = "16:9"
+_DEFAULT_DURATION = 6
 
 
 def _client(base_url: str) -> Any:
@@ -24,7 +26,7 @@ def _client(base_url: str) -> Any:
 
 
 def video_estimate(model: Any, duration_s: float | None, extra: dict[str, Any] | None) -> float:
-    return float(model.price.amount * (duration_s or 5.0))  # $/s * seconds
+    return float(model.price.amount * (duration_s or _DEFAULT_DURATION))  # $/s * seconds
 
 
 def generate_video(
@@ -49,6 +51,8 @@ def generate_video(
         body["duration"] = round(duration_s)
     body.update(extra or {})  # resolution / ratio passthrough
     body.setdefault("resolution", _DEFAULT_RESOLUTION)
+    body.setdefault("ratio", _DEFAULT_RATIO)
+    body.setdefault("duration", _DEFAULT_DURATION)
     with _client(provider.base_url) as client:
         submit = request(
             client,

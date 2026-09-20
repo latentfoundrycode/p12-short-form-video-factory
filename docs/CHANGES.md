@@ -726,3 +726,12 @@ still overridable), so `/v2/video_generation` no longer rejects the request. Als
 `smoke_provider` workflow env now installs `cryptography`, so Google (Gemini image + Veo) auth can
 load — previously any Google generation failed before starting. Net: BFL, MiniMax, and Google models
 are now usable end-to-end (unit contracts green; to be confirmed at the live-smoke re-run).
+
+## TASK-Pb2 — MiniMax sends ratio + duration (second live-smoke round)
+The live re-run confirmed the resolution fix, then surfaced that MiniMax `/v2/video_generation`
+also requires a `ratio` for text-to-video. The adapter now defaults `ratio="16:9"` and
+`duration=6s` (both overridable), and the budget reserve estimate is aligned to that default
+duration. **BFL image is confirmed working live** ($0.04, matching the pinned price); MiniMax is
+expected to complete on the next re-run. Google (Gemini image + Veo) reaches Vertex now but is
+blocked on a Google-Cloud-side authorization issue on the owner's project (Vertex AI enablement /
+service-account role / billing) — no SFVF code change needed there.
