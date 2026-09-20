@@ -37,7 +37,10 @@ def _parse_size(size: str | None) -> tuple[int, int]:
 
 def _submit_poll_download(client: Any, auth: Any, path: str, body: dict[str, Any]) -> Output:
     submit = request(client, "POST", path, provider="bfl", auth=auth, limiter=LIMITER, json=body)
-    task_id = parse_json(submit, provider="bfl", where="submit")["id"]
+    submit_json = parse_json(submit, provider="bfl", where="submit")
+    polling_url = submit_json.get("polling_url")
+    if not polling_url:
+        raise AdapterError("bfl", where="submit", detail="no polling_url in submit response")
 
     def _done(payload: dict[str, Any]) -> bool:
         status = payload.get("status")
@@ -47,12 +50,10 @@ def _submit_poll_download(client: Any, auth: Any, path: str, body: dict[str, Any
             raise AdapterError("bfl", where="poll", detail=f"status {status}")
         return False
 
-    # id is a task handle, not a secret; putting it in the query is fine
-    # (auth is the x-key header).
     payload = poll_until(
         client,
         method="GET",
-        path=f"/v1/get_result?id={task_id}",
+        path=polling_url,
         provider="bfl",
         auth=auth,
         is_done=_done,
