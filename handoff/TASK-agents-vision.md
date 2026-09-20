@@ -10,6 +10,30 @@
 > **This round's whole job:** make `attach` accept `str` OR `Path` and stop the crash. See
 > "The fix — round 2" below; the round-1 description that follows is retained for context.
 
+## The fix — round 5 (snapshot the attach input) — `sdk/sfvf/agents.py`
+
+> **Round 5.** Cross-family Review B: the count ceiling checks `len(attach)` then iterates
+> `attach`; on a mutable/odd sequence whose `__len__` disagrees with iteration, the ceiling can be
+> bypassed. Snapshot the input once so the counted and iterated sequence are identical.
+
+At the very top of the `if attach:` block — BEFORE the `len(...) > _MAX_ATTACH_COUNT` count gate —
+snapshot to an immutable tuple in a NEW local, and use that local everywhere the code currently uses
+`attach` (the count check AND the validation loop):
+```python
+    if attach:
+        items = tuple(attach)
+        if len(items) > _MAX_ATTACH_COUNT:
+            raise ValueError(f"too many attachments: {len(items)} (max {_MAX_ATTACH_COUNT})")
+        ...
+        for item in items:
+            ...
+```
+Use a NEW name (`items`) rather than reassigning `attach` — `attach` is annotated
+`list[Path | str] | None`, so rebinding it to a tuple would trip mypy. The count check and the
+pass-1 loop both read `items`; pass 2 already reads its own `validated` list. One added line plus the
+`attach`→`items` swap at those two use sites; nothing else changes. Frozen test:
+`tests/integration/test_agents_openrouter_llm.py::test_llm_count_ceiling_uses_a_snapshot_not_a_mutable_len`.
+
 ## The fix — round 4 (capability + validation completeness)
 
 > **Round 4.** Cross-family Review B found the feature is unreachable end-to-end and two validation

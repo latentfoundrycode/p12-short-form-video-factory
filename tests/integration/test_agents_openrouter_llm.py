@@ -421,6 +421,36 @@ def test_llm_rejects_too_many_attachments_before_any_call(
     assert seen == []
 
 
+def test_llm_count_ceiling_uses_a_snapshot_not_a_mutable_len(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The count ceiling must be enforced on a stable SNAPSHOT of `attach`, not on a mutable input
+    # whose __len__ can disagree with what iteration yields. An odd sequence that under-reports its
+    # length via __len__ (here always 1) but iterates many items would otherwise slip past the
+    # ceiling and encode all of them. Snapshotting (e.g. `tuple(attach)`) makes the counted sequence
+    # and the iterated sequence identical, so the true item count is what the ceiling sees.
+    monkeypatch.setattr(agents, "_MAX_ATTACH_COUNT", 8, raising=True)
+    # 20 REAL, valid, small images so the ONLY possible rejection is the count ceiling.
+    names = [f"img{i}.png" for i in range(20)]
+    for name in names:
+        (tmp_path / name).write_bytes(b"\x89PNG\r\n\x1a\nX")
+
+    class _LyingLen(list):  # type: ignore[type-arg]
+        def __len__(self) -> int:
+            return 1  # lie: claim a single item regardless of contents
+
+    attach = _LyingLen(names)  # 20 valid items, but __len__ reports 1
+
+    def boom(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        raise AssertionError("count ceiling must be enforced on the true item count")
+
+    seen = _install_mock(monkeypatch, boom)
+    ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(ValueError):
+        _run(ctx, lambda: agents.llm("x", agent="w", model="m", attach=attach))
+    assert seen == []
+
+
 def test_llm_rejects_image_named_symlink_to_nonimage_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
