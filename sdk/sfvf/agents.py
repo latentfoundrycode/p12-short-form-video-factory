@@ -172,7 +172,7 @@ def llm(
     agent: str,
     model: str,
     schema: dict[str, Any] | None = None,
-    attach: list[Path] | None = None,
+    attach: list[Path | str] | None = None,
 ) -> str | dict[str, Any]:
     ctx = current_context()
     if ctx.dry_run:
@@ -185,7 +185,8 @@ def llm(
 
     if attach:
         parts: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-        for path in attach:
+        for item in attach:
+            path = Path(item)
             mime = _IMAGE_MIME.get(path.suffix.lower(), "image/png")
             encoded = base64.b64encode((ctx.paths.video / path).read_bytes()).decode()
             parts.append(
