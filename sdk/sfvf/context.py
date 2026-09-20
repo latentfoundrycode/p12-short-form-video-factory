@@ -3,8 +3,9 @@ from __future__ import annotations
 import hashlib
 import math
 import shutil
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from contextvars import copy_context
 from dataclasses import dataclass
 from pathlib import Path
@@ -552,6 +553,20 @@ class Context:
         if token is None or cfg is None:
             return
         self._budget_guard(cfg).reconcile(token, actual=actual, note=note)
+
+    @contextmanager
+    def _budget_reserved(
+        self, meter: str, unit: str, estimate: float | None = None
+    ) -> Iterator[str]:
+        """Reserve for a paid call and RELEASE the reserve if the block raises (so a call that fails
+        at the provider does not leak its reserve toward per_day). On SUCCESS the caller reconciles
+        the real cost via record_cost AFTER the block, before writing artifacts."""
+        token = self._budget_reserve(meter, unit, estimate=estimate)
+        try:
+            yield token
+        except BaseException:
+            self._budget_reconcile(token, actual=0.0, note="released")
+            raise
 
     def record_cost(
         self,

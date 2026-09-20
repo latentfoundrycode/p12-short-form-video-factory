@@ -440,3 +440,14 @@ increments that logged them.
   under the trusted-first-party model, hence advisory. Fix: before polling, assert `polling_url` is
   https and its host is `*.bfl.ai` (a small BFL region allowlist), reject otherwise — preserves the
   region fix while keeping the key on BFL-designated hosts. Do as a RED-first follow-up increment.
+- **H52 — budget reserve-release on failure understates a bills-then-errors provider** (from
+  TASK-Ph; security-auditor advisory, non-blocking). The reserve-release fix reconciles a failed
+  paid call to `actual=0.0`. This is correct for the common case (the call failed before the
+  provider billed) and closes the leak that over-counted per_day. But if a provider bills
+  internally and THEN raises before returning a cost, releasing to 0 *understates* real spend
+  (permissive — under-counts, lets more through) vs the old behaviour which over-counted. No cost
+  is known at raise time, so this is inherent to the narrowed design. Options if it ever matters:
+  release at-adapter failures to the *estimate* (fail-closed on money, but re-introduces the
+  accumulation the fix removed) or add a "released-uncertain" ledger kind that still counts toward
+  per_day. Related functional edge (not a defect): if `write_bytes` fails after `record_cost`, the
+  real charge is recorded with no artifact on disk (an orphaned but truthful charge).

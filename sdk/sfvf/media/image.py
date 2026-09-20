@@ -30,17 +30,12 @@ def generate(
     secrets = {name: ctx.secret(name) for name in provider.secret_names}
     adapter = importlib.import_module(f"sfvf.providers.{provider.adapter}")
     price = adapter.image_price(mdl, size)
-    token = ctx._budget_reserve(provider.meter, provider.unit, estimate=price)
-    out = adapter.generate(
-        prompt,
-        model=mdl,
-        provider=provider,
-        size=size,
-        secrets=secrets,
-    )
+    with ctx._budget_reserved(provider.meter, provider.unit, estimate=price) as token:
+        out = adapter.generate(prompt, model=mdl, provider=provider, size=size, secrets=secrets)
+    # paid call returned (provider billed) -> reconcile the KNOWN cost before any filesystem write:
+    ctx.record_cost(provider.meter, provider.unit, price, "priced", token=token)
     dest, rel = _artifact(ctx, f"image-{stem}.{_EXT.get(out.media_type, 'png')}")
     dest.write_bytes(out.data)
-    ctx.record_cost(provider.meter, provider.unit, price, "priced", token=token)
     return rel
 
 
@@ -65,17 +60,17 @@ def edit(
     refs_bytes = [(ctx.paths.video / ref["path"]).read_bytes() for ref in (refs or [])]
     adapter = importlib.import_module(f"sfvf.providers.{provider.adapter}")
     price = adapter.image_price(mdl, None)
-    token = ctx._budget_reserve(provider.meter, provider.unit, estimate=price)
-    out = adapter.edit(
-        image_bytes,
-        prompt,
-        model=mdl,
-        provider=provider,
-        size=None,
-        refs_bytes=refs_bytes,
-        secrets=secrets,
-    )
+    with ctx._budget_reserved(provider.meter, provider.unit, estimate=price) as token:
+        out = adapter.edit(
+            image_bytes,
+            prompt,
+            model=mdl,
+            provider=provider,
+            size=None,
+            refs_bytes=refs_bytes,
+            secrets=secrets,
+        )
+    ctx.record_cost(provider.meter, provider.unit, price, "priced", token=token)
     dest, rel = _artifact(ctx, f"image-{stem}.{_EXT.get(out.media_type, 'png')}")
     dest.write_bytes(out.data)
-    ctx.record_cost(provider.meter, provider.unit, price, "priced", token=token)
     return rel
