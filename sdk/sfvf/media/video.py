@@ -52,19 +52,19 @@ def generate(
     ref_urls = [image_ref_url(ctx, r["path"]) for r in (refs or [])]
     adapter = importlib.import_module(f"sfvf.providers.{provider.adapter}")
     estimate = adapter.video_estimate(mdl, duration_s, extra)
-    token = ctx._budget_reserve(provider.meter, provider.unit, estimate=estimate)
-    out, cost = adapter.generate_video(
-        prompt,
-        model=mdl,
-        provider=provider,
-        first_frame_url=first_url,
-        last_frame_url=last_url,
-        ref_urls=ref_urls,
-        duration_s=duration_s,
-        extra=extra,
-        secrets=secrets,
-        ctx=ctx,
-    )
-    dest.write_bytes(out.data)
+    with ctx._budget_reserved(provider.meter, provider.unit, estimate=estimate) as token:
+        out, cost = adapter.generate_video(
+            prompt,
+            model=mdl,
+            provider=provider,
+            first_frame_url=first_url,
+            last_frame_url=last_url,
+            ref_urls=ref_urls,
+            duration_s=duration_s,
+            extra=extra,
+            secrets=secrets,
+            ctx=ctx,
+        )
     ctx.record_cost(provider.meter, provider.unit, cost.amount, cost.source, token=token)
+    dest.write_bytes(out.data)
     return rel
