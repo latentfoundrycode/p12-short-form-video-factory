@@ -1,5 +1,38 @@
 # TASK — agents.vision: send image attachments as OpenRouter multimodal content
 
+> **Round 2 (str-attach normalisation).** Round 1 (already committed on this branch) built the
+> multimodal path but assumed each `attach` item is a `Path`. Cross-family Review B found a real
+> defect: the DOCUMENTED primary usage passes a bare relative `str` — `media.image.generate()`
+> returns `str`, and `docs/SFVF_Workflow_SDK.md` shows `sheet = media.image.generate(...)` then
+> `agents.llm(..., attach=[sheet])`. The current code calls `path.suffix` on that str →
+> `AttributeError`. A new frozen RED test now pins the str case:
+> `tests/integration/test_agents_openrouter_llm.py::test_llm_accepts_str_attach_path_as_documented_media_image_return`.
+> **This round's whole job:** make `attach` accept `str` OR `Path` and stop the crash. See
+> "The fix — round 2" below; the round-1 description that follows is retained for context.
+
+## The fix — round 2 (`sdk/sfvf/agents.py`)
+
+1. Widen the signature annotation: `attach: list[Path] | None` → `attach: list[Path | str] | None`.
+2. In the `if attach:` loop, normalise each item to a `Path` FIRST, then use it for both the suffix
+   lookup and the read — e.g.:
+   ```python
+       for item in attach:
+           path = Path(item)
+           mime = _IMAGE_MIME.get(path.suffix.lower(), "image/png")
+           encoded = base64.b64encode((ctx.paths.video / path).read_bytes()).decode()
+           ...
+   ```
+   `Path(item)` is a no-op for a `Path` and converts a `str`, so both documented call shapes work.
+   Keep everything else (the text part, the data-URI part shape, the `else` plain-string branch,
+   `body`, dry-run, schema, cost, return) exactly as round 1 left it. `Path` is already imported.
+
+Both frozen tests must now pass: the original `..._attaches_images_as_openrouter_multimodal_content`
+(Path items) AND the new `..._accepts_str_attach_path_as_documented_media_image_return` (str items).
+
+---
+
+## Round-1 context (already committed; retained for reference)
+
 A frozen RED contract fails: `tests/integration/test_agents_openrouter_llm.py::test_llm_attaches_images_as_openrouter_multimodal_content`. In `agents.llm`, the real (non-dry-run) path raises `NotImplementedError` when `attach` is provided. Implement it: build OpenRouter (OpenAI-compatible) multimodal message content — a text part plus one `image_url` data-URI part per attached image.
 
 ## The fix — `sdk/sfvf/agents.py`
