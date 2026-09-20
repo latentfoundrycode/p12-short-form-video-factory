@@ -10,6 +10,58 @@
 > **This round's whole job:** make `attach` accept `str` OR `Path` and stop the crash. See
 > "The fix — round 2" below; the round-1 description that follows is retained for context.
 
+## The fix — round 3 (attach hardening) — `sdk/sfvf/agents.py`
+
+> **Round 3.** Cross-family Review B flagged that `agents.llm` reads a caller-named path and
+> egresses its raw bytes to OpenRouter, so the `attach` contract must be CONFINED and VALIDATED
+> before any read or network call. Four new frozen RED tests pin this (all in
+> `tests/integration/test_agents_openrouter_llm.py`):
+> `test_llm_rejects_non_image_attach_suffix_before_any_call`,
+> `test_llm_rejects_attach_path_escaping_workspace_before_any_call`,
+> `test_llm_rejects_oversize_attachment_before_any_call`,
+> `test_llm_rejects_too_many_attachments_before_any_call`.
+> Round 1 (multimodal path) and round 2 (str normalisation) are already committed; keep them.
+
+Implement, in the `if attach:` block of `llm`, validation that runs BEFORE any file is read or the
+transport is touched. Every rejection raises `ValueError` (idiomatic for bad argument values here).
+
+1. Add two module-level constants near `_IMAGE_MIME`:
+   ```python
+   _MAX_ATTACH_BYTES = 20 * 1024 * 1024  # 20 MiB per attachment
+   _MAX_ATTACH_COUNT = 8                 # per llm() call
+   ```
+   The tests monkeypatch these, so they MUST be module-level names read at call time.
+
+2. Count gate first: if `len(attach) > _MAX_ATTACH_COUNT`, raise `ValueError` (nothing read yet).
+
+3. For each item, in this order, BEFORE reading bytes:
+   a. Normalise: `path = Path(item)` (round 2).
+   b. **Confine:** resolve the candidate under the workspace and require it stays inside —
+      ```python
+      base = ctx.paths.video.resolve()
+      resolved = (ctx.paths.video / path).resolve()
+      if not resolved.is_relative_to(base):
+          raise ValueError(f"attach path escapes the workspace: {item!r}")
+      if not resolved.is_file():
+          raise ValueError(f"attach is not a regular file: {item!r}")
+      ```
+      (`.resolve()` collapses `..` and follows symlinks, so an absolute path, a `..` escape, or a
+      symlink leaving `ctx.paths.video` all fail `is_relative_to`. `is_relative_to` needs 3.9+; the
+      repo is 3.12.)
+   c. **Suffix allow-list (no silent fallback):** look the suffix up in `_IMAGE_MIME`; if it is not
+      present, raise `ValueError` naming the item (this is what rejects `.json`, `.env`, video, etc.).
+      Do NOT keep the `_IMAGE_MIME.get(..., "image/png")` default any more.
+   d. **Size gate:** `size = resolved.stat().st_size; if size > _MAX_ATTACH_BYTES: raise ValueError`.
+      (Check `stat().st_size` before `read_bytes()` so an oversize file is never loaded into memory.)
+   e. Read + encode as before, but from `resolved` (the confined path):
+      `base64.b64encode(resolved.read_bytes()).decode()`.
+
+Keep the multimodal content shape (text part + one `image_url` data-URI part per image), the `else`
+plain-string branch, `body`, dry-run, schema, cost, and return exactly as they are. The `attach:
+list[Path | str] | None` annotation from round 2 stays.
+
+All frozen attach tests must pass: the two positive ones (Path, str) AND the four new rejection ones.
+
 ## The fix — round 2 (`sdk/sfvf/agents.py`)
 
 1. Widen the signature annotation: `attach: list[Path] | None` → `attach: list[Path | str] | None`.

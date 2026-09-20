@@ -332,3 +332,90 @@ def test_llm_accepts_str_attach_path_as_documented_media_image_return(
     image_parts = [p for p in content if p.get("type") == "image_url"]
     assert len(image_parts) == 1
     assert image_parts[0]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+# --- agents.vision attach hardening (H55 a/b/c enforced as controls) ---------------------------
+# `agents.llm` reads a caller-named path and egresses its bytes to OpenRouter. The attach contract
+# is therefore confined and validated BEFORE any read/network: only image files, only within the
+# run workspace (ctx.paths.video), and bounded in size and count. Every rejection is a ValueError
+# raised before the transport is touched. (Video attach is a documented FUTURE capability — for now
+# a non-image suffix, including a video clip, is rejected rather than mislabeled as an image.)
+
+
+def test_llm_rejects_non_image_attach_suffix_before_any_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # H55(a): no silent image/png fallback. A non-image file (here .json — e.g. the run's own
+    # context.json) must be REJECTED, never base64'd and shipped to the provider as image/png.
+    (tmp_path / "notes.json").write_bytes(b'{"secret": "do-not-egress"}')
+
+    def boom(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        raise AssertionError("a rejected attach must fail before any network call")
+
+    seen = _install_mock(monkeypatch, boom)
+    ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(ValueError):
+        _run(
+            ctx,
+            lambda: agents.llm("x", agent="w", model="m", attach=["notes.json"]),
+        )
+    assert seen == []
+
+
+def test_llm_rejects_attach_path_escaping_workspace_before_any_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # H55(c): an absolute or ../-traversing attach path must NOT read outside ctx.paths.video, even
+    # for an image suffix — otherwise an attacker-influenced path egresses an arbitrary file. The
+    # video dir is tmp_path; this .png sits OUTSIDE it, addressed absolutely.
+    outside = tmp_path.parent / "outside-workspace.png"
+    outside.write_bytes(b"\x89PNG\r\n\x1a\nOUTSIDE")
+
+    def boom(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        raise AssertionError("an out-of-workspace attach must fail before any network call")
+
+    seen = _install_mock(monkeypatch, boom)
+    ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(ValueError):
+        _run(
+            ctx,
+            lambda: agents.llm("x", agent="w", model="m", attach=[str(outside)]),
+        )
+    assert seen == []
+
+
+def test_llm_rejects_oversize_attachment_before_any_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # H55(b): a per-attachment size ceiling bounds memory and request size. Pin that the ceiling
+    # is enforced (monkeypatched small so the test writes no huge file); a file over it is rejected.
+    monkeypatch.setattr(agents, "_MAX_ATTACH_BYTES", 16, raising=True)
+    (tmp_path / "big.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"X" * 64)  # > 16 bytes
+
+    def boom(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        raise AssertionError("an oversize attach must fail before any network call")
+
+    seen = _install_mock(monkeypatch, boom)
+    ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(ValueError):
+        _run(ctx, lambda: agents.llm("x", agent="w", model="m", attach=["big.png"]))
+    assert seen == []
+
+
+def test_llm_rejects_too_many_attachments_before_any_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # H55(b): a count ceiling bounds aggregate payload. Monkeypatched to 1 so two attachments trip
+    # it without depending on the production number.
+    monkeypatch.setattr(agents, "_MAX_ATTACH_COUNT", 1, raising=True)
+    (tmp_path / "a.png").write_bytes(b"\x89PNG\r\n\x1a\nA")
+    (tmp_path / "b.png").write_bytes(b"\x89PNG\r\n\x1a\nB")
+
+    def boom(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        raise AssertionError("too many attachments must fail before any network call")
+
+    seen = _install_mock(monkeypatch, boom)
+    ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(ValueError):
+        _run(ctx, lambda: agents.llm("x", agent="w", model="m", attach=["a.png", "b.png"]))
+    assert seen == []
