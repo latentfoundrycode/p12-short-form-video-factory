@@ -2,6 +2,17 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-21 — agents.vision: real-mode LLM image attachments
+
+`agents.llm(..., attach=[...])` previously raised `NotImplementedError` on the real path. It now
+sends OpenRouter multimodal content: a text part plus one `image_url` data-URI part per attached
+image (base64-encoded, MIME from the file suffix via `_IMAGE_MIME`, `image/png` fallback). Attach
+paths resolve against `ctx.paths.video` — the same workspace convention as `media.image` image/refs —
+so a plain relative name works. Dry-run is unchanged (still a no-network stub that accepts and ignores
+`attach`). This unblocks vision agents (e.g. a captioner describing a rendered frame) and is the
+foundation for the parked web-image-sourcing relevance check. Residual advisories recorded as H55
+(MIME allow-list, attachment size bound, cross-cutting path containment).
+
 ## 2026-09-06 — Narration: speak clean prose, not the LLM's stage directions
 
 The first real video's narration read scene directions and speaker labels aloud ("[Scene: ...] Narrator

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import math
 from pathlib import Path
@@ -19,6 +20,13 @@ _HTTP_TIMEOUT_S = 60.0
 _RETRY_AFTER_DEFAULT_S = 1.0
 _MAX_ATTEMPTS = 3
 _RESEARCH_MODEL = "openai/gpt-4o-mini"
+_IMAGE_MIME = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
 
 
 class Source(TypedDict):
@@ -176,13 +184,17 @@ def llm(
         return stub
 
     if attach:
-        raise NotImplementedError(
-            "agents.llm vision attachments are not yet supported by the OpenRouter adapter"
-        )
-    body: dict[str, Any] = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-    }
+        parts: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for path in attach:
+            mime = _IMAGE_MIME.get(path.suffix.lower(), "image/png")
+            encoded = base64.b64encode((ctx.paths.video / path).read_bytes()).decode()
+            parts.append(
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}}
+            )
+        messages: list[dict[str, Any]] = [{"role": "user", "content": parts}]
+    else:
+        messages = [{"role": "user", "content": prompt}]
+    body: dict[str, Any] = {"model": model, "messages": messages}
     if schema is not None:
         body["response_format"] = {
             "type": "json_schema",

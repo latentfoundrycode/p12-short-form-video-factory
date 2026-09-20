@@ -470,3 +470,17 @@ increments that logged them.
   *Non-verbatim reflection*: `_redact` is exact-match, so a credential the server echoes re-encoded /
   case-folded / whitespace-split survives — acceptable given high-entropy alphanumeric tokens and the
   declared "precise, only-what-we-sent" boundary. Fold the guard in next time `_http.py` is touched.
+- **H55 — `agents.llm` image-attachment residuals** (from TASK-agents-vision; security-auditor +
+  secret-sentinel advisories on the merged multimodal fix, non-blocking). (a) *MIME fallback*: an
+  unknown/empty attach suffix falls back to `image/png` in `_IMAGE_MIME.get(..., "image/png")`
+  (`agents.py`), which can mislabel a non-PNG file to the provider; consider rejecting unknown
+  suffixes (an explicit allow-list error) rather than a silent default. (b) *No size bound*: attach
+  bytes are `read_bytes()` then base64-encoded straight into the request body with no max-bytes
+  guard, so a large file inflates memory and the OpenRouter payload; add a per-attachment size
+  ceiling. (c) *Path containment (cross-cutting)*: `(ctx.paths.video / path).read_bytes()` resolves
+  attach names within the run workspace, matching the accepted `media/image.py` convention — but
+  Python's `/` discards the base when `path` is absolute, and `../` is not neutralized, so a
+  caller-supplied absolute/traversing attach path could read an arbitrary file. This is IDENTICAL to
+  the existing image/refs trust model (not a regression introduced here); if that convention is ever
+  hardened (`resolve()` + a containment check under `ctx.paths.video`), apply the same guard to
+  `agents.llm` attach, `media/image.py`, and `_refs.py` together. All three low risk, advisory.
