@@ -445,3 +445,57 @@ def test_llm_rejects_image_named_symlink_to_nonimage_target(
     with pytest.raises(ValueError):
         _run(ctx, lambda: agents.llm("x", agent="w", model="m", attach=["masq.png"]))
     assert seen == []
+
+
+def test_llm_rejects_absolute_attach_path_even_inside_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # attach paths are workspace-RELATIVE (that is what media.image.generate() returns). An anchored
+    # path — absolute, drive-qualified, or a Windows UNC `\\host\share\...` — is rejected outright,
+    # BEFORE any resolve, even when it happens to point inside the workspace. Rejecting before
+    # resolving also means an attacker-supplied UNC path is never resolved (which could touch the
+    # network). Here an absolute path to a real in-workspace image must still be refused.
+    (tmp_path / "in.png").write_bytes(b"\x89PNG\r\n\x1a\nIN")
+    abs_inside = str((tmp_path / "in.png").resolve())
+
+    def boom(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        raise AssertionError("an absolute attach path must be rejected before any network call")
+
+    seen = _install_mock(monkeypatch, boom)
+    ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(ValueError):
+        _run(ctx, lambda: agents.llm("x", agent="w", model="m", attach=[abs_inside]))
+    assert seen == []
+
+
+def test_llm_validates_all_attachments_before_reading_any(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The contract is "validated before anything is read": for [good.png, bad.json] the invalid
+    # second item must be rejected BEFORE the first is read into memory. Pins two-pass validation
+    # (validate every entry, then read/encode) — no partial read of a valid entry on rejection.
+    (tmp_path / "good.png").write_bytes(b"\x89PNG\r\n\x1a\nGOOD")
+    (tmp_path / "bad.json").write_bytes(b'{"x": 1}')
+
+    reads: list[str] = []
+    real_read = Path.read_bytes
+
+    def spy(self: Path) -> bytes:
+        reads.append(str(self))
+        return real_read(self)
+
+    monkeypatch.setattr(Path, "read_bytes", spy)
+
+    def boom(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        raise AssertionError("a rejected attach list must fail before any network call")
+
+    seen = _install_mock(monkeypatch, boom)
+    ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(ValueError):
+        _run(
+            ctx,
+            lambda: agents.llm("x", agent="w", model="m", attach=["good.png", "bad.json"]),
+        )
+    assert seen == []
+    # the valid first entry must NOT have been read before the invalid second was rejected
+    assert not any(r.endswith("good.png") for r in reads)

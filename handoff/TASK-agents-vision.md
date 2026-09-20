@@ -10,6 +10,54 @@
 > **This round's whole job:** make `attach` accept `str` OR `Path` and stop the crash. See
 > "The fix — round 2" below; the round-1 description that follows is retained for context.
 
+## The fix — round 4 (capability + validation completeness)
+
+> **Round 4.** Cross-family Review B found the feature is unreachable end-to-end and two validation
+> gaps. Three changes across TWO files this round.
+
+### 4.1 Advertise the capability — `sdk/sfvf/providers/registry.py`
+The `openrouter` Provider advertises `capabilities=frozenset({"agents.structured"})`. No provider
+offers `agents.vision`, so the registry validator (`app/registry/validate.py::_capability_problems`)
+raises `CAPABILITY_UNAVAILABLE` for any workflow declaring `requires_capabilities =
+["agents.vision"]` — the feature can't run. Add `agents.vision`:
+```python
+capabilities=frozenset({"agents.structured", "agents.vision"}),
+```
+(That is the only registry change. `agents.vision` is already in `KNOWN_CAPABILITIES`.)
+
+### 4.2 Reject anchored paths before resolving — `sdk/sfvf/agents.py`
+`attach` is workspace-RELATIVE. An anchored path (absolute, drive-qualified, or Windows UNC
+`\\host\share\...`) must be rejected BEFORE `resolve()` — both because the doc promises it and so an
+attacker-supplied UNC path is never resolved (which could touch the network). For each item, right
+after `path = Path(item)`:
+```python
+if path.anchor:
+    raise ValueError(f"attach must be a workspace-relative path: {item!r}")
+```
+(`path.anchor` is non-empty for absolute/drive/UNC/rooted paths and empty for a relative name.) The
+existing confinement (`resolve()` + `is_relative_to`) still catches `..`/symlink escapes.
+
+### 4.3 Validate ALL entries before reading any — `sdk/sfvf/agents.py`
+The contract is "validated before anything is read", but the single loop reads/encodes each item as
+it goes, so a valid first item is read before a later invalid one is rejected. Make it TWO passes:
+- **Pass 1** — for every item: `path = Path(item)`, anchored check (4.2), confinement
+  (`resolved`/`is_relative_to`/`is_file`), suffix allow-list from `resolved.suffix` (raise if not in
+  `_IMAGE_MIME`), size gate (`resolved.stat().st_size > _MAX_ATTACH_BYTES`). Collect `(resolved,
+  mime)` for each. Read NOTHING in this pass. (The count gate stays first, before pass 1.)
+- **Pass 2** — for each collected `(resolved, mime)`: `base64.b64encode(resolved.read_bytes())` and
+  append the `image_url` part. Only here is any file read.
+
+Keep the text part first, the `else` plain-string branch, `body`, dry-run, schema, cost, and return
+exactly as they are.
+
+New/updated frozen tests to satisfy (do NOT edit them):
+- `tests/registry/test_capability_availability.py` (agents.vision now offered when OpenRouter
+  configured), `tests/api/test_providers.py::test_provider_capabilities_are_config_independent`.
+- `tests/integration/test_agents_openrouter_llm.py::test_llm_rejects_absolute_attach_path_even_inside_workspace`
+  and `::test_llm_validates_all_attachments_before_reading_any` (plus all prior attach tests).
+
+Scope this round: `sdk/sfvf/providers/registry.py` AND `sdk/sfvf/agents.py` only.
+
 ## The fix — round 3 (attach hardening) — `sdk/sfvf/agents.py`
 
 > **Round 3.** Cross-family Review B flagged that `agents.llm` reads a caller-named path and

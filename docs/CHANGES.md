@@ -6,21 +6,25 @@ A running log of notable changes outside the per-task build history.
 
 `agents.llm(..., attach=[...])` previously raised `NotImplementedError` on the real path. It now
 sends OpenRouter multimodal content: a text part plus one `image_url` data-URI part per attached
-image (base64-encoded, MIME from the file suffix via `_IMAGE_MIME`, `image/png` fallback). Attach
-paths resolve against `ctx.paths.video` — the same workspace convention as `media.image` image/refs —
-so a plain relative name works. `attach` items may be a `Path` OR a bare `str`: the documented
-primary usage passes the `str` return of `media.image.generate()` (`SFVF_Workflow_SDK.md`: one paid
-vision pass over the artefact at intake), so each item is normalised via `Path(item)` before use —
-caught by cross-family review, which found the first cut crashed on a str with `AttributeError`.
-Dry-run is unchanged (still a no-network stub that accepts and ignores `attach`). Because the file's
-bytes are egressed to OpenRouter, the `attach` contract is confined and validated before any read or
-network call (each violation raises `ValueError`): an image-suffix allow-list with no silent fallback
-(non-images, incl. video clips, are rejected — video attach is deferred to its own increment), a
-workspace-confinement check (`resolve()` + `is_relative_to(ctx.paths.video)` + `is_file()`, rejecting
-absolute/`..`/symlink escapes so `context.json`/keys can't be egressed), and per-attachment size +
-per-call count ceilings. These enforce what were the H55 advisories. This unblocks vision agents
-(e.g. a captioner describing a rendered frame) and is the foundation for the parked web-image-sourcing
-relevance check. The SDK reference (§6.1) is narrowed to images-only accordingly.
+image, base64-encoded. `attach` items may be a `Path` OR a bare `str` — the documented primary usage
+passes the `str` return of `media.image.generate()` (`SFVF_Workflow_SDK.md`: one paid vision pass
+over the artefact at intake), so each item is normalised via `Path(item)`. `agents.vision` is now a
+provider-level OpenRouter capability, so a workflow declaring `requires_capabilities =
+["agents.vision"]` validates and runs once OpenRouter is configured. Dry-run is unchanged (still a
+no-network stub that accepts and ignores `attach`).
+
+Because the file's bytes are egressed to OpenRouter, the `attach` contract is confined and every
+entry is validated before ANY file is read or the transport is touched (two-pass; each violation
+raises `ValueError`): a per-call count ceiling; anchored paths (absolute / drive-qualified / Windows
+UNC) are rejected outright before resolving (attach is workspace-relative); a workspace-confinement
+check (`resolve()` + `is_relative_to(ctx.paths.video)` + `is_file()`) rejects `..`/symlink escapes so
+`context.json`/keys can't be egressed; an image-suffix allow-list taken from the RESOLVED target with
+no fallback rejects non-images (incl. video clips and a symlink to a non-image target); and a
+per-attachment size ceiling (`stat()` before read). These enforce what were the H55 advisories. Video
+attachments are deferred to their own increment (to be verified against the provider's real video
+API). This unblocks vision agents (e.g. a captioner describing a rendered frame) and is the foundation
+for the parked web-image-sourcing relevance check. The SDK reference (§6.1) is narrowed to
+images-only accordingly. The multi-round hardening was driven by decorrelated cross-family review.
 
 ## 2026-09-06 — Narration: speak clean prose, not the LLM's stage directions
 

@@ -45,10 +45,12 @@ def test_providers_lists_every_registry_provider(tmp_path: Path) -> None:
 
 
 def test_provider_capabilities_are_config_independent(tmp_path: Path) -> None:
-    # openrouter offers agents.structured (provider-level); openai offers image.generate (model).
+    # openrouter offers agents.structured + agents.vision (provider-level); openai offers
+    # image.generate (model).
     body = _client(tmp_path).get("/api/providers").json()
     by_id = {p["id"]: p for p in body["providers"]}
     assert "agents.structured" in by_id["openrouter"]["capabilities"]
+    assert "agents.vision" in by_id["openrouter"]["capabilities"]
     assert "image.generate" in by_id["openai"]["capabilities"]
     assert "video.generate" in by_id["minimax"]["capabilities"]
 
