@@ -45,6 +45,7 @@ class Model:
     label: str
     price: PriceHint
     notes: str = ""
+    region: str = ""
 
 
 class UnknownModelError(LookupError):
@@ -176,6 +177,7 @@ MODELS: dict[str, Model] = {
             "Vertex :generateContent; ~$0.067/1MP output, flat-priced; the real price is "
             "confirmed at the live smoke; 2.5-flash-image is deprecated (retire 2027-03-15)"
         ),
+        region="global",
     ),
     "google/veo-3.1-generate-001": Model(
         id="google/veo-3.1-generate-001",

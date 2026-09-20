@@ -101,7 +101,7 @@ def _generate_content(
 ) -> Output:
     sa = _sa(secrets)
     project = sa["project_id"]
-    region = provider.region or "us-central1"
+    region = model.region or provider.region or "us-central1"
     base, path = _endpoint(region, project, model.slug, "generateContent")
     auth = _auth(sa)
     body = {
@@ -185,7 +185,7 @@ def generate_video(
         raise CapabilityError("veo does not support last-frame conditioning")
     sa = _sa(secrets)
     project = sa["project_id"]
-    region = provider.region or "us-central1"
+    region = model.region or provider.region or "us-central1"
     base, submit_path = _endpoint(region, project, model.slug, "predictLongRunning")
     _, poll_path = _endpoint(region, project, model.slug, "fetchPredictOperation")
     auth = _auth(sa)
