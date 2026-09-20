@@ -758,3 +758,10 @@ The BFL image adapter now refuses to poll a result URL unless it is `https` on a
 with the poll; this guard stops a tampered/spoofed response from directing that key to an attacker's
 host. Legitimate regional endpoints (e.g. `api.us1.bfl.ai`) are unaffected. Security hardening only,
 no user-visible change.
+
+## TASK-H50 — provider errors redact the submitted credential on any status
+Building on the earlier 401/403 scrub: the shared HTTP layer now removes the exact credential it
+sent (the auth header value and the token after a `Bearer`/`Basic` scheme) from *any* non-2xx error
+body — so a provider that reflects the key on a 400/500 no longer leaks it into an SFVF error or log,
+while the rest of the error body is preserved for debugging. Security hardening only, no user-visible
+change.
