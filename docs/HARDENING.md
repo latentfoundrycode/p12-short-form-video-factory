@@ -451,3 +451,12 @@ increments that logged them.
   accumulation the fix removed) or add a "released-uncertain" ledger kind that still counts toward
   per_day. Related functional edge (not a defect): if `write_bytes` fails after `record_cost`, the
   real charge is recorded with no artifact on disk (an orphaned but truthful charge).
+- **H53 — BFL host guard residuals** (from H51; security-auditor advisories on the merged guard,
+  non-blocking). (a) *Parser differential*: `_require_bfl_host` validates the polling_url host with
+  `urllib.urlsplit`, but the actual GET is issued by `httpx2`'s own URL parser; if the two ever
+  disagreed on the authority for some exotic input the allow-list could be bypassed. All dangerous
+  cases tested resolve correctly under both; to fully close the theoretical gap, pass the
+  already-validated host to the request or re-check `response.request.url` after the call. (b) The
+  `result.sample` image is fetched via `download_bytes` with no host restriction — it carries NO
+  auth header (so not credential egress), but it is an attacker-influenceable outbound GET (minor
+  SSRF surface); pre-existing, not introduced by H51. Both low risk, recorded for a future pass.
