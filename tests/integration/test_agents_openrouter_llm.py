@@ -264,8 +264,9 @@ def test_llm_attaches_images_as_openrouter_multimodal_content(
 ) -> None:
     # agents.vision: with `attach`, the real path sends OpenRouter multimodal content — a text part
     # plus one image_url data-URI part per attached image — instead of raising NotImplementedError.
-    img = tmp_path / "shot.png"
-    img.write_bytes(b"\x89PNG\r\n\x1a\nFAKE-IMAGE-BYTES")
+    # `attach` paths are resolved against ctx.paths.video (== tmp_path here), the same workspace
+    # convention as media.image's image/refs — so a plain relative name works.
+    (tmp_path / "shot.png").write_bytes(b"\x89PNG\r\n\x1a\nFAKE-IMAGE-BYTES")
 
     def handler(_request: httpx2.Request, _n: int) -> httpx2.Response:
         return httpx2.Response(
@@ -278,7 +279,10 @@ def test_llm_attaches_images_as_openrouter_multimodal_content(
     out = _run(
         ctx,
         lambda: agents.llm(
-            "describe the image", agent="captioner", model="openai/gpt-4o", attach=[img]
+            "describe the image",
+            agent="captioner",
+            model="openai/gpt-4o",
+            attach=[Path("shot.png")],
         ),
     )
     assert out == "a red square"

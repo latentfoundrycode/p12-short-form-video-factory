@@ -34,7 +34,7 @@ A frozen RED contract fails: `tests/integration/test_agents_openrouter_llm.py::t
            parts: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
            for path in attach:
                mime = _IMAGE_MIME.get(path.suffix.lower(), "image/png")
-               encoded = base64.b64encode(path.read_bytes()).decode()
+               encoded = base64.b64encode((ctx.paths.video / path).read_bytes()).decode()
                parts.append(
                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}}
                )
@@ -44,7 +44,7 @@ A frozen RED contract fails: `tests/integration/test_agents_openrouter_llm.py::t
        body: dict[str, Any] = {"model": model, "messages": messages}
    ```
 
-The dry-run branch (which accepts and ignores `attach`) is unchanged. The `response_format`/schema handling, `_post_chat_completion`, cost, and return-parsing that follow are unchanged.
+Resolve each attach path against `ctx.paths.video` (the workspace convention that `media.image` uses for its `image`/`refs` paths — see `media/image.py:59-60`), so a relative name works and reads stay within the run's workspace. The dry-run branch (which accepts and ignores `attach`) is unchanged. The `response_format`/schema handling, `_post_chat_completion`, cost, and return-parsing that follow are unchanged.
 
 ## Scope (ONLY this file)
 - `sdk/sfvf/agents.py`
