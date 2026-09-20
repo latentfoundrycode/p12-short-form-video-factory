@@ -60,7 +60,7 @@ jobs:
           npm ci --prefix tools/hyperframes
           node tools/hyperframes/node_modules/hyperframes/bin/hyperframes.mjs browser ensure
 
-      # --- The six-command gate. Each check runs even if a prior CHECK failed, so
+      # --- The seven-command gate. Each check runs even if a prior CHECK failed, so
       # --- one CI run surfaces ALL failing checks at once; but every check is skipped
       # --- if either install step failed, and any check failure fails the job. ---
       - name: ruff check
@@ -84,6 +84,11 @@ jobs:
         if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' && steps.deps_ffmpeg.conclusion == 'success' }}
         working-directory: frontend
         run: npm run typecheck
+
+      - name: vitest (npm run test)
+        if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' && steps.deps_ffmpeg.conclusion == 'success' }}
+        working-directory: frontend
+        run: npm run test
 
       - name: pytest
         if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' && steps.deps_ffmpeg.conclusion == 'success' && steps.deps_hf.conclusion == 'success' }}
