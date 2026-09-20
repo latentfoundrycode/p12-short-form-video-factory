@@ -294,3 +294,41 @@ def test_llm_attaches_images_as_openrouter_multimodal_content(
     image_parts = [p for p in content if p.get("type") == "image_url"]
     assert len(image_parts) == 1
     assert image_parts[0]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_llm_accepts_str_attach_path_as_documented_media_image_return(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # agents.vision contract: the DOCUMENTED usage (SFVF_Workflow_SDK.md — "one vision pass over
+    # the artefact itself") passes the return of `media.image.generate()`, which is a RELATIVE
+    # `str`, not a Path:  sheet = media.image.generate(...); agents.llm(..., attach=[sheet]).
+    # So `attach` items may be plain `str` and must be normalised (e.g. `Path(item)`) before
+    # `.suffix`/read — a bare str must NOT raise AttributeError. This test pins that str attach
+    # paths produce the same multimodal shape as Path ones.
+    (tmp_path / "sheet.png").write_bytes(b"\x89PNG\r\n\x1a\nFAKE-IMAGE-BYTES")
+
+    def handler(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}}], "usage": {"cost": 0.001}},
+        )
+
+    seen = _install_mock(monkeypatch, handler)
+    ctx = _ctx(tmp_path, dry_run=False)
+    out = _run(
+        ctx,
+        lambda: agents.llm(
+            "describe this sheet",
+            agent="asset-describer",
+            model="openai/gpt-4o",
+            attach=["sheet.png"],  # a bare str, exactly as media.image.generate() returns it
+        ),
+    )
+    assert out == "ok"
+
+    body = json.loads(seen[0].read())
+    content = body["messages"][0]["content"]
+    assert isinstance(content, list), "a str attach must still produce multimodal (list) content"
+    image_parts = [p for p in content if p.get("type") == "image_url"]
+    assert len(image_parts) == 1
+    assert image_parts[0]["image_url"]["url"].startswith("data:image/png;base64,")
