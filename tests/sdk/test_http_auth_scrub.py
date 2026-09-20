@@ -79,3 +79,31 @@ def test_request_keeps_the_body_detail_on_a_server_error() -> None:
 
     assert marker in str(exc.value)  # non-auth bodies stay surfaced for debugging
     assert "503" in str(exc.value)
+
+
+def test_request_redacts_the_submitted_credential_from_a_non_auth_error_body() -> None:
+    # H50: a provider that reflects the Authorization header on a 400/5xx would leak the SUBMITTED
+    # key — the 401/403 fixed-string path does not cover other statuses. The credential we sent
+    # (both the full "Bearer <token>" and the bare <token>) is redacted from every non-2xx body,
+    # while the rest of the diagnostic body survives.
+    sent = "super-secret-sent-token-abcdef123456"
+    marker = "upstream-queue-overflow-marker-xyz"
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(500, text=f"error: {marker}; echoed Authorization: Bearer {sent}")
+
+    with pytest.raises(AdapterError) as exc:
+        request(
+            _client(handler),
+            "POST",
+            "/generate",
+            provider="acme",
+            auth=BearerAuth(sent),
+            limiter=_idle_limiter(),
+        )
+
+    message = str(exc.value)
+    detail = exc.value.detail or ""
+    assert sent not in message  # the submitted credential (token) is redacted from a non-auth body
+    assert marker in detail  # the rest of the 5xx body is preserved for diagnostics
+    assert "500" in message
