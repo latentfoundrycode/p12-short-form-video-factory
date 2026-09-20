@@ -1,0 +1,52 @@
+[workflow]
+id = "smoke_provider"
+name = "Provider Smoke"
+version = "1.0.0"
+entrypoint = "main:run"
+sdk = "1"
+
+[[params]]
+key = "kind"
+type = "select"
+label = "Media kind"
+required = true
+options = ["image", "video"]
+
+[[params]]
+key = "model"
+type = "select"
+label = "Model"
+required = true
+options_from = "sfvf.models"
+
+[[requires_keys]]
+name = "OPENROUTER_API_KEY"
+label = "OpenRouter"
+
+[[requires_keys]]
+name = "OPENAI_API_KEY"
+label = "OpenAI"
+
+[[requires_keys]]
+name = "GOOGLE_SA_JSON"
+label = "Google (Agent Platform / Vertex)"
+
+[[requires_keys]]
+name = "BFL_API_KEY"
+label = "Black Forest Labs"
+
+[[requires_keys]]
+name = "BYTEPLUS_ARK_API_KEY"
+label = "BytePlus ModelArk"
+
+[[requires_keys]]
+name = "MINIMAX_API_KEY"
+label = "MiniMax"
+
+[[requires_keys]]
+name = "KLING_ACCESS_KEY"
+label = "KlingAI access key"
+
+[[requires_keys]]
+name = "KLING_SECRET_KEY"
+label = "KlingAI secret key"
