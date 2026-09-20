@@ -3,7 +3,7 @@
 Wires the T2a `sfvf._budget.BudgetGuard` into the two paid providers so a run cannot spend past its
 ceilings or a kill-switch. The gate lives in the SDK because that is where the calls happen:
 - OpenRouter (`agents.llm` / `agents.research`, via `_post_chat_completion`) — meter "openrouter".
-- Higgsfield (`media.video.generate`) — meter "higgsfield".
+- media.video providers (e.g. BytePlus/Seedance, via the registry router) — the provider's meter.
 
 Before each real call the SDK RESERVES a conservative per-meter estimate; if the reservation is
 refused (ceiling or kill-switch), the call is blocked and NO HTTP request is made. After a
@@ -32,9 +32,7 @@ from sfvf.context import BudgetConfig, Context, ContextFile, ContextPaths
 from sfvf.media import video
 
 _OR_BASE = "https://openrouter.ai/api/v1"
-_HF_BASE = "https://api.higgsfield.ai"
 _OR_KEY = "sk-fake-inmemory-not-real"
-_HF_KEY = "id-fake:secret-fake"
 
 
 def _ledger_lines(path: Path) -> list[dict]:
@@ -92,13 +90,6 @@ def _install_or_mock(monkeypatch: pytest.MonkeyPatch, transport: httpx2.MockTran
         agents, "_http_client", lambda: httpx2.Client(base_url=_OR_BASE, transport=transport)
     )
     monkeypatch.setattr(agents, "_LIMITER", RateLimiter())
-
-
-def _install_hf_mock(monkeypatch: pytest.MonkeyPatch, transport: httpx2.MockTransport) -> None:
-    monkeypatch.setattr(
-        video, "_http_client", lambda: httpx2.Client(base_url=_HF_BASE, transport=transport)
-    )
-    monkeypatch.setattr(video, "_LIMITER", RateLimiter())
 
 
 def _or_success(cost: float) -> httpx2.MockTransport:
@@ -238,26 +229,18 @@ def test_configured_meter_without_estimate_fails_closed(
         reset_active(token)
 
 
-# --- Higgsfield gate ---
+# --- Video budget gate ---
 
 
-def test_video_blocked_when_budget_exhausted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    budget = _budget(
-        tmp_path, per_day={"higgsfield": 5.0}, estimates={"higgsfield": 100.0}
-    )  # 100 > 5 → refused
-    _install_hf_mock(monkeypatch, _NoCallTransport())
-    ctx = _ctx(
-        tmp_path,
-        budget=budget,
-        secrets={"OPENROUTER_API_KEY": _OR_KEY, "HIGGSFIELD_API_KEY": _HF_KEY},
-    )
+def test_video_blocked_when_budget_exhausted(tmp_path: Path):
+    # A registered video model whose per-call estimate exceeds a tiny per-day ceiling is refused at
+    # the reserve — before the adapter makes any HTTP call — so the ledger stays empty.
+    budget = _budget(tmp_path, per_day={"byteplus": 0.0001}, estimates={})
+    ctx = _ctx(tmp_path, budget=budget, secrets={"BYTEPLUS_ARK_API_KEY": "ark-fake-not-real"})
     token = set_active(ctx)
     try:
         with pytest.raises(BudgetExceededError):
-            # A legacy Higgsfield slug routes to the inline Higgsfield path, which reserves the
-            # "higgsfield" meter before any HTTP; the exhausted ceiling refuses it. (Since P-4 made
-            # media.video a registry router, the model must resolve — a bare placeholder does not.)
-            video.generate("a cat", model="sora-2/text-to-video")
+            video.generate("a cat", model="byteplus/seedance-2.5", duration_s=4.0)
     finally:
         reset_active(token)
     assert _ledger_lines(budget.ledger_path) == []
