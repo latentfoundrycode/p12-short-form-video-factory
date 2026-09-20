@@ -4,7 +4,7 @@ from app.registry.problems import Problem, ProblemCode
 from app.registry.validate import WorkflowEntry, validate
 
 
-def scan(workflows_dir: Path) -> list[WorkflowEntry]:
+def scan(workflows_dir: Path, *, offered: frozenset[str] | None = None) -> list[WorkflowEntry]:
     if not workflows_dir.is_dir():
         return []
     entries: list[WorkflowEntry] = []
@@ -12,7 +12,7 @@ def scan(workflows_dir: Path) -> list[WorkflowEntry]:
     for toml_path in found:
         folder = toml_path.parent
         try:
-            entries.append(validate(folder))
+            entries.append(validate(folder, offered=offered))
         except Exception as exc:
             entries.append(
                 WorkflowEntry(

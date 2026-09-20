@@ -5,6 +5,7 @@ from typing import Any, Literal, cast
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from sfvf.providers import capabilities_offered
 
 from app.paths import is_safe_path_segment, safe_join
 from app.registry.scan import scan
@@ -14,12 +15,15 @@ router = APIRouter(prefix="/api")
 
 
 class RegistryHolder:
-    def __init__(self, workflows_dir: Path) -> None:
+    def __init__(self, workflows_dir: Path, *, configured: set[str] | None = None) -> None:
         self.workflows_dir = workflows_dir
-        self.snapshot: list[WorkflowEntry] = scan(workflows_dir)
+        self._offered: frozenset[str] | None = (
+            None if configured is None else capabilities_offered(set(configured))
+        )
+        self.snapshot: list[WorkflowEntry] = scan(workflows_dir, offered=self._offered)
 
     def rescan(self) -> list[WorkflowEntry]:
-        self.snapshot = scan(self.workflows_dir)
+        self.snapshot = scan(self.workflows_dir, offered=self._offered)
         return self.snapshot
 
     def get(self, workflow_id: str) -> WorkflowEntry | None:

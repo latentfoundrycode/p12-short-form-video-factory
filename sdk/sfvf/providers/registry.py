@@ -330,6 +330,23 @@ def capabilities_offered(
     return frozenset(capabilities)
 
 
+def providers_offering(
+    capability: str,
+    *,
+    providers: dict[str, Provider] = PROVIDERS,
+    models: dict[str, Model] = MODELS,
+) -> list[str]:
+    """Labels of providers that offer a capability (provider- or model-level), sorted, deduped."""
+    labels: set[str] = set()
+    for provider in providers.values():
+        if capability in provider.capabilities:
+            labels.add(provider.label)
+    for model in models.values():
+        if capability in model.capabilities:
+            labels.add(providers[model.provider].label)
+    return sorted(labels)
+
+
 def capable_models_without_adapter(
     *,
     providers: dict[str, Provider] = PROVIDERS,
