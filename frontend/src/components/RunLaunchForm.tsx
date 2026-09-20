@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { startRun } from "../api";
-import { isStartRunOk, type Param } from "../types";
+import { fetchProviderOptions, startRun } from "../api";
+import { isStartRunOk, type Param, type ProviderOption } from "../types";
 
 type FieldValue = string | boolean | string[];
 
@@ -17,10 +17,11 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 function usesManualInput(param: Param): boolean {
-  return (
-    param.type === "file" ||
-    ((param.type === "select" || param.type === "multiselect") && param.options === null)
-  );
+  if (param.type === "file") return true;
+  if (param.type === "select" || param.type === "multiselect") {
+    return param.options === null && param.options_from === null;
+  }
+  return false;
 }
 
 function seedValue(param: Param): FieldValue {
@@ -138,6 +139,155 @@ function FieldHelp({ param, extra }: { param: Param; extra?: string }) {
   );
 }
 
+type RegistryOptionsState = {
+  status: "loading" | "ready" | "error";
+  options: ProviderOption[];
+};
+
+function RegistryOptionsField({
+  param,
+  value,
+  disabled,
+  onChange,
+}: {
+  param: Param;
+  value: FieldValue;
+  disabled: boolean;
+  onChange: (value: FieldValue) => void;
+}) {
+  const label = controlLabel(param);
+  const text = typeof value === "string" ? value : "";
+  const selected = isStringArray(value) ? value : [];
+  const [manualText, setManualText] = useState(() => selected.join(", "));
+  const [optionsState, setOptionsState] = useState<RegistryOptionsState>({
+    status: "loading",
+    options: [],
+  });
+  const source = param.options_from;
+
+  useEffect(() => {
+    if (source === null) return;
+
+    let ignore = false;
+    void fetchProviderOptions(source).then(
+      (options) => {
+        if (!ignore) {
+          setOptionsState({ status: "ready", options });
+        }
+      },
+      () => {
+        if (!ignore) {
+          setOptionsState({ status: "error", options: [] });
+        }
+      },
+    );
+    return () => {
+      ignore = true;
+    };
+  }, [source]);
+
+  if (optionsState.status === "error") {
+    const isMultiselect = param.type === "multiselect";
+    return (
+      <label className="field">
+        <span className="field-label">{label}</span>
+        <input
+          className="field-input"
+          type="text"
+          placeholder={param.placeholder ?? ""}
+          value={isMultiselect ? manualText : text}
+          disabled={disabled}
+          aria-required={param.required}
+          onChange={(event) => {
+            if (isMultiselect) {
+              const nextText = event.target.value;
+              setManualText(nextText);
+              onChange(
+                nextText
+                  .split(",")
+                  .map((item) => item.trim())
+                  .filter((item) => item !== ""),
+              );
+            } else {
+              onChange(event.target.value);
+            }
+          }}
+        />
+        <FieldHelp param={param} extra="Couldn't load options — enter the value manually." />
+      </label>
+    );
+  }
+
+  if (param.type === "multiselect") {
+    if (optionsState.status === "loading") {
+      return (
+        <div className="field">
+          <span className="field-label">{label}</span>
+          <span className="field-help">Loading…</span>
+          <FieldHelp param={param} />
+        </div>
+      );
+    }
+    return (
+      <div className="field">
+        <span className="field-label">{label}</span>
+        {optionsState.options.map((option) => (
+          <label className="field-check" key={option.id}>
+            <input
+              type="checkbox"
+              checked={selected.includes(option.id)}
+              disabled={disabled || !option.configured}
+              onChange={() => {
+                const next = selected.includes(option.id)
+                  ? selected.filter((item) => item !== option.id)
+                  : [...selected, option.id];
+                onChange(next);
+              }}
+            />
+            <span>
+              {option.configured ? option.label : `${option.label} (not configured)`}
+            </span>
+          </label>
+        ))}
+        <FieldHelp param={param} />
+      </div>
+    );
+  }
+
+  const currentWasRemoved =
+    text !== "" && !optionsState.options.some((option) => option.id === text);
+
+  return (
+    <label className="field">
+      <span className="field-label">{label}</span>
+      <select
+        className="field-input"
+        value={text}
+        disabled={disabled || optionsState.status === "loading"}
+        aria-required={param.required}
+        onChange={(event) => {
+          onChange(event.target.value);
+        }}
+      >
+        {param.required ? (
+          <option value="" disabled>
+            — select —
+          </option>
+        ) : (
+          <option value="">— none —</option>
+        )}
+        {currentWasRemoved ? <option value={text}>{`${text} (removed)`}</option> : null}
+        {optionsState.options.map((option) => (
+          <option key={option.id} value={option.id} disabled={!option.configured}>
+            {option.configured ? option.label : `${option.label} (not configured)`}
+          </option>
+        ))}
+      </select>
+      <FieldHelp param={param} />
+    </label>
+  );
+}
+
 function ParamField({
   param,
   value,
@@ -152,6 +302,22 @@ function ParamField({
   const label = controlLabel(param);
   const text = typeof value === "string" ? value : "";
   const extraHelp = usesManualInput(param) ? "Enter value(s) manually." : undefined;
+
+  if (
+    (param.type === "select" || param.type === "multiselect") &&
+    param.options === null &&
+    param.options_from !== null
+  ) {
+    return (
+      <RegistryOptionsField
+        key={param.options_from}
+        param={param}
+        value={value}
+        disabled={disabled}
+        onChange={onChange}
+      />
+    );
+  }
 
   if (usesManualInput(param)) {
     return (

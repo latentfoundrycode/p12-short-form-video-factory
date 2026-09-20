@@ -25,6 +25,13 @@ export type Param = {
   unit: string | null;
 };
 
+export type ProviderOption = {
+  id: string;
+  label: string;
+  configured: boolean;
+  offered: boolean;
+};
+
 export type Workflow = {
   id: string;
   name: string | null;
