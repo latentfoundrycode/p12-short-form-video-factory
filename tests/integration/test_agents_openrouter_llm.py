@@ -257,3 +257,36 @@ def test_llm_real_missing_key_raises_before_any_call(
 def test_llm_requires_active_context() -> None:
     with pytest.raises(RuntimeError):
         agents.llm("q", agent="w", model="m")
+
+
+def test_llm_attaches_images_as_openrouter_multimodal_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # agents.vision: with `attach`, the real path sends OpenRouter multimodal content — a text part
+    # plus one image_url data-URI part per attached image — instead of raising NotImplementedError.
+    img = tmp_path / "shot.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\nFAKE-IMAGE-BYTES")
+
+    def handler(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={"choices": [{"message": {"content": "a red square"}}], "usage": {"cost": 0.001}},
+        )
+
+    seen = _install_mock(monkeypatch, handler)
+    ctx = _ctx(tmp_path, dry_run=False)
+    out = _run(
+        ctx,
+        lambda: agents.llm(
+            "describe the image", agent="captioner", model="openai/gpt-4o", attach=[img]
+        ),
+    )
+    assert out == "a red square"
+
+    body = json.loads(seen[0].read())
+    content = body["messages"][0]["content"]
+    assert isinstance(content, list), "attach must produce multimodal (list) content"
+    assert any(p.get("type") == "text" and p.get("text") == "describe the image" for p in content)
+    image_parts = [p for p in content if p.get("type") == "image_url"]
+    assert len(image_parts) == 1
+    assert image_parts[0]["image_url"]["url"].startswith("data:image/png;base64,")
