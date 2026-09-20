@@ -80,19 +80,6 @@ def _fake_providers() -> dict[str, Provider]:
             adapter="openrouter",
             capabilities=frozenset({"agents.structured"}),
         ),
-        "higgsfield": Provider(
-            id="higgsfield",
-            label="Higgsfield (deprecated)",
-            secret_names=("HIGGSFIELD_API_KEY",),
-            meter="higgsfield",
-            meter_kind="credit",
-            unit="credits",
-            base_url="https://api.higgsfield.ai",
-            adapter="higgsfield",
-            legacy_slugs=frozenset(
-                {"sora-2/text-to-video", "kling-video/v2.5-turbo/pro/text-to-video"}
-            ),
-        ),
     }
 
 
@@ -222,27 +209,6 @@ def test_resolve_rejects_an_unregistered_provider_prefix() -> None:
 
 def test_unknown_model_error_is_a_lookup_error() -> None:
     assert issubclass(UnknownModelError, LookupError)
-
-
-def test_legacy_higgsfield_slug_resolves_only_from_the_allowlist() -> None:
-    # The legacy path uses bare slugs that themselves contain '/', e.g. sora-2/text-to-video, whose
-    # prefix is NOT a provider. Such an id resolves to the deprecated higgsfield provider ONLY when
-    # it is in that provider's legacy_slugs. The mechanism lives here; the real higgsfield row +
-    # allowlist are added in P-4a and deleted in P-11.
-    providers, models = _fake_providers(), _fake_models()
-    provider, model = resolve("sora-2/text-to-video", providers=providers, models=models)
-    assert provider.id == "higgsfield"
-    assert model.slug == "sora-2/text-to-video" and model.kind == "video"
-
-    with pytest.raises(UnknownModelError):
-        resolve("sora-2/not-on-the-allowlist", providers=providers, models=models)
-
-
-def test_without_a_higgsfield_row_legacy_slugs_do_not_resolve() -> None:
-    # Once P-11 removes the deprecated row, the same bare slug is simply unknown.
-    providers = {k: v for k, v in _fake_providers().items() if k != "higgsfield"}
-    with pytest.raises(UnknownModelError):
-        resolve("sora-2/text-to-video", providers=providers, models=_fake_models())
 
 
 # ---------------------------------------------------------------------------
