@@ -751,3 +751,10 @@ run's reserve lingered and, after enough failures, could block legitimate runs).
 cost is reconciled the moment the paid call returns — before the artifact is written — so a disk/IO
 failure after a successful (billed) generation records the true charge instead of zeroing it. No
 user-visible feature change; budget-accounting accuracy only.
+
+## TASK-H51 — BFL API key confined to bfl.ai over https
+The BFL image adapter now refuses to poll a result URL unless it is `https` on a `bfl.ai` (or
+`*.bfl.ai`) host. BFL returns the poll URL in its submit response and the adapter sends the API key
+with the poll; this guard stops a tampered/spoofed response from directing that key to an attacker's
+host. Legitimate regional endpoints (e.g. `api.us1.bfl.ai`) are unaffected. Security hardening only,
+no user-visible change.
