@@ -30,7 +30,6 @@ class Provider:
     base_url: str
     adapter: str
     capabilities: frozenset[str] = frozenset()
-    legacy_slugs: frozenset[str] = frozenset()
     region: str = ""
 
 
@@ -256,23 +255,10 @@ def resolve(
     providers: dict[str, Provider] = PROVIDERS,
     models: dict[str, Model] = MODELS,
 ) -> tuple[Provider, Model]:
-    """Resolve a registered model id or an explicitly allowlisted legacy slug."""
+    """Resolve a registered model id."""
     model = models.get(model_id)
     if model is not None:
         return providers[model.provider], model
-
-    for provider in providers.values():
-        if model_id in provider.legacy_slugs:
-            return provider, Model(
-                id=model_id,
-                provider=provider.id,
-                slug=model_id,
-                kind="video",
-                capabilities=frozenset(),
-                label=model_id,
-                price=PriceHint("credits", "per_second", 0.0, "legacy"),
-                notes="legacy",
-            )
 
     matches = get_close_matches(model_id, list(models), n=3)
     suggestion = f"; nearest: {', '.join(matches)}" if matches else ""
