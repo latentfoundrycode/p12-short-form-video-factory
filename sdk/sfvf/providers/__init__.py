@@ -13,6 +13,7 @@ from .registry import (
     capable_models_without_adapter,
     list_models,
     provider_configured,
+    providers_offering,
     resolve,
 )
 
@@ -29,5 +30,6 @@ __all__ = [
     "capable_models_without_adapter",
     "list_models",
     "provider_configured",
+    "providers_offering",
     "resolve",
 ]

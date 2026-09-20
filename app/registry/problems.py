@@ -25,6 +25,7 @@ class ProblemCode(StrEnum):
     QUALITY_FACTOR_INVALID = "quality_factor_invalid"
     REQUIRES_INVALID = "requires_invalid"
     CAPABILITY_UNKNOWN = "capability_unknown"
+    CAPABILITY_UNAVAILABLE = "capability_unavailable"
     FACET_INVALID = "facet_invalid"
     THUMBNAIL_MISSING = "thumbnail_missing"
 

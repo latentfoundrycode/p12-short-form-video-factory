@@ -95,7 +95,9 @@ def create_app(
     else:
         application = FastAPI(title="Short-Form Video Factory")
     application.add_middleware(BaseHTTPMiddleware, dispatch=csrf_guard)
-    application.state.registry = RegistryHolder(workflows_dir or WORKFLOWS_DIR)
+    application.state.registry = RegistryHolder(
+        workflows_dir or WORKFLOWS_DIR, configured=set(resolved)
+    )
     application.state.runs_dir = runs_dir or RUNS_DIR
     application.state.schedules_path = schedules_path or SCHEDULES_PATH
     application.state.ensure_env = ensure_env

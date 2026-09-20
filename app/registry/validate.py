@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import ValidationError
+from sfvf.providers import providers_offering
 
 from app.paths import safe_join
 from app.registry.problems import Problem, ProblemCode
@@ -51,9 +52,9 @@ class WorkflowEntry:
     problems: tuple[Problem, ...]
 
 
-def validate(folder: Path) -> WorkflowEntry:
+def validate(folder: Path, *, offered: frozenset[str] | None = None) -> WorkflowEntry:
     try:
-        return _validate(folder)
+        return _validate(folder, offered=offered)
     except Exception as exc:
         return _entry(
             folder,
@@ -62,7 +63,7 @@ def validate(folder: Path) -> WorkflowEntry:
         )
 
 
-def _validate(folder: Path) -> WorkflowEntry:
+def _validate(folder: Path, *, offered: frozenset[str] | None) -> WorkflowEntry:
     toml_path = folder / "workflow.toml"
     try:
         text = toml_path.read_text(encoding="utf-8-sig")
@@ -80,10 +81,12 @@ def _validate(folder: Path) -> WorkflowEntry:
             (_problem(ProblemCode.MANIFEST_UNREADABLE, f"{type(exc).__name__}: {exc}"),),
         )
 
-    return _entry(folder, manifest, tuple(_semantic_problems(folder, manifest)))
+    return _entry(folder, manifest, tuple(_semantic_problems(folder, manifest, offered)))
 
 
-def _semantic_problems(folder: Path, manifest: Manifest) -> list[Problem]:
+def _semantic_problems(
+    folder: Path, manifest: Manifest, offered: frozenset[str] | None
+) -> list[Problem]:
     problems: list[Problem] = []
     workflow = manifest.workflow
 
@@ -126,7 +129,7 @@ def _semantic_problems(folder: Path, manifest: Manifest) -> list[Problem]:
             )
 
     problems.extend(_param_problems(manifest.params))
-    problems.extend(_capability_problems(workflow.requires_capabilities))
+    problems.extend(_capability_problems(workflow.requires_capabilities, offered))
     problems.extend(_facet_problems(manifest.library.facets))
     problems.extend(_quality_factor_problems(manifest.quality_factors))
     problems.extend(_requires_problems(manifest))
@@ -241,7 +244,7 @@ def _param_problems(params: list[Param]) -> list[Problem]:
     return problems
 
 
-def _capability_problems(names: list[str]) -> list[Problem]:
+def _capability_problems(names: list[str], offered: frozenset[str] | None) -> list[Problem]:
     problems: list[Problem] = []
     for name in names:
         if name not in KNOWN_CAPABILITIES:
@@ -249,6 +252,18 @@ def _capability_problems(names: list[str]) -> list[Problem]:
                 _problem(
                     ProblemCode.CAPABILITY_UNKNOWN,
                     f"requires_capabilities entry {name!r} is not in the chassis vocabulary",
+                )
+            )
+        elif offered is not None and name not in offered:
+            candidates = providers_offering(name)
+            if candidates:
+                detail = f"it is offered by {', '.join(candidates)} — configure one"
+            else:
+                detail = "no provider offers it yet"
+            problems.append(
+                _problem(
+                    ProblemCode.CAPABILITY_UNAVAILABLE,
+                    f"requires_capabilities entry {name!r} is not available: {detail}",
                 )
             )
     return problems
