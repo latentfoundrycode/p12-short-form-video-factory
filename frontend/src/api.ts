@@ -6,6 +6,7 @@ import type {
   LearningRow,
   LaunchBody,
   PendingGate,
+  ProviderOption,
   QualitySubmission,
   RunDetail,
   RunFiles,
@@ -41,6 +42,18 @@ export async function fetchWorkflows(): Promise<Workflow[]> {
 
 export async function rescanWorkflows(): Promise<Workflow[]> {
   return readList(await fetch("/api/workflows/rescan", { method: "POST" }), "rescan workflows");
+}
+
+export async function fetchProviderOptions(source: string): Promise<ProviderOption[]> {
+  const response = await fetch(`/api/providers/options/${encodeURIComponent(source)}`);
+  if (!response.ok) {
+    throw new Error(`Could not load options for ${source} (${response.status})`);
+  }
+  const data = (await response.json()) as { options: ProviderOption[] };
+  if (!Array.isArray(data.options)) {
+    throw new Error("Unexpected response while loading provider options");
+  }
+  return data.options;
 }
 
 export async function fetchLearning(): Promise<LearningRow[]> {
