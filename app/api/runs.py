@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sfvf.context import BudgetConfig
+from sfvf.providers import UnknownModelError, provider_configured, resolve
 
 from app.api.workflows import RegistryHolder
 from app.core.env import EnvBlocked
@@ -204,6 +205,40 @@ def _budget(request: Request) -> BudgetConfig | None:
     return getattr(request.app.state, "budget", None)
 
 
+def _unconfigured_model_param(
+    entry: WorkflowEntry, params: dict[str, Any], configured: set[str]
+) -> str | None:
+    """Return a refusal message if a model-source param names a model whose provider is
+    unconfigured.
+
+    A "model param" is one whose options_from is a models source (sfvf.models[:kind] or
+    <provider>.models). An unknown / non-string / absent value is not this check's concern
+    (skipped).
+    """
+    manifest = entry.manifest
+    if manifest is None:
+        return None
+    for param in manifest.params:
+        source = param.options_from
+        is_model_source = source is not None and (
+            source == "sfvf.models"
+            or source.startswith("sfvf.models:")
+            or source.endswith(".models")
+        )
+        if not is_model_source:
+            continue
+        value = params.get(param.key)
+        if not isinstance(value, str):
+            continue
+        try:
+            provider, _model = resolve(value)
+        except UnknownModelError:
+            continue
+        if not provider_configured(provider, configured):
+            return f"model {value!r} requires provider {provider.label!r}, which is not configured"
+    return None
+
+
 def admit_run(
     workflow_dir: Path,
     *,
@@ -327,6 +362,9 @@ def launch_run(workflow_id: str, body: LaunchBody, request: Request) -> JSONResp
     entry = _require_workflow(request, workflow_id)
     if any(problem.severity == "error" for problem in entry.problems):
         raise HTTPException(status_code=422, detail="workflow is invalid")
+    blocked = _unconfigured_model_param(entry, body.params, set(_secrets(request)))
+    if blocked is not None:
+        raise HTTPException(status_code=422, detail=blocked)
     outcome = admit_run(
         entry.path,
         params=body.params,
