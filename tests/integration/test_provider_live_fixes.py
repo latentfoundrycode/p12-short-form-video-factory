@@ -216,3 +216,33 @@ def test_bfl_refuses_a_polling_url_not_on_an_https_bfl_host(
     assert not any(r.method == "GET" and r.url.host == bad_host for r in seen), (
         "adapter must refuse the polling_url before sending the x-key to a disallowed host"
     )
+
+
+def test_minimax_raises_a_clean_error_on_a_200_with_base_resp_failure(monkeypatch) -> None:
+    # MiniMax signals some submit failures with HTTP 200 + base_resp.status_code != 0 and no
+    # task_id (P-7 NOTED). The adapter must raise a clean AdapterError, not a raw KeyError on
+    # ["task_id"].
+    provider, model = resolve("minimax/hailuo-h3")
+
+    def handler(request: httpx2.Request, seen: list[httpx2.Request]) -> httpx2.Response:
+        if request.method == "POST" and request.url.path == "/v2/video_generation":
+            return httpx2.Response(
+                200, json={"base_resp": {"status_code": 1002, "status_msg": "insufficient balance"}}
+            )
+        raise AssertionError(f"unexpected {request.method} {request.url.path}")
+
+    _install(monkeypatch, mm_adapter, handler)
+    with pytest.raises(AdapterError) as exc:
+        mm_adapter.generate_video(
+            "a wave",
+            model=model,
+            provider=provider,
+            first_frame_url=None,
+            last_frame_url=None,
+            ref_urls=[],
+            duration_s=None,
+            extra=None,
+            secrets={"MINIMAX_API_KEY": _MM_KEY},
+            ctx=_Ctx(),
+        )
+    assert "minimax" in str(exc.value)
