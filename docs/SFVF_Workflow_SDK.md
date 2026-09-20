@@ -683,7 +683,13 @@ research(query) -> list[Source]
 
 Each `Source` from `research()` is a JSON dict, read by subscript — `source["title"]`, `source["url"]`, `source["snippet"]` — for the reason in §5.5 (the result is cached as JSON). A `schema` result from `llm()` is a dict you read the same way.
 
-`attach` is a list of `Path`s — images, or video clips where the model supports them — shown to the model alongside the prompt. This is how a shot gets described from reference footage, and how a generated frame gets checked against the character sheet it was supposed to match. Requires the `agents.vision` capability; declare it in your manifest. Not every model accepts attachments, and one that does not will fail rather than silently ignoring them.
+`attach` is a list of image files (`Path` or `str`, as `media.image.generate()` returns) shown to the model alongside the prompt. This is how a generated frame gets checked against the character sheet it was supposed to match, and how a sourced image is described at intake. Requires the `agents.vision` capability; declare it in your manifest. Not every model accepts attachments, and one that does not will fail rather than silently ignoring them.
+
+Because the file's bytes are sent to the model provider, `attach` is confined and validated before anything is read or sent — a violation raises `ValueError`, nothing is uploaded:
+
+- **Images only, for now.** Supported suffixes are `.png`, `.jpg`/`.jpeg`, `.webp`, `.gif`. Any other suffix — including video clips — is rejected rather than mislabeled. Video attachments are a planned future capability, added in their own increment once verified against the provider's real video API.
+- **Within the workspace.** Each path resolves against `ctx.paths.video` (the same convention as `media.image` refs) and must stay inside it. An absolute path, a `..` escape, or a symlink leaving the workspace is rejected, so `attach` can never egress a file outside this video's working directory (e.g. `context.json`, a key file).
+- **Bounded.** Each attachment has a maximum size and the list has a maximum count, so a stray large file cannot blow up memory or the request.
 
 When you attach files, remember that the step wrapping the call must key on those files. Putting the `Path` in `inputs` is enough — §5.2a hashes it by content for you.
 

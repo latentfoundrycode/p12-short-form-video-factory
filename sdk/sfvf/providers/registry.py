@@ -76,7 +76,7 @@ PROVIDERS: dict[str, Provider] = {
         "usd",
         "https://openrouter.ai/api/v1",
         "openrouter",
-        capabilities=frozenset({"agents.structured"}),
+        capabilities=frozenset({"agents.structured", "agents.vision"}),
     ),
     "openai": Provider(
         "openai",

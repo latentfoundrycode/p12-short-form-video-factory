@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import math
 from pathlib import Path
@@ -19,6 +20,15 @@ _HTTP_TIMEOUT_S = 60.0
 _RETRY_AFTER_DEFAULT_S = 1.0
 _MAX_ATTEMPTS = 3
 _RESEARCH_MODEL = "openai/gpt-4o-mini"
+_IMAGE_MIME = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+_MAX_ATTACH_BYTES = 20 * 1024 * 1024  # 20 MiB per attachment
+_MAX_ATTACH_COUNT = 8  # per llm() call
 
 
 class Source(TypedDict):
@@ -164,7 +174,7 @@ def llm(
     agent: str,
     model: str,
     schema: dict[str, Any] | None = None,
-    attach: list[Path] | None = None,
+    attach: list[Path | str] | None = None,
 ) -> str | dict[str, Any]:
     ctx = current_context()
     if ctx.dry_run:
@@ -176,13 +186,39 @@ def llm(
         return stub
 
     if attach:
-        raise NotImplementedError(
-            "agents.llm vision attachments are not yet supported by the OpenRouter adapter"
-        )
-    body: dict[str, Any] = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-    }
+        items = tuple(attach)
+        if len(items) > _MAX_ATTACH_COUNT:
+            raise ValueError(f"too many attachments: {len(items)} (max {_MAX_ATTACH_COUNT})")
+        parts: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        base = ctx.paths.video.resolve()
+        validated: list[tuple[Path, str]] = []
+        for item in items:
+            path = Path(item)
+            if path.anchor:
+                raise ValueError(f"attach must be a workspace-relative path: {item!r}")
+            resolved = (ctx.paths.video / path).resolve()
+            if not resolved.is_relative_to(base):
+                raise ValueError(f"attach path escapes the workspace: {item!r}")
+            if not resolved.is_file():
+                raise ValueError(f"attach is not a regular file: {item!r}")
+            mime = _IMAGE_MIME.get(resolved.suffix.lower())
+            if mime is None:
+                raise ValueError(f"attach is not an allowed image type: {item!r}")
+            size = resolved.stat().st_size
+            if size > _MAX_ATTACH_BYTES:
+                raise ValueError(
+                    f"attach exceeds size limit ({size} > {_MAX_ATTACH_BYTES}): {item!r}"
+                )
+            validated.append((resolved, mime))
+        for resolved, mime in validated:
+            encoded = base64.b64encode(resolved.read_bytes()).decode()
+            parts.append(
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}}
+            )
+        messages: list[dict[str, Any]] = [{"role": "user", "content": parts}]
+    else:
+        messages = [{"role": "user", "content": prompt}]
+    body: dict[str, Any] = {"model": model, "messages": messages}
     if schema is not None:
         body["response_format"] = {
             "type": "json_schema",

@@ -257,3 +257,275 @@ def test_llm_real_missing_key_raises_before_any_call(
 def test_llm_requires_active_context() -> None:
     with pytest.raises(RuntimeError):
         agents.llm("q", agent="w", model="m")
+
+
+def test_llm_attaches_images_as_openrouter_multimodal_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # agents.vision: with `attach`, the real path sends OpenRouter multimodal content — a text part
+    # plus one image_url data-URI part per attached image — instead of raising NotImplementedError.
+    # `attach` paths are resolved against ctx.paths.video (== tmp_path here), the same workspace
+    # convention as media.image's image/refs — so a plain relative name works.
+    (tmp_path / "shot.png").write_bytes(b"\x89PNG\r\n\x1a\nFAKE-IMAGE-BYTES")
+
+    def handler(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={"choices": [{"message": {"content": "a red square"}}], "usage": {"cost": 0.001}},
+        )
+
+    seen = _install_mock(monkeypatch, handler)
+    ctx = _ctx(tmp_path, dry_run=False)
+    out = _run(
+        ctx,
+        lambda: agents.llm(
+            "describe the image",
+            agent="captioner",
+            model="openai/gpt-4o",
+            attach=[Path("shot.png")],
+        ),
+    )
+    assert out == "a red square"
+
+    body = json.loads(seen[0].read())
+    content = body["messages"][0]["content"]
+    assert isinstance(content, list), "attach must produce multimodal (list) content"
+    assert any(p.get("type") == "text" and p.get("text") == "describe the image" for p in content)
+    image_parts = [p for p in content if p.get("type") == "image_url"]
+    assert len(image_parts) == 1
+    assert image_parts[0]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_llm_accepts_str_attach_path_as_documented_media_image_return(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # agents.vision contract: the DOCUMENTED usage (SFVF_Workflow_SDK.md — "one vision pass over
+    # the artefact itself") passes the return of `media.image.generate()`, which is a RELATIVE
+    # `str`, not a Path:  sheet = media.image.generate(...); agents.llm(..., attach=[sheet]).
+    # So `attach` items may be plain `str` and must be normalised (e.g. `Path(item)`) before
+    # `.suffix`/read — a bare str must NOT raise AttributeError. This test pins that str attach
+    # paths produce the same multimodal shape as Path ones.
+    (tmp_path / "sheet.png").write_bytes(b"\x89PNG\r\n\x1a\nFAKE-IMAGE-BYTES")
+
+    def handler(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}}], "usage": {"cost": 0.001}},
+        )
+
+    seen = _install_mock(monkeypatch, handler)
+    ctx = _ctx(tmp_path, dry_run=False)
+    out = _run(
+        ctx,
+        lambda: agents.llm(
+            "describe this sheet",
+            agent="asset-describer",
+            model="openai/gpt-4o",
+            attach=["sheet.png"],  # a bare str, exactly as media.image.generate() returns it
+        ),
+    )
+    assert out == "ok"
+
+    body = json.loads(seen[0].read())
+    content = body["messages"][0]["content"]
+    assert isinstance(content, list), "a str attach must still produce multimodal (list) content"
+    image_parts = [p for p in content if p.get("type") == "image_url"]
+    assert len(image_parts) == 1
+    assert image_parts[0]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+# --- agents.vision attach hardening (H55 a/b/c enforced as controls) ---------------------------
+# `agents.llm` reads a caller-named path and egresses its bytes to OpenRouter. The attach contract
+# is therefore confined and validated BEFORE any read/network: only image files, only within the
+# run workspace (ctx.paths.video), and bounded in size and count. Every rejection is a ValueError
+# raised before the transport is touched. (Video attach is a documented FUTURE capability — for now
+# a non-image suffix, including a video clip, is rejected rather than mislabeled as an image.)
+
+
+def test_llm_rejects_non_image_attach_suffix_before_any_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # H55(a): no silent image/png fallback. A non-image file (here .json — e.g. the run's own
+    # context.json) must be REJECTED, never base64'd and shipped to the provider as image/png.
+    (tmp_path / "notes.json").write_bytes(b'{"secret": "do-not-egress"}')
+
+    def boom(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        raise AssertionError("a rejected attach must fail before any network call")
+
+    seen = _install_mock(monkeypatch, boom)
+    ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(ValueError):
+        _run(
+            ctx,
+            lambda: agents.llm("x", agent="w", model="m", attach=["notes.json"]),
+        )
+    assert seen == []
+
+
+def test_llm_rejects_attach_path_escaping_workspace_before_any_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # H55(c): an absolute or ../-traversing attach path must NOT read outside ctx.paths.video, even
+    # for an image suffix — otherwise an attacker-influenced path egresses an arbitrary file. The
+    # video dir is tmp_path; this .png sits OUTSIDE it, addressed absolutely.
+    outside = tmp_path.parent / "outside-workspace.png"
+    outside.write_bytes(b"\x89PNG\r\n\x1a\nOUTSIDE")
+
+    def boom(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        raise AssertionError("an out-of-workspace attach must fail before any network call")
+
+    seen = _install_mock(monkeypatch, boom)
+    ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(ValueError):
+        _run(
+            ctx,
+            lambda: agents.llm("x", agent="w", model="m", attach=[str(outside)]),
+        )
+    assert seen == []
+
+
+def test_llm_rejects_oversize_attachment_before_any_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # H55(b): a per-attachment size ceiling bounds memory and request size. Pin that the ceiling
+    # is enforced (monkeypatched small so the test writes no huge file); a file over it is rejected.
+    monkeypatch.setattr(agents, "_MAX_ATTACH_BYTES", 16, raising=True)
+    (tmp_path / "big.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"X" * 64)  # > 16 bytes
+
+    def boom(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        raise AssertionError("an oversize attach must fail before any network call")
+
+    seen = _install_mock(monkeypatch, boom)
+    ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(ValueError):
+        _run(ctx, lambda: agents.llm("x", agent="w", model="m", attach=["big.png"]))
+    assert seen == []
+
+
+def test_llm_rejects_too_many_attachments_before_any_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # H55(b): a count ceiling bounds aggregate payload. Monkeypatched to 1 so two attachments trip
+    # it without depending on the production number.
+    monkeypatch.setattr(agents, "_MAX_ATTACH_COUNT", 1, raising=True)
+    (tmp_path / "a.png").write_bytes(b"\x89PNG\r\n\x1a\nA")
+    (tmp_path / "b.png").write_bytes(b"\x89PNG\r\n\x1a\nB")
+
+    def boom(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        raise AssertionError("too many attachments must fail before any network call")
+
+    seen = _install_mock(monkeypatch, boom)
+    ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(ValueError):
+        _run(ctx, lambda: agents.llm("x", agent="w", model="m", attach=["a.png", "b.png"]))
+    assert seen == []
+
+
+def test_llm_count_ceiling_uses_a_snapshot_not_a_mutable_len(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The count ceiling must be enforced on a stable SNAPSHOT of `attach`, not on a mutable input
+    # whose __len__ can disagree with what iteration yields. An odd sequence that under-reports its
+    # length via __len__ (here always 1) but iterates many items would otherwise slip past the
+    # ceiling and encode all of them. Snapshotting (e.g. `tuple(attach)`) makes the counted sequence
+    # and the iterated sequence identical, so the true item count is what the ceiling sees.
+    monkeypatch.setattr(agents, "_MAX_ATTACH_COUNT", 8, raising=True)
+    # 20 REAL, valid, small images so the ONLY possible rejection is the count ceiling.
+    names = [f"img{i}.png" for i in range(20)]
+    for name in names:
+        (tmp_path / name).write_bytes(b"\x89PNG\r\n\x1a\nX")
+
+    class _LyingLen(list):  # type: ignore[type-arg]
+        def __len__(self) -> int:
+            return 1  # lie: claim a single item regardless of contents
+
+    attach = _LyingLen(names)  # 20 valid items, but __len__ reports 1
+
+    def boom(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        raise AssertionError("count ceiling must be enforced on the true item count")
+
+    seen = _install_mock(monkeypatch, boom)
+    ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(ValueError):
+        _run(ctx, lambda: agents.llm("x", agent="w", model="m", attach=attach))
+    assert seen == []
+
+
+def test_llm_rejects_image_named_symlink_to_nonimage_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # H55(a/c) defence-in-depth: the suffix allow-list must judge the RESOLVED target, not the
+    # symbolic name — else a within-workspace symlink `masq.png` -> `secret.env` passes the label
+    # check on ".png" and egresses the non-image target's bytes mislabeled as an image. The MIME
+    # must be taken from the resolved path's suffix, so this is rejected. (Symlink creation is
+    # unprivileged on Linux CI; skipped where the platform/permissions disallow it, e.g. Windows.)
+    secret = tmp_path / "secret.env"
+    secret.write_bytes(b"OPENROUTER_API_KEY=must-not-egress")
+    masq = tmp_path / "masq.png"
+    try:
+        masq.symlink_to(secret)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not supported / not permitted on this platform")
+
+    def boom(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        raise AssertionError("a symlink to a non-image target must fail before any network call")
+
+    seen = _install_mock(monkeypatch, boom)
+    ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(ValueError):
+        _run(ctx, lambda: agents.llm("x", agent="w", model="m", attach=["masq.png"]))
+    assert seen == []
+
+
+def test_llm_rejects_absolute_attach_path_even_inside_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # attach paths are workspace-RELATIVE (that is what media.image.generate() returns). An anchored
+    # path — absolute, drive-qualified, or a Windows UNC `\\host\share\...` — is rejected outright,
+    # BEFORE any resolve, even when it happens to point inside the workspace. Rejecting before
+    # resolving also means an attacker-supplied UNC path is never resolved (which could touch the
+    # network). Here an absolute path to a real in-workspace image must still be refused.
+    (tmp_path / "in.png").write_bytes(b"\x89PNG\r\n\x1a\nIN")
+    abs_inside = str((tmp_path / "in.png").resolve())
+
+    def boom(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        raise AssertionError("an absolute attach path must be rejected before any network call")
+
+    seen = _install_mock(monkeypatch, boom)
+    ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(ValueError):
+        _run(ctx, lambda: agents.llm("x", agent="w", model="m", attach=[abs_inside]))
+    assert seen == []
+
+
+def test_llm_validates_all_attachments_before_reading_any(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The contract is "validated before anything is read": for [good.png, bad.json] the invalid
+    # second item must be rejected BEFORE the first is read into memory. Pins two-pass validation
+    # (validate every entry, then read/encode) — no partial read of a valid entry on rejection.
+    (tmp_path / "good.png").write_bytes(b"\x89PNG\r\n\x1a\nGOOD")
+    (tmp_path / "bad.json").write_bytes(b'{"x": 1}')
+
+    reads: list[str] = []
+    real_read = Path.read_bytes
+
+    def spy(self: Path) -> bytes:
+        reads.append(str(self))
+        return real_read(self)
+
+    monkeypatch.setattr(Path, "read_bytes", spy)
+
+    def boom(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        raise AssertionError("a rejected attach list must fail before any network call")
+
+    seen = _install_mock(monkeypatch, boom)
+    ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(ValueError):
+        _run(
+            ctx,
+            lambda: agents.llm("x", agent="w", model="m", attach=["good.png", "bad.json"]),
+        )
+    assert seen == []
+    # the valid first entry must NOT have been read before the invalid second was rejected
+    assert not any(r.endswith("good.png") for r in reads)

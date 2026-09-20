@@ -12,8 +12,9 @@ SKIPPED — so every pre-existing direct `validate(folder)` caller is unaffected
 supplies the configured set opts into the availability check.
 
 Acceptance (plan §P-8): `agents.structured` is offered once OpenRouter is configured (a
-provider-level capability); `agents.vision` is a known capability that NO provider offers yet, so
-it is always unavailable — even with OpenRouter configured — until vision attachments are built.
+provider-level capability). `agents.vision` is likewise a provider-level OpenRouter capability:
+since the vision-attachment path was built (TASK-agents-vision), it is offered once OpenRouter is
+configured, so a compliant workflow declaring `requires_capabilities = ["agents.vision"]` can run.
 """
 
 from __future__ import annotations
@@ -48,8 +49,8 @@ def test_providers_offering_lists_labels_of_providers_with_a_capability() -> Non
     assert "OpenRouter" in structured
     # video.generate is offered by the seeded video models' providers.
     assert providers_offering("video.generate")  # non-empty
-    # agents.vision is known vocabulary but no provider/model offers it yet.
-    assert providers_offering("agents.vision") == []
+    # agents.vision is now a provider-level OpenRouter capability (vision attachments were built).
+    assert "OpenRouter" in providers_offering("agents.vision")
 
 
 # ---------------------------------------------------------------------------
@@ -117,9 +118,18 @@ def test_agents_structured_is_ok_when_openrouter_configured(tmp_path: Path) -> N
     assert _UNAVAIL not in problem_codes(holder.snapshot[0])
 
 
-def test_agents_vision_is_unavailable_even_with_openrouter_configured(tmp_path: Path) -> None:
+def test_agents_vision_is_ok_when_openrouter_configured(tmp_path: Path) -> None:
+    # Vision attachments were built (TASK-agents-vision), so OpenRouter now offers agents.vision:
+    # a workflow that requires it validates once OpenRouter is configured.
     _wf(tmp_path, '"agents.vision"')
     holder = RegistryHolder(tmp_path, configured={"OPENROUTER_API_KEY"})
+    assert _UNAVAIL not in problem_codes(holder.snapshot[0])
+
+
+def test_agents_vision_is_unavailable_without_openrouter_configured(tmp_path: Path) -> None:
+    # But like any provider-level capability, it is unavailable until its provider's key is set.
+    _wf(tmp_path, '"agents.vision"')
+    holder = RegistryHolder(tmp_path, configured=set())
     assert _UNAVAIL in problem_codes(holder.snapshot[0])
 
 
