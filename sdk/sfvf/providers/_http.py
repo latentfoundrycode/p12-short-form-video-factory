@@ -22,6 +22,21 @@ def _truncate(text: str) -> str:
     return text[:200]
 
 
+def _redact(text: str, auth_headers: dict[str, str]) -> str:
+    """Remove the credentials we sent (each auth header value, and the token after a scheme
+    prefix like 'Bearer'/'Basic') from an error body, so a reflected credential can't land in
+    the detail. Precise — only the exact strings we transmitted are removed."""
+    secrets: set[str] = set()
+    for value in auth_headers.values():
+        if value:
+            secrets.add(value)
+            if " " in value:
+                secrets.add(value.split(" ", 1)[1])  # token after a scheme (Bearer/Basic)
+    for secret in secrets:
+        text = text.replace(secret, "[redacted]")
+    return text
+
+
 def request(
     client: Any,
     method: str,
@@ -37,7 +52,8 @@ def request(
     max_attempts: int = 4,
 ) -> Any:
     merged = dict(headers or {})
-    merged.update(auth.headers())
+    auth_headers = auth.headers()
+    merged.update(auth_headers)
     path = url.split("?", 1)[0]
     where = f"{method} {path}"
 
@@ -64,7 +80,7 @@ def request(
         elif response.status_code == 403:
             detail = "authorization failed"
         else:
-            detail = _truncate(response.text)
+            detail = _truncate(_redact(response.text, auth_headers))
         raise AdapterError(
             provider,
             status=response.status_code,
