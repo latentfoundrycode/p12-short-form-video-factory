@@ -484,8 +484,25 @@ increments that logged them.
   *Path containment* — each path resolves under `ctx.paths.video` and must satisfy
   `resolved.is_relative_to(ctx.paths.video.resolve())` and `is_file()`; `.resolve()` collapses `..`
   and follows symlinks, so an absolute path, a `..` escape, or a symlink leaving the workspace is
-  rejected, and bytes are read from the validated `resolved` (not the raw join). **Remaining
-  cross-cutting note:** `media/image.py` and `_refs.py` still resolve refs on the accepted
+  rejected, and bytes are read from the validated `resolved` (not the raw join). (d) *Snapshot* — the
+  input is materialised to `items = tuple(attach)` before the count gate, so a sequence whose
+  `__len__` disagrees with iteration cannot bypass the ceiling.
+  **Accepted residuals (advisory, within the trusted-workflow threat model — a workflow is trusted,
+  unsandboxed Python, so a self-inflicted odd input is out of the threat model):**
+  (i) *Suffix, not content* — the allow-list judges the file suffix, not the file's magic bytes, so a
+  non-image deliberately named `x.png` by the workflow is still uploaded (the provider rejects a
+  non-image anyway). Content-type sniffing is deferred as defense-in-depth; the suffix-only contract
+  is the agreed model. (ii) *Pathological caller sequences* — `if attach:` truthiness means a
+  nonempty sequence with a falsy `__len__`/`__bool__` is treated as no-attach (text-only, no egress),
+  and `tuple(attach)` fully materialises a caller iterator before the count gate (a giant iterator
+  costs transient memory ~ its size); both are self-inflicted by a trusted workflow and harmless.
+  (iii) *TOCTOU* — a `stat`-vs-`read` window remains, acceptable under the trusted-workflow model.
+  **Separate pre-existing issue (NOT part of this feature, tracked as its own task):**
+  `agents._post_chat_completion` reserves budget (`ctx._budget_reserve`) then, on a 402 / other non-2xx
+  / retries-exhausted, raises WITHOUT `ctx._budget_reconcile`, leaking the reservation toward the
+  per-day ceiling (the H52 class, on the agents.llm paid path; affects ALL `llm()` calls, not just
+  vision). It is unchanged by TASK-agents-vision — vision only makes provider errors more likely to
+  surface it. Fix in its own increment: reconcile (release) the reserve on every non-success exit.
+  **Cross-cutting note:** `media/image.py` and `_refs.py` still resolve refs on the accepted
   trusted-workflow model (they also egress refs to the provider); extend the same confinement +
-  suffix guard to them in the Phase 4 refactor pass for consistency. A `stat`-vs-`read` TOCTOU window
-  remains, acceptable under the trusted-workflow model.
+  suffix guard to them in the Phase 4 refactor pass for consistency.
