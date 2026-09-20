@@ -78,3 +78,55 @@ def test_a_failed_paid_call_releases_its_budget_reserve(tmp_path: Path, monkeypa
     assert released, (
         "a failed paid call must RELEASE its reserve (reconcile to 0), not leak it toward per_day"
     )
+
+
+def test_a_post_call_io_failure_records_the_real_cost_not_a_release(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # If the paid call SUCCEEDS (the provider has billed) but a LATER local step fails (e.g. the
+    # artifact write), the REAL cost must be reconciled — not released to 0. Otherwise a
+    # bills-then-local-IO-fails loop spends real money while the per-day ledger stays ~0 and the
+    # ceiling never trips. So the reserved region must cover only the paid call; the cost is
+    # reconciled as soon as the adapter returns, before any filesystem write.
+    import pathlib
+
+    from sfvf.providers.base import Cost, Output
+
+    ledger_path = tmp_path / "budget" / "ledger.jsonl"
+    ctx = _ctx(tmp_path, "minimax")
+
+    import sfvf.providers.minimax as mm
+
+    def _ok(*_a: object, **_k: object):
+        return Output(data=b"MP4-BYTES", media_type="video/mp4"), Cost(
+            amount=0.20, source="metered"
+        )
+
+    monkeypatch.setattr(mm, "generate_video", _ok)
+
+    # The paid call succeeds; the subsequent artifact write (a .mp4) fails.
+    real_write = pathlib.Path.write_bytes
+
+    def _boom_write(self: pathlib.Path, data: object) -> int:
+        if str(self).endswith(".mp4"):
+            raise OSError("disk full")
+        return real_write(self, data)  # leave the ledger's own writes untouched
+
+    monkeypatch.setattr(pathlib.Path, "write_bytes", _boom_write)
+
+    token = set_active(ctx)
+    try:
+        with pytest.raises(OSError):
+            video.generate("a wave", model="minimax/hailuo-h3", duration_s=4.0)
+    finally:
+        reset_active(token)
+
+    lines = _ledger(ledger_path)
+    reserved = [x for x in lines if x.get("kind") == "reserved"]
+    assert reserved, "expected the call to reserve"
+    tok = reserved[-1]["token"]
+    actuals = [x for x in lines if x.get("token") == tok and x.get("kind") == "actual"]
+    assert actuals, "the real cost must be reconciled once the paid call returns"
+    assert actuals[-1].get("amount") == 0.20, (
+        "a post-call IO failure must record the REAL billed cost, not release the reserve to 0"
+    )
