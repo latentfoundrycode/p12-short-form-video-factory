@@ -460,3 +460,13 @@ increments that logged them.
   `result.sample` image is fetched via `download_bytes` with no host restriction — it carries NO
   auth header (so not credential egress), but it is an attacker-influenceable outbound GET (minor
   SSRF surface); pre-existing, not introduced by H51. Both low risk, recorded for a future pass.
+- **H54 — `_http._redact` residuals** (from H50; two reviewers, advisory, non-blocking). (a)
+  *Empty-token mangling*: a scheme auth value with an empty token (e.g. `BearerAuth("")` →
+  `"Bearer "`, reachable only with a set-but-empty credential) yields an empty post-scheme token, and
+  `str.replace("", ...)` would garble the diagnostic body by inserting `[redacted]` between every
+  character. No credential leaks (there is none) and it is near-unreachable in practice (an empty key
+  almost always returns 401, which takes the fixed-string path, not the redact path). Trivial guard:
+  skip empty split tokens (`if token := value.split(" ", 1)[1]: secrets.add(token)`). (b)
+  *Non-verbatim reflection*: `_redact` is exact-match, so a credential the server echoes re-encoded /
+  case-folded / whitespace-split survives — acceptable given high-entropy alphanumeric tokens and the
+  declared "precise, only-what-we-sent" boundary. Fold the guard in next time `_http.py` is touched.
