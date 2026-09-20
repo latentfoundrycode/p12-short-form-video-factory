@@ -128,10 +128,10 @@ _EXPECTED_PROVIDER_IDS = frozenset(
 )
 
 
-def test_the_live_providers_plus_the_deprecated_higgsfield_row_are_registered() -> None:
-    # The seven live providers, plus the deprecated `higgsfield` row P-4 adds to carry the legacy
-    # video path (it is removed again at P-11).
-    assert set(PROVIDERS) == _EXPECTED_PROVIDER_IDS | {"higgsfield"}
+def test_exactly_the_live_providers_are_registered() -> None:
+    # The seven live providers. The deprecated `higgsfield` row (added at P-4 to carry the legacy
+    # inline video path) was removed at P-11 once a generic provider layer + smoke_provider existed.
+    assert set(PROVIDERS) == _EXPECTED_PROVIDER_IDS
     for pid, provider in PROVIDERS.items():
         assert provider.id == pid
 
