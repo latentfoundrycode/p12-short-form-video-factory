@@ -27,6 +27,8 @@ _IMAGE_MIME = {
     ".webp": "image/webp",
     ".gif": "image/gif",
 }
+_MAX_ATTACH_BYTES = 20 * 1024 * 1024  # 20 MiB per attachment
+_MAX_ATTACH_COUNT = 8  # per llm() call
 
 
 class Source(TypedDict):
@@ -184,11 +186,26 @@ def llm(
         return stub
 
     if attach:
+        if len(attach) > _MAX_ATTACH_COUNT:
+            raise ValueError(f"too many attachments: {len(attach)} (max {_MAX_ATTACH_COUNT})")
         parts: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        base = ctx.paths.video.resolve()
         for item in attach:
             path = Path(item)
-            mime = _IMAGE_MIME.get(path.suffix.lower(), "image/png")
-            encoded = base64.b64encode((ctx.paths.video / path).read_bytes()).decode()
+            resolved = (ctx.paths.video / path).resolve()
+            if not resolved.is_relative_to(base):
+                raise ValueError(f"attach path escapes the workspace: {item!r}")
+            if not resolved.is_file():
+                raise ValueError(f"attach is not a regular file: {item!r}")
+            mime = _IMAGE_MIME.get(resolved.suffix.lower())
+            if mime is None:
+                raise ValueError(f"attach is not an allowed image type: {item!r}")
+            size = resolved.stat().st_size
+            if size > _MAX_ATTACH_BYTES:
+                raise ValueError(
+                    f"attach exceeds size limit ({size} > {_MAX_ATTACH_BYTES}): {item!r}"
+                )
+            encoded = base64.b64encode(resolved.read_bytes()).decode()
             parts.append(
                 {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}}
             )
