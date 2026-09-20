@@ -14,6 +14,7 @@ from .base import AdapterError, Cost, Output
 _POLL_INTERVAL_S = 5.0  # monkeypatched to 0 in tests
 _POLL_TIMEOUT_S = 1800.0
 _TERMINAL_FAIL = frozenset({"failed", "cancelled"})
+_DEFAULT_RESOLUTION = "768P"
 
 
 def _client(base_url: str) -> Any:
@@ -47,6 +48,7 @@ def generate_video(
     if duration_s is not None:
         body["duration"] = round(duration_s)
     body.update(extra or {})  # resolution / ratio passthrough
+    body.setdefault("resolution", _DEFAULT_RESOLUTION)
     with _client(provider.base_url) as client:
         submit = request(
             client,

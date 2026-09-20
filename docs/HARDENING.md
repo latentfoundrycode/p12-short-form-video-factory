@@ -431,3 +431,12 @@ increments that logged them.
   `detail=_truncate(response.text)` — prefer redacting a known credential-token pattern from ALL
   non-2xx bodies (keeps diagnostics, fails safe) over status-gating; (b) 407 Proxy-Authentication is
   not in the fixed-detail branch (low risk — reflects proxy creds, not the submitted API key).
+- **H51 — BFL API key egresses to the provider-returned polling_url host** (from TASK-Pb;
+  security-auditor advisory, non-blocking). The BFL region-routing fix polls the absolute
+  `polling_url` from the submit response, and `_http.request()` merges the `x-key: BFL_API_KEY`
+  header onto every request — so the key now goes to whatever host BFL's response names (a real
+  posture change vs the old base_url-pinned relative path; the `result.sample` download carries no
+  auth, so this is the first provider-returned absolute URL to receive the secret). MITM-gated
+  under the trusted-first-party model, hence advisory. Fix: before polling, assert `polling_url` is
+  https and its host is `*.bfl.ai` (a small BFL region allowlist), reject otherwise — preserves the
+  region fix while keeping the key on BFL-designated hosts. Do as a RED-first follow-up increment.

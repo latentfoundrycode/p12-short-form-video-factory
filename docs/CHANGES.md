@@ -716,3 +716,13 @@ A 401 or 403 from an image/video provider now surfaces a fixed detail ("authenti
 key in its auth-failure body therefore no longer leaks that key into the SFVF error or its logs.
 Other error statuses (400/5xx) are unchanged and still carry the truncated body for diagnostics.
 No user-visible feature change; internal error text only.
+
+## TASK-Pb — BFL and MiniMax now complete real generations (live-smoke fixes)
+The P-B attended live smoke found that the BFL and MiniMax adapters, though passing their mock unit
+tests, failed against the real APIs. Now: **BFL** image generation polls the `polling_url` the
+submit response returns (BFL routes tasks to a regional host; the old hardcoded global path 404'd),
+so BFL images actually come back. **MiniMax** video generation sends a default `resolution` ("768P",
+still overridable), so `/v2/video_generation` no longer rejects the request. Also, the
+`smoke_provider` workflow env now installs `cryptography`, so Google (Gemini image + Veo) auth can
+load — previously any Google generation failed before starting. Net: BFL, MiniMax, and Google models
+are now usable end-to-end (unit contracts green; to be confirmed at the live-smoke re-run).
