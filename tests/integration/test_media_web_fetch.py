@@ -128,6 +128,24 @@ def test_fetch_pins_the_validated_public_ip_and_writes_the_file(
 # --- SSRF guard: reject non-https and non-global resolved IPs ------------------------------------
 
 
+def test_fetch_raises_valueerror_when_the_host_cannot_be_resolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An unresolvable / malformed host must fail as a clean ValueError, not a raw socket.gaierror
+    # (an untrusted URL should never leak a low-level OSError out of fetch).
+    import socket
+
+    seen = _install(monkeypatch, _ok)
+
+    def boom(_host: str):
+        raise socket.gaierror("name or service not known")
+
+    monkeypatch.setattr(web_mod, "_resolve", boom)
+    with pytest.raises(ValueError):
+        _run(_ctx(tmp_path), lambda: media.web.fetch(_candidate("https://nope.example.invalid/a.png")))
+    assert seen == []
+
+
 def test_fetch_requires_https_before_any_resolve_or_request(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
