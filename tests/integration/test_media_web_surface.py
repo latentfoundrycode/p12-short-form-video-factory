@@ -183,6 +183,21 @@ def test_source_want_is_clamped_to_non_negative(tmp_path: Path) -> None:
         assert out == [], f"want={want} must yield no results, not negative-slice leakage"
 
 
+def test_source_rejects_consider_above_the_fanout_ceiling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `consider` is the fan-out cost knob (each candidate = a fetch + a VLM check + a dry-run file).
+    # It is bounded by _MAX_CONSIDER; exceeding it is an explicit ValueError, NOT a silent
+    # truncation to a hidden pool size. Monkeypatched small to stay decoupled from the default.
+    monkeypatch.setattr(web_mod, "_MAX_CONSIDER", 4, raising=True)
+    ctx = _ctx(tmp_path, dry_run=True)
+    with pytest.raises(ValueError):
+        _run(ctx, lambda: media.web.source("red barn", subject="a red barn", want=5, consider=5))
+    # At the ceiling it is honoured exactly.
+    out = _run(ctx, lambda: media.web.source("red barn", subject="a red barn", want=4, consider=4))
+    assert len(out) == 4
+
+
 def test_search_validates_sources(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path, dry_run=True)
     with pytest.raises(ValueError):

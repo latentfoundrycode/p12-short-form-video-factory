@@ -74,7 +74,11 @@ Searches, fetches candidates in **search-provider rank order** (relevance is unk
 recency default), runs `check_relevance` on each, and returns the first `want` that pass `min_score` —
 the "checked selection" primitive. `want` is clamped to `>= 0`; it stops fetching/checking once `want`
 pass or `consider` are exhausted (so it may return FEWER than `want` when fewer qualify), bounding
-fan-out. `consider`/`want` have conservative defaults (§10; fan-out is the cost knob). **Dry-run:**
+fan-out. **Fan-out ceiling (cost protection, §10.2):** `consider` is capped by `_MAX_CONSIDER`
+(default 50, revisitable) — each considered candidate costs a fetch + a VLM check, and in dry-run a
+written stub file, so an unbounded `consider` is a real resource/cost hazard. `consider >
+_MAX_CONSIDER` raises `ValueError` (an explicit, documented maximum — not a silent truncation).
+Within the ceiling, dry-run `source` returns exactly `want` when `want <= consider`. **Dry-run:**
 `source()` short-circuits to `want` deterministic `SourcedImage` stubs and must NOT call the relevance
 gate (a dry-run has no VLM to assess with); each stub carries a passing `relevance` stub so a workflow
 exercises its happy path. `check_relevance()` dry-run likewise returns a passing stub verdict
