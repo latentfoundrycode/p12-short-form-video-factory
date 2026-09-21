@@ -106,8 +106,12 @@ name(s). `commons` needs no key (or a free one); `web` needs the chosen provider
   commons but forbid the paid/unknown-licence web tier. Splitting makes the gate real: `web.images.web`
   is offered only when the paid provider's key is configured; `commons` when its provider is enabled.
 - A workflow declares whichever tier(s) it uses, plus `agents.vision` for `check_relevance`.
-- **Governance off-switch:** an owner setting to disable the `web` tier entirely (env/registry flag)
-  even when a key is present — so web sourcing can be turned off org-wide without unsetting secrets.
+- **Governance off-switch (enforced at RUNTIME, not just scan-time):** an owner setting to disable the
+  `web` tier even when a key is present. Capability availability is computed at registry scan, but the
+  off-switch (and the set of enabled tiers) must be carried into the run `Context` and re-checked
+  inside the `media.web` calls themselves — a `search`/`source` targeting a disabled tier raises at
+  call time. A scan-time-only flag is bypassable by a workflow that calls the SDK directly, so the
+  enforcement point is the SDK call, not only manifest validation (Review B, increment 6).
 
 ## 6. Budget (reuse the existing gate — with two real modelling gaps to close)
 
@@ -125,10 +129,19 @@ name(s). `commons` needs no key (or a free one); `web` needs the chosen provider
   adds a validation/startup check that the web meter has a ceiling before the tier is enabled. This
   "meter-without-ceiling is unlimited" gap is general (all meters); it is recorded as a budget-hardening
   candidate alongside the `agents.llm` reserve-leak below.
+- **Per-request reservation for paid search (Review B):** if the `web` search adapter paginates,
+  reserve/reconcile per UPSTREAM request (each billed page), not once per `search()` call, so the
+  ledger matches what the provider actually bills.
+- **Post-dispatch failures must RETAIN the estimate (Review B; the H52 narrow-block lesson):** a
+  compensating release must cover only the steps that can fail BEFORE billing. `_budget_reserved`
+  releases on every exception, so it must wrap ONLY the pre-billing work; an ambiguous failure AFTER
+  the paid request is dispatched (the provider may already have billed) must keep the reservation, not
+  release it to $0 — otherwise a real charge evades the ceiling. This is the same shape as the
+  `agents.llm` fix below.
 - **HARD prerequisite (S1):** the `agents.llm` budget-reserve-leak (task_1a4cc2f0) MUST land before
   increment 4. `_post_chat_completion` reserves via the bare `_budget_reserve` and only reconciles on
-  the 200 path, so a failed VLM check leaks its reserve; `source(consider=8)` runs up to 8 checks per
-  call, so one flaky sourcing call could leak up to 8 reserves and brick the shared `openrouter` meter
+  the 200 path, so a failed VLM check leaks its reserve; `source(consider=N)` runs up to N checks per
+  call, so one flaky sourcing call could leak up to N reserves and brick the shared `openrouter` meter
   for the run. The fix pattern already exists (`ctx._budget_reserved`, H52). Ordered before increment 4.
 
 ## 7. Safety — untrusted web content (the crux; a dedicated designed component, not "reuse H51")
@@ -139,14 +152,20 @@ workflow paths, suffix allow-list), here the guards are content-based and networ
 ### 7.1 SSRF / URL guard (its own component — H51 does NOT transfer)
 H51/H53 is an allow-list to one first-party host (`*.bfl.ai`); here hosts are the whole internet, so
 allow-listing is impossible and a deny-list on the **resolved IP** is required:
-- Resolve the host, then **reject** private (RFC1918), loopback, link-local (169.254/fe80), ULA
-  (fc00::/7), CGNAT (100.64/10), IPv4-mapped-IPv6, and octal/hex/decimal-encoded address forms.
+- **Allow ONLY globally-routable unicast IPs** (an allow-of-kind, stricter than a deny-list): reject
+  private (RFC1918), loopback, link-local (169.254/fe80), ULA (fc00::/7), CGNAT (100.64/10),
+  multicast, reserved/benchmarking, unspecified, IPv4-mapped/compat IPv6, and octal/hex/decimal-encoded
+  address forms — i.e. accept an address only if it is global unicast, reject everything else. This
+  fails safe on address kinds a deny-list would miss.
+- **Disable environment proxies** on the fetch client (no `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`
+  honoured) — an env proxy would route the request through an operator-unintended host and bypass the
+  resolved-IP validation/pinning entirely (Review B, increment 3).
 - **Pin the connection to the validated IP** (or re-validate at connect) to defeat **DNS
   rebinding/TOCTOU** — a host that resolves public at check time but private at socket time.
 - **Close H53(a) explicitly:** validate the SAME URL object the HTTP client will use (no
   urlsplit-vs-client parser differential); re-check `response.request.url`/the connect target.
 - **Redirects:** disabled by default and followed manually, re-validating every hop against the
-  resolved-IP deny-list. https-only.
+  globally-routable-unicast rule. https-only.
 
 ### 7.2 Byte pipeline
 - **Streaming byte cap** on download (reject once the ceiling is exceeded mid-stream).
@@ -160,6 +179,11 @@ allow-listing is impossible and a deny-list on the **resolved IP** is required:
 - **Re-encode / normalise, then DISCARD the originals:** decode and re-encode to a canonical image
   (strip EXIF/metadata/trailing data); the original bytes are never stored in the library or served.
   This — not the magic-byte check alone — is what defeats polyglot/EXIF-tracker/embedded payloads.
+- **Filename hash width (Review B):** the on-disk name is content-addressed, but an 8-hex `sha8`
+  (32 bits) collides at the birthday bound (~64k items). The per-run workspace holds few files so
+  `sha8` is fine THERE (matches `media.image`), but a fetch/library name derived from untrusted
+  content that could accumulate should use a wider digest (e.g. `sha256[:16]`/64 bits or more) to keep
+  collisions negligible; increment 3b picks the width when it writes the real fetch filename.
 
 ### 7.3 Content safety (B3 — relevance ≠ safety)
 `check_relevance` gates relevance only; a relevant image can be NSFW/illegal/trademarked and would
@@ -187,8 +211,8 @@ itself:
   (path + candidate + relevance). `si["path"]` is a workspace-relative **`str`**; `ctx.library.put`
   dispatches a `Path` argument to the file store and any non-`Path` (incl. a `str`) to `put_value`
   (which would store the string, not the image). So the workflow MUST resolve the path to a `Path`
-  first:
-  `ctx.library.put(key, ctx.paths.video / si["path"], facets={"source": si["candidate"]["source"],
+  first, via the public workflow accessor `ctx.video_dir`:
+  `ctx.library.put(key, ctx.video_dir / si["path"], facets={"source": si["candidate"]["source"],
   "licence": si["candidate"]["licence"], …, "relevance_score": si["relevance"]["score"]},
   description=…)` with its declared facets. This keeps library policy with the workflow and avoids the
   undeclared-facet conflict. Increment 5 carries an end-to-end intake test (a sourced stub image is
@@ -196,9 +220,14 @@ itself:
 - **Reuse is not automatic from content-addressing.** Identical bytes converge to one blob, but a
   fresh run still pays for search + fetch + VLM unless it FIRST calls `ctx.library.find(...)` and
   sources only on a miss. The reuse pattern (find-before-source) is the workflow's, shown in the
-  worked example. Note: a content-identical re-`put` keeps the first descriptor, so the FIRST intake's
-  provenance wins — acceptable (same bytes, same image), but the workflow should prefer find-then-reuse
-  over blind re-source.
+  worked example.
+- **Provenance on content-identical re-put (Review B):** a content-identical re-`put` keeps the FIRST
+  descriptor. For same bytes this is usually fine, but identical pixels can arrive from different
+  sources under DIFFERENT licences (e.g. a CC-BY commons copy and an unknown-licence web copy). First-
+  writer-wins would then attach a licence the later source does not grant. Increment 5 handles this by
+  keying the library entry to include the source/licence (so differing-licence copies do not collapse
+  into one receipt) or by rejecting a conflicting re-put — it must NOT silently keep one licence for
+  bytes that arrived under another.
 
 This intake model is exercised by increment 5 (`source()`), not the increment-1 skeleton.
 
@@ -215,16 +244,20 @@ This intake model is exercised by increment 5 (`source()`), not the increment-1 
 2. **`commons` tier (Openverse)** — real search + candidate mapping (licence/attribution), the
    Openverse provider row (keyless) advertising `web.images.commons` + the availability flip, mocked
    HTTP contract; then a free live smoke. Wikimedia fast-follow.
-3a. **URL/SSRF guard + safe download** — resolved-IP deny-list, IP-pinned connect, per-hop redirect
-   re-validation, streaming byte cap. Adversarial tests: private/loopback/link-local/CGNAT IP,
-   encoded-IP forms, DNS-rebinding, redirect-to-internal, oversize stream.
+3a. **URL/SSRF guard + safe download** — globally-routable-unicast-only IP rule, env-proxy disabled,
+   IP-pinned connect, per-hop redirect re-validation, streaming byte cap. Adversarial tests:
+   private/loopback/link-local/CGNAT/multicast/reserved IP, encoded-IP forms, DNS-rebinding,
+   redirect-to-internal, HTTP(S)_PROXY set, oversize stream.
 3b. **Byte validation + normalise** — magic-byte type gate (SVG excluded), pixel-bomb bound,
    animation bound, decode→re-encode→strip, content-hash filename, discard originals. Adversarial
    tests: pixel bomb, polyglot, EXIF, wrong-magic, animated bomb.
 4. **`check_relevance()`** — VLM gate over `agents.vision` with a structured schema; relevant vs
    irrelevant scoring against mocked vision responses; live smoke. (After prerequisite #0.)
-5. **`source()` high-level** — compose search→fetch→check with early stop + library intake; dry-run
-   short-circuit.
+5. **`source()` high-level** — compose search→fetch→check with early stop; dry-run short-circuit.
+   **Each considered candidate's fetch + VLM check runs inside its own cached `ctx.step`** (Review B),
+   so a late failure in a `source(consider=N)` fan-out does not repay the already-completed
+   fetches/checks on resume — only the unfinished ones re-run. The intake is the workflow's `put` in
+   `prepare()` (§8), with the end-to-end intake test (path resolves to a real image, not the string).
 6. **`web` tier (chosen paid provider)** — search adapter + synthetic price row + budget-config meter;
    forced safeSearch; `licence="unknown"` flagging; metered; live smoke. (After owner picks provider.)
 

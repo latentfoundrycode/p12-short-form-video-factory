@@ -143,6 +143,10 @@ def test_source_dry_run_returns_want_enriched_results(tmp_path: Path) -> None:
         _rel_file(tmp_path, si["path"])
         assert set(si["candidate"]) >= _CANDIDATE_KEYS
         assert set(si["relevance"]) >= {"relevant", "score", "reason"}
+    # results must not alias one shared mutable relevance dict (each is its own verdict)
+    assert out[0]["relevance"] is not out[1]["relevance"], (
+        "each result needs its own relevance dict"
+    )
     json.dumps(out)
 
 
