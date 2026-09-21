@@ -8,7 +8,7 @@ from .graphics import _artifact, _sha8
 
 # default vision model for check_relevance (revisited at increment 4)
 _VISION_MODEL = "openai/gpt-4o"
-_STUB_POOL = 8  # dry-run search returns up to this many deterministic candidates
+_STUB_POOL = 256  # dry-run search returns up to this many deterministic candidates
 
 
 class ImageCandidate(TypedDict):
