@@ -254,10 +254,12 @@ def test_search_stub_reflects_the_requested_tier(tmp_path: Path) -> None:
     assert all(c["licence"] == "unknown" for c in out)
 
 
-# --- real path not built yet (skeleton) ---------------------------------------------------------
+# --- real paths not built yet (fetch/check_relevance/source; search is real as of increment 2) ---
 
 
-def test_real_paths_not_implemented_yet(tmp_path: Path) -> None:
+def test_unbuilt_real_paths_still_raise_not_implemented(tmp_path: Path) -> None:
+    # search()'s real path is built (increment 2, Openverse commons); fetch/check_relevance/source
+    # remain NotImplementedError until their increments (3/4/5).
     ctx = _ctx(tmp_path, dry_run=False)
     candidate = ImageCandidate(
         source="commons",
@@ -270,8 +272,6 @@ def test_real_paths_not_implemented_yet(tmp_path: Path) -> None:
         title="x",
         rank=0,
     )
-    with pytest.raises(NotImplementedError):
-        _run(ctx, lambda: media.web.search("red barn"))
     with pytest.raises(NotImplementedError):
         _run(ctx, lambda: media.web.fetch(candidate))
     with pytest.raises(NotImplementedError):

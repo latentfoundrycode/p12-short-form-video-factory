@@ -506,3 +506,15 @@ increments that logged them.
   **Cross-cutting note:** `media/image.py` and `_refs.py` still resolve refs on the accepted
   trusted-workflow model (they also egress refs to the provider); extend the same confinement +
   suffix guard to them in the Phase 4 refactor pass for consistency.
+- **H56 — Openverse commons adapter: malformed-200 hygiene** (web-sourcing increment 2;
+  security-auditor advisory, non-blocking). **MOSTLY CLOSED at increment-2 round 2:** the adapter now
+  routes through `_http.parse_json` (non-JSON / non-dict body → `AdapterError`), tolerates a
+  missing/null `results` (`data.get("results") or []`), skips non-dict rows and null-`url` results, and
+  coerces null string fields — the earlier raw `resp.json()`/`r["url"]`-KeyError/`AttributeError` crash
+  paths are gone. **Residual (open, low, trusted-upstream):** `int(r.get("width") or 0)` /
+  `int(r.get("height") or 0)` still raise `ValueError`/`TypeError` on a malformed 200 where
+  `width`/`height` is a non-numeric string or non-scalar (Openverse's schema types these as int, so
+  real data is safe). Close with a defensive `_as_int(x, default=0)` (catch `TypeError`/`ValueError`)
+  when the fetch/parse path is next touched (increment 3). Change-log nit: the `openverse` METERS row
+  is `fiat/usd` though the commons tier is free/keyless (no spend recorded); it fits the eventual paid
+  web tier — revisit the meter model if the paid tier lands separately.

@@ -139,6 +139,17 @@ PROVIDERS: dict[str, Provider] = {
         "https://api-singapore.klingai.com",
         "kling",
     ),
+    "openverse": Provider(
+        "openverse",
+        "Openverse",
+        (),
+        "openverse",
+        "fiat",
+        "usd",
+        "https://api.openverse.org/v1",
+        "openverse",
+        capabilities=frozenset({"web.images.commons"}),
+    ),
 }
 
 MODELS: dict[str, Model] = {

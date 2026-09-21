@@ -68,7 +68,34 @@ def search(
                 )
             )
         return candidates
-    raise NotImplementedError("media.web.search real path is built in increment 2 (commons tier)")
+    import importlib
+
+    from ..providers.registry import PROVIDERS
+
+    if "web" in sources:
+        raise NotImplementedError("media.web.search web tier is built in increment 6")
+
+    out: list[ImageCandidate] = []
+    for tier in sources:
+        if tier == "commons":
+            provider = PROVIDERS["openverse"]
+            secrets = {name: ctx.secret(name) for name in provider.secret_names}  # {} — keyless
+            adapter = importlib.import_module(f"sfvf.providers.{provider.adapter}")
+            out.extend(
+                adapter.search(
+                    query, limit=limit, licence=licence, provider=provider, secrets=secrets
+                )
+            )
+        else:  # "web"
+            raise NotImplementedError("media.web.search web tier is built in increment 6")
+    # URL-deduplicate across tiers, preserving first-seen order (design §3.1).
+    seen: set[str] = set()
+    deduped: list[ImageCandidate] = []
+    for c in out:
+        if c["url"] not in seen:
+            seen.add(c["url"])
+            deduped.append(c)
+    return deduped
 
 
 def fetch(candidate: ImageCandidate) -> str:
