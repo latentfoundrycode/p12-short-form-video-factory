@@ -1,0 +1,96 @@
+from __future__ import annotations
+
+from typing import TypedDict
+
+from .._ffmpeg import solid_image
+from .._runtime import current_context
+from .graphics import _artifact, _sha8
+
+# default vision model for check_relevance (revisited at increment 4)
+_VISION_MODEL = "openai/gpt-4o"
+_STUB_POOL = 8  # dry-run search returns up to this many deterministic candidates
+
+
+class ImageCandidate(TypedDict):
+    source: str
+    url: str
+    thumbnail: str
+    licence: str
+    attribution: str
+    width: int
+    height: int
+    title: str
+    rank: int
+
+
+class Relevance(TypedDict):
+    relevant: bool
+    score: float
+    reason: str
+
+
+def search(
+    query: str,
+    *,
+    sources: tuple[str, ...] = ("commons",),
+    limit: int = 10,
+    licence: str | None = None,
+) -> list[ImageCandidate]:
+    ctx = current_context()
+    if ctx.dry_run:
+        n = max(0, min(limit, _STUB_POOL))
+        return [
+            ImageCandidate(
+                source="commons",
+                url=f"https://example.invalid/{_sha8(['web.search', query, i])}.jpg",
+                thumbnail=f"https://example.invalid/{_sha8(['web.thumb', query, i])}-t.jpg",
+                licence="CC0-1.0",
+                attribution="dry-run stub",
+                width=800,
+                height=600,
+                title=f"{query} — stub {i}",
+                rank=i,
+            )
+            for i in range(n)
+        ]
+    raise NotImplementedError("media.web.search real path is built in increment 2 (commons tier)")
+
+
+def fetch(candidate: ImageCandidate) -> str:
+    ctx = current_context()
+    if ctx.dry_run:
+        stem = _sha8(["web.fetch", candidate["url"]])
+        dest, rel = _artifact(ctx, f"web-{stem}.png")
+        solid_image(dest, width=64, height=64)
+        return rel
+    raise NotImplementedError(
+        "media.web.fetch real path is built in increment 3 (download + safety)"
+    )
+
+
+def check_relevance(image: str, *, subject: str, model: str = _VISION_MODEL) -> Relevance:
+    ctx = current_context()
+    if ctx.dry_run:
+        return Relevance(relevant=True, score=1.0, reason="dry-run stub")
+    raise NotImplementedError(
+        "media.web.check_relevance real path is built in increment 4 (VLM gate)"
+    )
+
+
+def source(
+    query: str,
+    *,
+    subject: str,
+    sources: tuple[str, ...] = ("commons",),
+    want: int = 1,
+    consider: int = 8,
+    min_score: float = 0.6,
+    licence: str | None = None,
+) -> list[str]:
+    ctx = current_context()
+    if ctx.dry_run:
+        # Short-circuit: compose the search + fetch STUBS and return `want` paths. Do NOT call
+        # check_relevance (design §3.2) — its gate is irrelevant in dry-run.
+        candidates = search(query, sources=sources, limit=consider, licence=licence)
+        return [fetch(c) for c in candidates[:want]]
+    raise NotImplementedError("media.web.source real path is built in increment 5")
