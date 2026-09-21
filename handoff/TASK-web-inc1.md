@@ -199,3 +199,13 @@ fan-out. In `sdk/sfvf/media/web.py` change `_STUB_POOL = 8` to `_STUB_POOL = 256
 bound; `search` still returns `min(limit, _STUB_POOL)`, so `search(limit=consider)` yields `consider`
 candidates for any realistic `consider`, and `source` then honours `want <= consider`). ONLY that one
 constant changes. Frozen test: `test_source_dry_run_honours_want_up_to_consider`.
+
+## Round 4 (fan-out ceiling on `consider`)
+Cross-family Review B r3: raising `_STUB_POOL` only moved the truncation; the contract needs an
+explicit maximum, and `consider` needs a real cost-fanout ceiling (each candidate = a fetch + a VLM
+check + a dry-run file). In `sdk/sfvf/media/web.py`:
+1. Add a module constant `_MAX_CONSIDER = 50` (fan-out ceiling; a §10.2 default, revisitable).
+2. In `source`, right after `ctx = current_context()` and BEFORE the `if ctx.dry_run:` branch, add:
+   `if consider > _MAX_CONSIDER: raise ValueError(...)`.
+Keep `_STUB_POOL = 256`. ONLY those two edits. Frozen test:
+`test_source_rejects_consider_above_the_fanout_ceiling`.
