@@ -228,14 +228,29 @@ def test_billed_200_then_client_teardown_error_does_not_release_the_reserve(
     reserved = [x for x in lines if x.get("kind") == "reserved"]
     assert reserved, "expected the call to reserve"
     tok = reserved[-1]["token"]
-    released = [
-        x
-        for x in lines
-        if x.get("token") == tok and x.get("kind") == "actual" and x.get("amount") == 0.0
-    ]
-    assert not released, (
-        "a BILLED 200 followed by a client-teardown error must NOT release the reserve to 0"
+    actuals = [x for x in lines if x.get("token") == tok and x.get("kind") == "actual"]
+    # the REAL billed cost must be recorded BEFORE teardown — not the estimate, not a release to 0
+    assert actuals and actuals[-1].get("amount") == pytest.approx(0.02), (
+        "a BILLED 200 must reconcile the real usage.cost before the client teardown; a teardown "
+        "error must not leave the ledger at the estimate or release the reserve to 0"
     )
+
+
+def test_pre_dispatch_client_build_failure_releases_the_reserve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A failure BEFORE any request is dispatched (here _http_client() construction) is
+    # confirmed-unbilled — nothing was ever sent — so the reserve must be RELEASED, not leaked
+    # toward per_day. (Distinct from a transport error DURING client.post, which is ambiguous and
+    # retains.) This is the original leak class the increment closes.
+    def boom_client() -> httpx2.Client:
+        raise RuntimeError("client construction failed")
+
+    monkeypatch.setattr(agents, "_http_client", boom_client)
+    ctx = _ctx(tmp_path)
+    with pytest.raises(RuntimeError):
+        _run(ctx, lambda: agents.llm("q", agent="w", model="m"))
+    _assert_released(tmp_path / "budget" / "ledger.jsonl")
 
 
 def test_success_reconciles_the_real_cost_not_a_release(
