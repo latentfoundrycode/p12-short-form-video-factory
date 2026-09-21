@@ -158,13 +158,26 @@ def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
             else:
                 raise RuntimeError("OpenRouter: rate limited after retries (429)")
 
-            data: dict[str, Any] = resp.json()
-        cost = _usage_cost(data)
+            post_error: Exception | None
+            data: dict[str, Any] | None
+            cost: float | None
+            try:
+                data = resp.json()
+                cost = _usage_cost(data)
+            except Exception as exc:
+                post_error, data, cost = exc, None, None
+            else:
+                post_error = None
         if cost is not None:
-            ctx.emit(
-                {"t": "cost", "meter": "openrouter", "unit": "usd", "amount": cost, "cached": False}
-            )
             ctx._budget_reconcile(token, actual=cost)
+    if post_error is not None:
+        raise RuntimeError("OpenRouter: unreadable 200 response body") from post_error
+    if cost is not None:
+        ctx.emit(
+            {"t": "cost", "meter": "openrouter", "unit": "usd", "amount": cost, "cached": False}
+        )
+    if data is None:
+        raise RuntimeError("OpenRouter: unreadable 200 response body")
     return data
 
 
