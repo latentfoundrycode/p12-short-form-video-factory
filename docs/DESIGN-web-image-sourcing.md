@@ -221,13 +221,16 @@ itself:
   fresh run still pays for search + fetch + VLM unless it FIRST calls `ctx.library.find(...)` and
   sources only on a miss. The reuse pattern (find-before-source) is the workflow's, shown in the
   worked example.
-- **Provenance on content-identical re-put (Review B):** a content-identical re-`put` keeps the FIRST
-  descriptor. For same bytes this is usually fine, but identical pixels can arrive from different
-  sources under DIFFERENT licences (e.g. a CC-BY commons copy and an unknown-licence web copy). First-
-  writer-wins would then attach a licence the later source does not grant. Increment 5 handles this by
-  keying the library entry to include the source/licence (so differing-licence copies do not collapse
-  into one receipt) or by rejecting a conflicting re-put — it must NOT silently keep one licence for
-  bytes that arrived under another.
+- **Provenance on content-identical re-put (Review B):** library identity is EXCLUSIVELY the content
+  sha256 (a `name` is only an alias to a blob), so identical pixels are one blob no matter the name —
+  "keying the entry by source/licence" cannot separate them and is NOT an option. A content-identical
+  re-`put` keeps the FIRST descriptor, so bytes that arrive from different sources under DIFFERENT
+  licences (a CC-BY commons copy vs an unknown-licence web copy) would carry the first source's
+  licence. Increment 5 resolves this at the RECEIPT model, one of: (a) REJECT a re-put whose licence
+  conflicts with the existing descriptor (a `LibraryError`), or (b) store MULTIPLE provenance receipts
+  against the one blob (the descriptor's `provenance` becomes a list of source+licence records). It
+  must NOT silently keep one licence for bytes that arrived under another. Increment 5 picks (a) or (b)
+  when it builds intake.
 
 This intake model is exercised by increment 5 (`source()`), not the increment-1 skeleton.
 
