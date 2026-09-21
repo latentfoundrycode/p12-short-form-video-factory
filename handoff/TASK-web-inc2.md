@@ -123,3 +123,107 @@ the existing `sources` validation and the dry-run stub branch unchanged.
 - `PYTHONPATH=sdk python -m pytest tests/integration/test_media_web_commons.py tests/integration/test_media_web_surface.py tests/sdk/test_providers_registry.py tests/registry/ -q` — all pass.
 - `ruff check` + `ruff format --check` + `mypy` clean on the three changed/new files.
 - `git diff` (+ new file) shows exactly `registry.py`, `openverse.py`, `media/web.py`.
+
+## Round 2 (cross-family Review B — live-verified fixes)
+Review B ran the REAL Openverse API and found the mock encoded wrong assumptions, plus a CI failure.
+Five fixes, across `app/core/meters.py`, `sdk/sfvf/providers/openverse.py`, `sdk/sfvf/media/web.py`.
+
+### R2.1 — METERS entry (fixes CI: `tests/core/test_meters_registry.py`)
+In `app/core/meters.py`'s `METERS` dict add (kind/unit must match the registry row):
+```python
+    "openverse": MeterInfo(kind="fiat", provider="Openverse", unit="usd"),
+```
+
+### R2.2 — Rewrite the adapter through the shared kit + caps + null handling (`providers/openverse.py`)
+Use the central rate limiter + retry + hygienic parser (like `openai.py`), cap page_size to the
+anonymous max, short-circuit non-positive limits, and tolerate schema-valid nulls:
+```python
+from __future__ import annotations
+
+from typing import Any
+from urllib.parse import urlencode
+
+from .._ratelimit import LIMITER
+from ._http import parse_json, request
+
+_BASE = "https://api.openverse.org/v1"
+_TIMEOUT_S = 30.0
+_ANON_MAX_PAGE_SIZE = 20   # anonymous Openverse rejects page_size > 20 (HTTP 401)
+
+# Anonymous Openverse throttle: ~20 requests/min. One at a time, >= 3s apart.
+LIMITER.configure("openverse", max_concurrency=1, min_interval_s=3.0)
+
+
+class _Anon:
+    """Anonymous auth: Openverse image search needs no credentials."""
+
+    def headers(self) -> dict[str, str]:
+        return {}
+
+
+def _client() -> Any:
+    import httpx2
+
+    return httpx2.Client(base_url=_BASE, timeout=_TIMEOUT_S)
+
+
+def search(
+    query: str,
+    *,
+    limit: int = 20,
+    licence: str | None = None,
+    provider: Any = None,
+    secrets: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    if limit <= 0:                     # nothing requested -> no call (Openverse 400s on <= 0)
+        return []
+    page_size = min(limit, _ANON_MAX_PAGE_SIZE)
+    params: dict[str, Any] = {"q": query, "page_size": page_size}
+    if licence:
+        params["license"] = licence
+    url = f"/images/?{urlencode(params)}"
+    with _client() as client:
+        resp = request(client, "GET", url, provider="openverse", auth=_Anon(), limiter=LIMITER)
+    data = parse_json(resp, provider="openverse", where="GET /images/")
+    out: list[dict[str, Any]] = []
+    for i, r in enumerate(data.get("results") or []):
+        if not isinstance(r, dict):
+            continue
+        image_url = r.get("url")
+        if not image_url:              # schema permits null url -> nothing to source, skip
+            continue
+        lic = r.get("license") or ""
+        ver = r.get("license_version") or ""
+        licence_str = f"{lic} {ver}".strip() or "unknown"
+        out.append(
+            {
+                "source": "commons",
+                "url": image_url,
+                "thumbnail": r.get("thumbnail") or "",
+                "licence": licence_str,
+                "attribution": r.get("attribution") or "",
+                "width": int(r.get("width") or 0),
+                "height": int(r.get("height") or 0),
+                "title": r.get("title") or "",
+                "rank": i,
+            }
+        )
+    return out
+```
+Note `r.get(k) or ""` (not `r.get(k, "")`) — a key PRESENT with a null value must coerce to the
+default. `rank = i` is the enumerate index (over the RAW results), so a skipped null-url result leaves
+a gap in ranks, which is fine (rank = provider rank).
+
+### R2.3 — Reject the unsupported tier before dispatch (`media/web.py`)
+In `search`'s real path, BEFORE the per-tier dispatch loop that calls the adapter, reject unimplemented
+tiers so a mixed `("commons","web")` request makes no Openverse call then fails:
+```python
+    if "web" in sources:
+        raise NotImplementedError("media.web.search web tier is built in increment 6")
+```
+(Keep the `sources` validation and the commons dispatch + URL-dedup otherwise unchanged.)
+
+## Acceptance (round 2)
+- `PYTHONPATH=sdk python -m pytest tests/integration/test_media_web_commons.py tests/integration/test_media_web_surface.py tests/sdk/test_providers_registry.py tests/registry/ tests/core/test_meters_registry.py tests/core/test_meters.py -q` — all pass.
+- `ruff check` + `ruff format --check` + `mypy` clean on `app/core/meters.py`, `sdk/sfvf/providers/openverse.py`, `sdk/sfvf/media/web.py`.
+- `git diff` shows exactly those three files.
