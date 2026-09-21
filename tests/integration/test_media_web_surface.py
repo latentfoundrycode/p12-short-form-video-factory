@@ -254,29 +254,27 @@ def test_search_stub_reflects_the_requested_tier(tmp_path: Path) -> None:
     assert all(c["licence"] == "unknown" for c in out)
 
 
-# --- real paths not built yet (source; search #2, fetch #3a, check_relevance #4 are real) ---
+# --- only the paid WEB tier is unbuilt now (commons search/fetch/check/source are real) ---
 
 
-def test_unbuilt_real_paths_still_raise_not_implemented(tmp_path: Path) -> None:
-    # search()'s real path is built (increment 2, Openverse commons), fetch()'s (increment 3a/3b,
-    # SSRF-guarded download + byte pipeline), and check_relevance()'s (increment 4, the VLM gate);
-    # source() remains NotImplementedError until #5.
+def test_only_the_web_tier_real_path_is_unbuilt(tmp_path: Path) -> None:
+    # commons search (#2), fetch (#3a/#3b), check_relevance (#4), source (#5) all have real paths.
+    # The paid WEB tier (search sources=("web",)) stays NotImplementedError until increment 6.
     ctx = _ctx(tmp_path, dry_run=False)
+    with pytest.raises(NotImplementedError):
+        _run(ctx, lambda: media.web.search("red barn", sources=("web",)))
+    # keep the ImageCandidate/Relevance/SourcedImage TypedDicts referenced (load-bearing imports)
     candidate = ImageCandidate(
         source="commons",
         url="https://example.invalid/x.jpg",
-        thumbnail="https://example.invalid/x-t.jpg",
+        thumbnail="",
         licence="CC0-1.0",
         attribution="stub",
-        width=800,
-        height=600,
+        width=8,
+        height=8,
         title="x",
         rank=0,
     )
-    with pytest.raises(NotImplementedError):
-        _run(ctx, lambda: media.web.source("red barn", subject="a red barn"))
-    # keep the Relevance/SourcedImage TypedDicts referenced so the imports are load-bearing
-    _ = Relevance(relevant=True, score=1.0, reason="ok")
     _ = SourcedImage(
         path="web-x.png",
         candidate=candidate,
