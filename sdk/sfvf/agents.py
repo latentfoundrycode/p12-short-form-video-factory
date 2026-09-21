@@ -138,8 +138,8 @@ def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
             *body["messages"],
         ]
     key = ctx.secret("OPENROUTER_API_KEY")
-    with ctx._budget_reserved("openrouter", "usd") as token:
-        with _http_client() as client:
+    with _http_client() as client:
+        with ctx._budget_reserved("openrouter", "usd") as token:
             for _attempt in range(_MAX_ATTEMPTS):
                 with _LIMITER.slot("openrouter"):
                     resp = client.post(
@@ -157,17 +157,16 @@ def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
                 raise RuntimeError(f"OpenRouter error {resp.status_code}: {resp.text}")
             else:
                 raise RuntimeError("OpenRouter: rate limited after retries (429)")
-
-            post_error: Exception | None
-            data: dict[str, Any] | None
-            cost: float | None
-            try:
-                data = resp.json()
-                cost = _usage_cost(data)
-            except Exception as exc:
-                post_error, data, cost = exc, None, None
-            else:
-                post_error = None
+        post_error: Exception | None
+        data: dict[str, Any] | None
+        cost: float | None
+        try:
+            data = resp.json()
+            cost = _usage_cost(data)
+        except Exception as exc:
+            post_error, data, cost = exc, None, None
+        else:
+            post_error = None
         if cost is not None:
             ctx._budget_reconcile(token, actual=cost)
     if post_error is not None:
