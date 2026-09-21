@@ -138,33 +138,33 @@ def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
             *body["messages"],
         ]
     key = ctx.secret("OPENROUTER_API_KEY")
-    token = ctx._budget_reserve("openrouter", "usd")
-    with _http_client() as client:
-        for _attempt in range(_MAX_ATTEMPTS):
-            with _LIMITER.slot("openrouter"):
-                resp = client.post(
-                    "/chat/completions",
-                    headers={"Authorization": f"Bearer {key}"},
-                    json=body,
-                )
-            if resp.status_code == 200:
-                break
-            if resp.status_code == 429:
-                _LIMITER.penalize("openrouter", _retry_after_s(resp.headers.get("Retry-After")))
-                continue
-            if resp.status_code == 402:
-                raise RuntimeError("OpenRouter: insufficient credits (402)")
-            raise RuntimeError(f"OpenRouter error {resp.status_code}: {resp.text}")
-        else:
-            raise RuntimeError("OpenRouter: rate limited after retries (429)")
+    with ctx._budget_reserved("openrouter", "usd") as token:
+        with _http_client() as client:
+            for _attempt in range(_MAX_ATTEMPTS):
+                with _LIMITER.slot("openrouter"):
+                    resp = client.post(
+                        "/chat/completions",
+                        headers={"Authorization": f"Bearer {key}"},
+                        json=body,
+                    )
+                if resp.status_code == 200:
+                    break
+                if resp.status_code == 429:
+                    _LIMITER.penalize("openrouter", _retry_after_s(resp.headers.get("Retry-After")))
+                    continue
+                if resp.status_code == 402:
+                    raise RuntimeError("OpenRouter: insufficient credits (402)")
+                raise RuntimeError(f"OpenRouter error {resp.status_code}: {resp.text}")
+            else:
+                raise RuntimeError("OpenRouter: rate limited after retries (429)")
 
-        data: dict[str, Any] = resp.json()
-    cost = _usage_cost(data)
-    if cost is not None:
-        ctx.emit(
-            {"t": "cost", "meter": "openrouter", "unit": "usd", "amount": cost, "cached": False}
-        )
-        ctx._budget_reconcile(token, actual=cost)
+            data: dict[str, Any] = resp.json()
+        cost = _usage_cost(data)
+        if cost is not None:
+            ctx.emit(
+                {"t": "cost", "meter": "openrouter", "unit": "usd", "amount": cost, "cached": False}
+            )
+            ctx._budget_reconcile(token, actual=cost)
     return data
 
 
