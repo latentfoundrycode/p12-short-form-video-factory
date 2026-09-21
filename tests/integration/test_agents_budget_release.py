@@ -172,6 +172,43 @@ def test_billed_200_with_unreadable_body_does_not_release_the_reserve(
     )
 
 
+def test_billed_200_then_client_teardown_error_does_not_release_the_reserve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A 200 was received (BILLED). If the HTTP client's teardown (__exit__/close) then raises, the
+    # reserve must NOT be released to 0.0 — the reserved region must end at the billable boundary,
+    # so client teardown happens OUTSIDE it. The reserve stands at its estimate; the call raises.
+    class _TeardownBoom(httpx2.Client):
+        def __exit__(self, *exc: object) -> None:
+            super().__exit__(*exc)
+            raise RuntimeError("client teardown exploded")
+
+    def ok(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200, json={"choices": [{"message": {"content": "hi"}}], "usage": {"cost": 0.02}}
+        )
+
+    def _client() -> httpx2.Client:
+        return _TeardownBoom(base_url=_BASE, transport=httpx2.MockTransport(lambda r: ok(r)))
+
+    monkeypatch.setattr(agents, "_http_client", _client)
+    ctx = _ctx(tmp_path)
+    with pytest.raises(RuntimeError):
+        _run(ctx, lambda: agents.llm("q", agent="w", model="m"))
+    lines = _ledger(tmp_path / "budget" / "ledger.jsonl")
+    reserved = [x for x in lines if x.get("kind") == "reserved"]
+    assert reserved, "expected the call to reserve"
+    tok = reserved[-1]["token"]
+    released = [
+        x
+        for x in lines
+        if x.get("token") == tok and x.get("kind") == "actual" and x.get("amount") == 0.0
+    ]
+    assert not released, (
+        "a BILLED 200 followed by a client-teardown error must NOT release the reserve to 0"
+    )
+
+
 def test_success_reconciles_the_real_cost_not_a_release(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
