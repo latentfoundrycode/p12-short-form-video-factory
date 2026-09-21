@@ -139,10 +139,11 @@ def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
         ]
     key = ctx.secret("OPENROUTER_API_KEY")
     token = ctx._budget_reserve("openrouter", "usd")
-    unbilled = False
+    unbilled = True  # nothing dispatched yet -> a failure before the first request releases
     try:
         with _http_client() as client:
             for _attempt in range(_MAX_ATTEMPTS):
+                unbilled = False  # about to dispatch; a transport error from here is AMBIGUOUS
                 with _LIMITER.slot("openrouter"):
                     resp = client.post(
                         "/chat/completions",
@@ -163,17 +164,26 @@ def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
                 unbilled = True
                 raise RuntimeError("OpenRouter: rate limited after retries (429)")
 
+            # 200 (billed). Parse and reconcile the REAL cost INSIDE the client block, so it is
+            # recorded BEFORE the client teardown. unbilled stays False (retain on any further
+            # failure).
             try:
                 data: dict[str, Any] = resp.json()
             except Exception as exc:
                 raise RuntimeError("OpenRouter: unreadable 200 response body") from exc
-        cost = _usage_cost(data)
-        if cost is not None:
-            ctx._budget_reconcile(token, actual=cost)  # reconcile the real cost BEFORE emit
-            ctx.emit(
-                {"t": "cost", "meter": "openrouter", "unit": "usd", "amount": cost, "cached": False}
-            )
-        return data
+            cost = _usage_cost(data)
+            if cost is not None:
+                ctx._budget_reconcile(token, actual=cost)
+                ctx.emit(
+                    {
+                        "t": "cost",
+                        "meter": "openrouter",
+                        "unit": "usd",
+                        "amount": cost,
+                        "cached": False,
+                    }
+                )
+            return data
     finally:
         if unbilled:
             ctx._budget_reconcile(token, actual=0.0, note="released")
