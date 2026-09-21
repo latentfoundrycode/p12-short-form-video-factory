@@ -170,7 +170,14 @@ def test_fetch_requires_https_before_any_resolve_or_request(
         "100.64.0.1",
         "::1",
         "fc00::1",
-        "::ffff:127.0.0.1",
+        "::ffff:127.0.0.1",  # IPv4-mapped loopback
+        # IPv6 forms that EMBED a private/internal IPv4 but Python's is_global returns True —
+        # unwrap and reject on the embedded address (security-auditor found this as a real bypass):
+        "64:ff9b::a00:1",  # NAT64 (64:ff9b::/96) -> 10.0.0.1
+        "64:ff9b::a9fe:a9fe",  # NAT64 -> 169.254.169.254 (cloud metadata)
+        "::7f00:1",  # IPv4-compatible (::/96) -> 127.0.0.1
+        "::127.0.0.1",  # IPv4-compatible -> 127.0.0.1
+        "fe80::1%eth0",  # scoped/zoned literal -> reject (fail closed, clean ValueError)
     ],
 )
 def test_fetch_rejects_a_non_global_resolved_ip(
@@ -180,6 +187,22 @@ def test_fetch_rejects_a_non_global_resolved_ip(
     with pytest.raises(ValueError):
         _run(_ctx(tmp_path), lambda: media.web.fetch(_candidate("https://evil.example.com/a.png")))
     assert seen == [], "a non-global resolved IP must be rejected before any request"
+
+
+def test_fetch_pins_and_brackets_a_public_ipv6(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A legitimately public IPv6 must work (and the pinned URL must bracket the literal, else httpx
+    # raises InvalidURL). Connect goes to the IPv6; Host/SNI stay the hostname.
+    ipv6 = "2606:2800:220:1:248:1893:25c8:1946"
+    seen = _install(monkeypatch, _ok, resolve_to=ipv6)
+    rel = _run(_ctx(tmp_path), lambda: media.web.fetch(_candidate("https://v6.example.com/a.png")))
+    assert (tmp_path / rel).is_file()
+    assert len(seen) == 1
+    req = seen[0]
+    assert req.url.host == ipv6, "must connect to the validated IPv6 (bracketed in the URL)"
+    assert req.headers.get("host", "").startswith("v6.example.com")
+    assert req.extensions.get("sni_hostname") == "v6.example.com"
 
 
 def test_fetch_rejects_when_any_resolved_ip_is_non_global(
