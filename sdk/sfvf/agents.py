@@ -143,8 +143,9 @@ def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
     try:
         with _http_client() as client:
             for _attempt in range(_MAX_ATTEMPTS):
-                unbilled = False  # about to dispatch; a transport error from here is AMBIGUOUS
+                unbilled = True  # waiting on the limiter is not a dispatch
                 with _LIMITER.slot("openrouter"):
+                    unbilled = False  # about to dispatch; a transport error from here is AMBIGUOUS
                     resp = client.post(
                         "/chat/completions",
                         headers={"Authorization": f"Bearer {key}"},
