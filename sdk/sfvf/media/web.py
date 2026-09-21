@@ -19,6 +19,9 @@ _MAX_REDIRECTS = 3
 _DL_CHUNK = 65536
 _NAT64_NET = ipaddress.ip_network("64:ff9b::/96")
 _V4COMPAT_NET = ipaddress.ip_network("::/96")
+_6TO4_NET = ipaddress.ip_network("2002::/16")
+_TEREDO_NET = ipaddress.ip_network("2001::/32")
+_NAT64_LOCAL_NET = ipaddress.ip_network("64:ff9b:1::/48")
 
 
 def _resolve(host: str) -> list[str]:
@@ -38,9 +41,18 @@ def _public_addr(ip: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
     except ValueError as exc:  # scoped/zoned/malformed -> reject, clean message
         raise ValueError(f"fetch: unparseable resolved address {ip!r}") from exc
     if isinstance(addr, ipaddress.IPv6Address):
+        if (
+            addr in _TEREDO_NET
+            or addr in _NAT64_LOCAL_NET
+            or addr.is_site_local
+            or addr.is_reserved
+        ):
+            raise ValueError(f"fetch: non-public address {ip}")
         embedded = addr.ipv4_mapped
         if embedded is None and (addr in _NAT64_NET or addr in _V4COMPAT_NET):
             embedded = ipaddress.IPv4Address(addr.packed[-4:])
+        if embedded is None and addr in _6TO4_NET:
+            embedded = ipaddress.IPv4Address(addr.packed[2:6])
         if embedded is not None:
             addr = embedded
     return addr
