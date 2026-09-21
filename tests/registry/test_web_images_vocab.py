@@ -11,11 +11,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from sfvf.providers import providers_offering
+
 from app.registry.problems import ProblemCode
 from app.registry.validate import KNOWN_CAPABILITIES, validate
 from tests.registry.fixtures import minimal_toml, problem_codes, write_plugin
 
 _UNKNOWN = ProblemCode.CAPABILITY_UNKNOWN.value
+_UNAVAIL = ProblemCode.CAPABILITY_UNAVAILABLE.value
 
 
 def test_web_image_capabilities_are_known_vocabulary() -> None:
@@ -32,3 +35,23 @@ def test_requiring_a_web_image_capability_is_not_a_vocabulary_error(tmp_path: Pa
         plugin = write_plugin(tmp_path, f"photo-explainer-{i}", toml)
         entry = validate(plugin)
         assert _UNKNOWN not in problem_codes(entry), f"{cap} should be known vocabulary"
+
+
+def test_web_image_capabilities_are_not_yet_offered_by_any_provider() -> None:
+    # Increment 1 is vocabulary-only: no provider advertises either tier yet (the real path is
+    # unbuilt), so the capabilities are known but UNAVAILABLE. A provider that offers
+    # web.images.commons — and this flip — arrives with the real adapter in increment 2.
+    assert providers_offering("web.images.commons") == []
+    assert providers_offering("web.images.web") == []
+
+
+def test_requiring_a_web_image_capability_is_unavailable_when_availability_checked(
+    tmp_path: Path,
+) -> None:
+    # With the availability check on (offered supplied), a workflow requiring either tier is
+    # CAPABILITY_UNAVAILABLE until increment 2 registers a provider.
+    for i, cap in enumerate(("web.images.commons", "web.images.web")):
+        toml = minimal_toml(extra=f'requires_capabilities = ["{cap}"]')
+        plugin = write_plugin(tmp_path, f"unavail-{i}", toml)
+        entry = validate(plugin, offered=frozenset())
+        assert _UNAVAIL in problem_codes(entry), f"{cap} should be unavailable in increment 1"

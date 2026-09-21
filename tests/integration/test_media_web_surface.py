@@ -29,7 +29,8 @@ import pytest
 from sfvf import media
 from sfvf._runtime import reset_active, set_active
 from sfvf.context import Context, ContextFile, ContextPaths
-from sfvf.media.web import ImageCandidate, Relevance  # TypedDicts must exist
+from sfvf.media import web as web_mod
+from sfvf.media.web import ImageCandidate, Relevance, SourcedImage  # TypedDicts must exist
 
 
 def _ctx(video_dir: Path, *, dry_run: bool) -> Context:
@@ -127,19 +128,66 @@ def test_check_relevance_dry_run_returns_a_verdict(tmp_path: Path) -> None:
     json.dumps(verdict)
 
 
-def test_source_dry_run_returns_want_checked_paths(tmp_path: Path) -> None:
-    # source() composes search->fetch->check and returns the passing selection. In dry-run it must
-    # short-circuit to `want` real stub paths WITHOUT depending on the relevance gate (design §3.2),
-    # so a workflow dry-run (cost preview / wiring check) sees real sourced paths, not [].
+def test_source_dry_run_returns_want_enriched_results(tmp_path: Path) -> None:
+    # source() returns enriched SourcedImage results (path + candidate + relevance) so provenance is
+    # preserved (design §3.2/§8). In dry-run it short-circuits to `want` real stub results WITHOUT
+    # depending on the relevance gate, so a workflow dry-run sees real sourced results, not [].
     out = _run(
         _ctx(tmp_path, dry_run=True),
         lambda: media.web.source("red barn", subject="a red barn", want=2),
     )
     assert isinstance(out, list)
-    assert len(out) == 2, "source must return `want` paths in dry-run"
-    for rel in out:
-        _rel_file(tmp_path, rel)
+    assert len(out) == 2, "source must return `want` results in dry-run"
+    for si in out:
+        assert set(si) >= {"path", "candidate", "relevance"}, "SourcedImage shape"
+        _rel_file(tmp_path, si["path"])
+        assert set(si["candidate"]) >= _CANDIDATE_KEYS
+        assert set(si["relevance"]) >= {"relevant", "score", "reason"}
     json.dumps(out)
+
+
+def test_source_dry_run_does_not_call_the_relevance_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The short-circuit is real: source() must NOT invoke check_relevance in dry-run. Monkeypatch it
+    # to blow up and prove source() still returns `want` results without touching it.
+    def _boom(*a: object, **k: object) -> Relevance:
+        raise AssertionError("source() must not call check_relevance in dry-run")
+
+    monkeypatch.setattr(web_mod, "check_relevance", _boom)
+    out = _run(
+        _ctx(tmp_path, dry_run=True),
+        lambda: media.web.source("red barn", subject="a red barn", want=1),
+    )
+    assert len(out) == 1
+
+
+def test_source_want_is_clamped_to_non_negative(tmp_path: Path) -> None:
+    for want in (0, -1):
+        out = _run(
+            _ctx(tmp_path, dry_run=True),
+            lambda w=want: media.web.source("red barn", subject="a red barn", want=w),
+        )
+        assert out == [], f"want={want} must yield no results, not negative-slice leakage"
+
+
+def test_search_validates_sources(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path, dry_run=True)
+    with pytest.raises(ValueError):
+        _run(ctx, lambda: media.web.search("red barn", sources=()))
+    with pytest.raises(ValueError):
+        _run(ctx, lambda: media.web.search("red barn", sources=("bogus",)))
+
+
+def test_search_stub_reflects_the_requested_tier(tmp_path: Path) -> None:
+    # A web-tier stub must present as the web tier with unknown licence (not commons/CC0), so a
+    # workflow's dry-run sees tier-accurate provenance.
+    out = _run(
+        _ctx(tmp_path, dry_run=True),
+        lambda: media.web.search("red barn", sources=("web",), limit=3),
+    )
+    assert out and all(c["source"] == "web" for c in out)
+    assert all(c["licence"] == "unknown" for c in out)
 
 
 # --- real path not built yet (skeleton) ---------------------------------------------------------
@@ -166,5 +214,8 @@ def test_real_paths_not_implemented_yet(tmp_path: Path) -> None:
         _run(ctx, lambda: media.web.check_relevance("shot.png", subject="a red barn"))
     with pytest.raises(NotImplementedError):
         _run(ctx, lambda: media.web.source("red barn", subject="a red barn"))
-    # keep the Relevance TypedDict referenced so the import is load-bearing
+    # keep the Relevance/SourcedImage TypedDicts referenced so the imports are load-bearing
     _ = Relevance(relevant=True, score=1.0, reason="ok")
+    _ = SourcedImage(path="web-x.png", candidate=candidate, relevance=Relevance(
+        relevant=True, score=1.0, reason="ok"
+    ))
