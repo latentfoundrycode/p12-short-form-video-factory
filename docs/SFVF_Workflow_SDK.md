@@ -845,6 +845,30 @@ find(mood, duration_s) -> Track
 
 Licence details are recorded against the video automatically, so that if a claim is ever raised the record shows which track was used under which licence.
 
+### 6.8a `sfvf.media.web` — sourcing images from the web (in build)
+
+```python
+search(query, *, sources=("commons",), limit=10, licence=None) -> list[ImageCandidate]
+fetch(candidate) -> str                       # workspace-relative path; downloads + sanitises
+check_relevance(image, *, subject, model=...) -> Relevance
+source(query, *, subject, sources=("commons",), want=1, consider=8, min_score=0.6,
+       licence=None) -> list[SourcedImage]     # search -> fetch -> VLM-check, the checked selection
+```
+
+Find images on the web and keep only the ones a vision model confirms are relevant to your subject.
+Two tiers, chosen with `sources`: `"commons"` (licensed/commons — every image carries a licence and
+attribution) and `"web"` (general search — `licence="unknown"`; requires the paid provider's key).
+Requires the `web.images.commons` and/or `web.images.web` capability; the relevance check also requires
+`agents.vision`. `source()` returns `SourcedImage` = `{path, candidate, relevance}` so you keep full
+provenance; do your `ctx.library.put(name, ctx.video_dir / si["path"], facets={…})` in `prepare()`
+with your manifest-declared facets (`put` takes the asset `name` first, then the resolved `Path`
+source — a plain `str` path would be stored as a value, not the image), and call
+`ctx.library.find(...)` before sourcing to reuse a past selection for free. `consider` (how many candidates a `source()` call fetches + checks) is capped at 50 — the
+fan-out is the cost knob, and a larger request raises rather than silently fanning out unbounded. Downloaded bytes are
+untrusted: they are size-bounded, type-checked, re-encoded, and confined to the workspace, and fetches
+are SSRF-guarded. (Being built incrementally — see `docs/DESIGN-web-image-sourcing.md`; the
+general-web tier lands last.)
+
 ### 6.9 `sfvf.finalize` — required as your last step
 
 ```python

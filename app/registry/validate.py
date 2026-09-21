@@ -25,6 +25,8 @@ KNOWN_CAPABILITIES = frozenset(
         "video.first_frame",
         "agents.vision",
         "agents.structured",
+        "web.images.commons",
+        "web.images.web",
     }
 )
 
