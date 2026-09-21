@@ -108,6 +108,12 @@ def source(
     if ctx.dry_run:
         n = max(0, want)  # clamp — no negative-slice leakage
         candidates = search(query, sources=sources, limit=consider, licence=licence)[:n]
-        stub = Relevance(relevant=True, score=1.0, reason="dry-run stub")
-        return [SourcedImage(path=fetch(c), candidate=c, relevance=stub) for c in candidates]
+        return [
+            SourcedImage(
+                path=fetch(c),
+                candidate=c,
+                relevance=Relevance(relevant=True, score=1.0, reason="dry-run stub"),
+            )
+            for c in candidates
+        ]
     raise NotImplementedError("media.web.source real path is built in increment 5")
