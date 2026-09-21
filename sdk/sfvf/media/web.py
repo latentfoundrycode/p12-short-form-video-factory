@@ -340,4 +340,26 @@ def source(
             )
             for c in candidates
         ]
-    raise NotImplementedError("media.web.source real path is built in increment 5")
+    n = max(0, want)  # clamp: no negative-slice leakage
+    results: list[SourcedImage] = []
+    if n == 0:
+        return results
+    candidates = search(query, sources=sources, limit=consider, licence=licence)
+    for c in candidates:  # search-provider RANK ORDER; `search` already bounds to `consider`
+        with ctx.step(
+            "web.source",
+            inputs={"url": c["url"], "subject": subject},
+            label=f"web.source:{c['url']}",
+            paid=True,  # includes a paid VLM check -> PAID cache partition (resume doesn't repay)
+        ) as step:
+            if not step.cached:
+                path = fetch(c)
+                relevance = check_relevance(path, subject=subject)
+                step.set({"path": path, "relevance": relevance})
+            entry = step.value
+        relevance = entry["relevance"]
+        if relevance["score"] >= min_score:
+            results.append(SourcedImage(path=entry["path"], candidate=c, relevance=relevance))
+            if len(results) >= n:
+                break
+    return results
