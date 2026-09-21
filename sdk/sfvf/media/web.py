@@ -94,7 +94,10 @@ def _download_guarded(url: str) -> bytes:
         with (
             _client() as client,
             client.stream(
-                "GET", pinned, headers={"Host": parts.netloc}, extensions={"sni_hostname": host}
+                "GET",
+                pinned,
+                headers={"Host": parts.netloc, "Accept-Encoding": "identity"},
+                extensions={"sni_hostname": host},
             ) as resp,
         ):
             if resp.status_code in (301, 302, 303, 307, 308):
@@ -105,7 +108,14 @@ def _download_guarded(url: str) -> bytes:
                 continue
             if resp.status_code != 200:
                 raise ValueError(f"fetch: HTTP {resp.status_code}")
+            encoding = resp.headers.get("content-encoding")
+            if encoding is not None and not all(
+                t.strip().lower() == "identity" for t in encoding.split(",")
+            ):
+                raise ValueError(f"fetch: unexpected content-encoding {encoding}")
             buf = bytearray()
+            # Accept-Encoding: identity + the content-encoding reject above guarantee no decoder
+            # runs, so iter_bytes cannot decompress here — it caps the actual (identity) bytes.
             for chunk in resp.iter_bytes(_DL_CHUNK):
                 buf += chunk
                 if len(buf) > _MAX_DOWNLOAD_BYTES:
