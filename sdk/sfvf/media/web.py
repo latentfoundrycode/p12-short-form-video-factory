@@ -9,6 +9,7 @@ from .graphics import _artifact, _sha8
 # default vision model for check_relevance (revisited at increment 4)
 _VISION_MODEL = "openai/gpt-4o"
 _STUB_POOL = 256  # dry-run search returns up to this many deterministic candidates
+_MAX_CONSIDER = 50
 
 
 class ImageCandidate(TypedDict):
@@ -102,6 +103,8 @@ def source(
     licence: str | None = None,
 ) -> list[SourcedImage]:
     ctx = current_context()
+    if consider > _MAX_CONSIDER:
+        raise ValueError(f"consider={consider} exceeds the fan-out ceiling {_MAX_CONSIDER}")
     if ctx.dry_run:
         n = max(0, want)  # clamp — no negative-slice leakage
         candidates = search(query, sources=sources, limit=consider, licence=licence)[:n]
