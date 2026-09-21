@@ -90,6 +90,11 @@ def test_check_relevance_real_calls_agents_vision_with_the_image_and_a_schema(
     assert isinstance(c["schema"], dict)
     props = c["schema"].get("properties", {})
     assert {"relevant", "score", "reason"} <= set(props)
+    # agents.llm wraps the schema in OpenAI strict mode (strict=True); OpenAI/GPT-4o rejects a
+    # strict json_schema unless every object sets additionalProperties=false and requires all its
+    # properties — else every real call 400s (invisible to this mock). (Review B, PR #145.)
+    assert c["schema"].get("additionalProperties") is False
+    assert set(c["schema"].get("required", [])) == {"relevant", "score", "reason"}
     # the subject is put to the model
     assert "a red barn in a field" in c["prompt"]
     assert isinstance(c["agent"], str) and c["agent"]
