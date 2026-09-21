@@ -41,8 +41,10 @@ unbilled = True   # nothing dispatched yet -> a failure before the first request
 try:
     with _http_client() as client:
         for _attempt in range(_MAX_ATTEMPTS):
-            unbilled = False   # about to dispatch; a transport error from here is AMBIGUOUS -> retain
+            unbilled = True   # reset per attempt: any failure before THIS dispatch (incl. the
+                              # limiter slot / Retry-After wait) is confirmed-unbilled -> release
             with _LIMITER.slot("openrouter"):
+                unbilled = False   # dispatching NOW; a transport error from here is AMBIGUOUS -> retain
                 resp = client.post("/chat/completions",
                                    headers={"Authorization": f"Bearer {key}"}, json=body)
             if resp.status_code == 200:
