@@ -11,3 +11,7 @@ httpx2==2.10.0
 # than skip. Its constraints are loose (pydantic>=2.13.2, mcp, rich) and resolve cleanly
 # against the app pins above (fastapi/uvicorn/pydantic all hold). Windows-first, Apache-2.0.
 kinocut==1.15.1
+# Pillow backs the media.web fetch byte pipeline (magic-byte type gate, pixel-bomb bound,
+# decode -> re-encode -> strip-EXIF) — the SDK `web` optional extra. Pinned here so the CI gate
+# installs it and the media.web normalise integration tests RUN rather than skip.
+pillow==12.3.0
