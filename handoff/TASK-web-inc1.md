@@ -209,3 +209,21 @@ check + a dry-run file). In `sdk/sfvf/media/web.py`:
    `if consider > _MAX_CONSIDER: raise ValueError(...)`.
 Keep `_STUB_POOL = 256`. ONLY those two edits. Frozen test:
 `test_source_rejects_consider_above_the_fanout_ceiling`.
+
+## Round 7b (stub byte-distinctness must cover the FULL stem, not just colour)
+`color=f"0x{stem}"` did NOT fix the collision: `solid_image` renders a solid colour and `0xRRGGBBAA`
+drops the alpha byte, so only the 24-bit RGB reaches the PNG bytes — two stems sharing the first 6 hex
+(RGB) but differing in the last byte still produce identical bytes. Spread the full 8-hex (32-bit) stem
+across BOTH the colour and the image WIDTH so the mapping is injective on the stem. In
+`sdk/sfvf/media/web.py` `fetch()` dry-run, replace the solid_image call with:
+```python
+        stem = _sha8(["web.fetch", candidate["url"]])
+        dest, rel = _artifact(ctx, f"web-{stem}.png")
+        width = 16 + int(stem[6:], 16)  # last byte -> width 16..271; colour carries the first 6 hex
+        solid_image(dest, width=width, height=64, color=f"0x{stem[:6]}")
+        return rel
+```
+Distinct stems differ in `stem[:6]` (colour) and/or `stem[6:]` (width), so distinct stems -> distinct
+(colour,width) -> distinct PNG bytes, matching the filename's own full-stem distinctness. ONLY the
+fetch dry-run body changes. Frozen test: `test_fetch_dry_run_bytes_are_candidate_distinct` (10 distinct
+candidates -> 10 distinct blobs).
