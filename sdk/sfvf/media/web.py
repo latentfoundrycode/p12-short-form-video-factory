@@ -297,6 +297,7 @@ def check_relevance(image: str, *, subject: str, model: str = _VISION_MODEL) -> 
             "reason": {"type": "string"},
         },
         "required": ["relevant", "score", "reason"],
+        "additionalProperties": False,
     }
     prompt = (
         f"Assess whether this image depicts the following subject.\nSubject: {subject}\nReturn "
