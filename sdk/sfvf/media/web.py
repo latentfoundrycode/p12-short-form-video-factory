@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from typing import TypedDict
+import hashlib
+import ipaddress
+import socket
+from typing import Any, TypedDict
+from urllib.parse import urljoin, urlsplit
 
 from .._ffmpeg import solid_image
 from .._runtime import current_context
@@ -10,6 +14,92 @@ from .graphics import _artifact, _sha8
 _VISION_MODEL = "openai/gpt-4o"
 _STUB_POOL = 256  # dry-run search returns up to this many deterministic candidates
 _MAX_CONSIDER = 50
+_MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024  # 25 MiB
+_MAX_REDIRECTS = 3
+_DL_CHUNK = 65536
+_NAT64_NET = ipaddress.ip_network("64:ff9b::/96")
+_V4COMPAT_NET = ipaddress.ip_network("::/96")
+
+
+def _resolve(host: str) -> list[str]:
+    return [str(info[4][0]) for info in socket.getaddrinfo(host, None)]
+
+
+def _client() -> Any:
+    import httpx2
+
+    # trust_env=False disables env proxies (HTTP(S)_PROXY); redirects handled manually.
+    return httpx2.Client(trust_env=False, follow_redirects=False, timeout=30.0)
+
+
+def _public_addr(ip: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError as exc:  # scoped/zoned/malformed -> reject, clean message
+        raise ValueError(f"fetch: unparseable resolved address {ip!r}") from exc
+    if isinstance(addr, ipaddress.IPv6Address):
+        embedded = addr.ipv4_mapped
+        if embedded is None and (addr in _NAT64_NET or addr in _V4COMPAT_NET):
+            embedded = ipaddress.IPv4Address(addr.packed[-4:])
+        if embedded is not None:
+            addr = embedded
+    return addr
+
+
+def _validated_pin_ip(host: str) -> str:
+    try:
+        ips = _resolve(host)
+    except OSError as exc:
+        raise ValueError(f"fetch: cannot resolve host {host!r}") from exc
+    if not ips:
+        raise ValueError(f"fetch: cannot resolve host {host!r}")
+    for ip in ips:
+        addr = _public_addr(ip)
+        if not addr.is_global or addr.is_multicast:
+            raise ValueError(f"fetch: host {host!r} resolves to a non-public address {ip}")
+    return ips[0]
+
+
+def _content_hash(data: bytes) -> str:
+    # 64-bit content hash (inc3b commitment, done here)
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
+def _download_guarded(url: str) -> bytes:
+    for _ in range(_MAX_REDIRECTS + 1):
+        parts = urlsplit(url)
+        if parts.scheme != "https":
+            raise ValueError("fetch: only https URLs are allowed")
+        host = parts.hostname
+        if not host:
+            raise ValueError("fetch: URL has no host")
+        ip = _validated_pin_ip(host)
+        port = parts.port or 443
+        hostpart = f"[{ip}]" if ":" in ip else ip
+        pinned = f"https://{hostpart}:{port}{parts.path or '/'}"
+        if parts.query:
+            pinned = f"{pinned}?{parts.query}"
+        with (
+            _client() as client,
+            client.stream(
+                "GET", pinned, headers={"Host": parts.netloc}, extensions={"sni_hostname": host}
+            ) as resp,
+        ):
+            if resp.status_code in (301, 302, 303, 307, 308):
+                loc = resp.headers.get("location")
+                if not loc:
+                    raise ValueError("fetch: redirect without a location")
+                url = urljoin(url, loc)  # re-validate the next hop on the next loop
+                continue
+            if resp.status_code != 200:
+                raise ValueError(f"fetch: HTTP {resp.status_code}")
+            buf = bytearray()
+            for chunk in resp.iter_bytes(_DL_CHUNK):
+                buf += chunk
+                if len(buf) > _MAX_DOWNLOAD_BYTES:
+                    raise ValueError("fetch: download exceeds the byte cap")
+            return bytes(buf)
+    raise ValueError("fetch: too many redirects")
 
 
 class ImageCandidate(TypedDict):
@@ -109,9 +199,11 @@ def fetch(candidate: ImageCandidate) -> str:
         with dest.open("ab") as fh:
             fh.write(b"\nweb-stub:" + stem.encode())
         return rel
-    raise NotImplementedError(
-        "media.web.fetch real path is built in increment 3 (download + safety)"
-    )
+    data = _download_guarded(candidate["url"])
+    stem = _content_hash(data)
+    dest, rel = _artifact(ctx, f"web-{stem}.bin")  # raw bytes; 3b re-encodes to a real ext
+    dest.write_bytes(data)
+    return rel
 
 
 def check_relevance(image: str, *, subject: str, model: str = _VISION_MODEL) -> Relevance:

@@ -518,3 +518,18 @@ increments that logged them.
   when the fetch/parse path is next touched (increment 3). Change-log nit: the `openverse` METERS row
   is `fiat/usd` though the commons tier is free/keyless (no spend recorded); it fits the eventual paid
   web tier — revisit the meter model if the paid tier lands separately.
+- **H57 — `media.web.fetch` SSRF-guard residuals** (web-sourcing increment 3a; security-auditor
+  advisories after the guard PASSED — the IPv6-embedded-IPv4 bypass and unbracketed-IPv6 bug were
+  fixed and are NOT residual; these are non-blocking hardening notes). (a) *Host header carries
+  userinfo/port verbatim* — the pinned request sets `Host: parts.netloc`, so a `user:pass@host` URL
+  emits a malformed Host header (and echoes any credentials to the pinned host). Immaterial for the
+  commons tier (Openverse returns clean CDN URLs) but should use `parts.hostname` (+ non-default port)
+  before the UNTRUSTED web tier (increment 6) lands. (b) *Arbitrary port on a public host* —
+  `port = parts.port or 443` allows connecting to any port of a validated-public host (not an internal
+  SSRF vector; the IP is `is_global`). An allow-list to 443 would be tighter; weigh against breaking a
+  legit non-443 image URL. (c) *6to4 (2002::/16) / Teredo (2001::/32)* rejection relies on the
+  runtime's `is_global` table (correct on Python 3.12); pin a minimum Python or add an explicit
+  deny-net if ever run on an older stdlib. Real-world 6to4/Teredo routing is effectively dead —
+  benign. (d) *Nondeterministic pin ordering* — `ips[0]` depends on getaddrinfo order; not a hole (all
+  resolved IPs are validated). (e) *64-bit content-hash* (`_content_hash` = sha256[:16]) — collision
+  risk only; this is the increment-3b hash-widening commitment, recorded there.
