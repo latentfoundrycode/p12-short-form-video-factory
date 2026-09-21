@@ -227,3 +227,24 @@ Distinct stems differ in `stem[:6]` (colour) and/or `stem[6:]` (width), so disti
 (colour,width) -> distinct PNG bytes, matching the filename's own full-stem distinctness. ONLY the
 fetch dry-run body changes. Frozen test: `test_fetch_dry_run_bytes_are_candidate_distinct` (10 distinct
 candidates -> 10 distinct blobs).
+
+## Round 8 (lossless stub distinctness — append the stem after IEND)
+A solid-colour PNG is LOSSY (ffmpeg quantises adjacent colours), so colour/width can't be injective
+on the stem (Review B found stems c3df2b11/c4df2b11 rendering identical bytes). Pillow is not
+available. The robust, stdlib-only fix: write a plain solid PNG, then APPEND the full stem after the
+PNG's IEND — decoders ignore trailing bytes so the file stays a valid, decodable PNG, but its bytes
+(and thus its content hash) become distinct per stem, matching the filename's own distinctness. In
+`sdk/sfvf/media/web.py` `fetch()` dry-run, replace the body with:
+```python
+        stem = _sha8(["web.fetch", candidate["url"]])
+        dest, rel = _artifact(ctx, f"web-{stem}.png")
+        solid_image(dest, width=64, height=64)
+        # valid PNGs ignore bytes after IEND; append the full stem so the stub is byte-distinct per
+        # candidate (a dry-run content-addressed intake keeps distinct candidates distinct)
+        with dest.open("ab") as fh:
+            fh.write(b"\nweb-stub:" + stem.encode())
+        return rel
+```
+(Revert the colour/width variance from round 7 — plain 64x64 solid_image is fine now.) ONLY the fetch
+dry-run body changes. Frozen tests: `test_fetch_dry_run_bytes_are_candidate_distinct` and
+`test_fetch_dry_run_bytes_distinct_for_adversarial_stem_collision`.
