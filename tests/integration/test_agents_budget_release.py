@@ -143,6 +143,35 @@ def test_retries_exhausted_429_releases_the_reserve(
     _assert_released(tmp_path / "budget" / "ledger.jsonl")
 
 
+def test_billed_200_with_unreadable_body_does_not_release_the_reserve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A 200 means the provider BILLED. If the body is then unreadable (truncated / non-JSON), the
+    # reserve must NOT be released to 0.0 — that would under-count a REAL spend and let a caller
+    # breach the per-day ceiling. The reserve must stand at its estimate; the call still raises.
+    # (The reserved region must end at the billable boundary; post-200 parse/telemetry failures are
+    # surfaced OUTSIDE it so they cannot trigger the context manager's release.)
+    def bad_200(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b"<<truncated not json", headers={"x": "y"})
+
+    ctx = _ctx(tmp_path)
+    _install_mock(monkeypatch, bad_200)
+    with pytest.raises(RuntimeError):  # a clean adapter error, not a raw JSONDecodeError
+        _run(ctx, lambda: agents.llm("q", agent="w", model="m"))
+    lines = _ledger(tmp_path / "budget" / "ledger.jsonl")
+    reserved = [x for x in lines if x.get("kind") == "reserved"]
+    assert reserved, "expected the call to reserve"
+    tok = reserved[-1]["token"]
+    released = [
+        x
+        for x in lines
+        if x.get("token") == tok and x.get("kind") == "actual" and x.get("amount") == 0.0
+    ]
+    assert not released, (
+        "a BILLED 200 with an unreadable body must NOT release the reserve to 0 (under-count)"
+    )
+
+
 def test_success_reconciles_the_real_cost_not_a_release(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
