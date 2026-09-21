@@ -1,5 +1,55 @@
 # TASK — web-image-sourcing increment 1: `media.web` surface skeleton + capability vocab
 
+> **Round 2 (cross-family Review B refinements).** Round 1 (already committed on this branch) built
+> the skeleton. Review B required: (a) `source()` returns an ENRICHED result carrying provenance, not
+> bare paths; (b) `source()` dry-run must NOT call the relevance gate; (c) `want` clamped to `>= 0`;
+> (d) `search` validates `sources` and reflects the requested tier in the stub. Frozen RED contracts
+> updated: `tests/integration/test_media_web_surface.py`. Apply ONLY these changes to
+> `sdk/sfvf/media/web.py` (nothing else, no other file):
+
+### R2.1 — add the `SourcedImage` TypedDict (next to `ImageCandidate`/`Relevance`)
+```python
+class SourcedImage(TypedDict):
+    path: str
+    candidate: ImageCandidate
+    relevance: Relevance
+```
+
+### R2.2 — `search`: validate `sources`, reflect the tier
+At the top of `search` (after `ctx = current_context()`), validate regardless of dry-run:
+```python
+    if not sources or any(s not in ("commons", "web") for s in sources):
+        raise ValueError(f"sources must be a non-empty subset of ('commons','web'); got {sources!r}")
+```
+In the dry-run stub, tag each candidate by tier (cycling through `sources`) instead of hardcoding
+`commons`/`CC0-1.0`:
+```python
+        tier = sources[i % len(sources)]
+        licence = "unknown" if tier == "web" else "CC0-1.0"
+```
+and set `source=tier, licence=licence` on the `ImageCandidate`. (Keep the rest of the stub — url via
+`_sha8`, deterministic, honours `limit`.)
+
+### R2.3 — `source`: enriched return, clamp `want`, no relevance-gate call
+Change the return annotation to `-> list[SourcedImage]`. In the dry-run branch:
+```python
+    if ctx.dry_run:
+        n = max(0, want)                       # clamp — no negative-slice leakage
+        candidates = search(query, sources=sources, limit=consider, licence=licence)[:n]
+        stub = Relevance(relevant=True, score=1.0, reason="dry-run stub")
+        return [
+            SourcedImage(path=fetch(c), candidate=c, relevance=stub)
+            for c in candidates
+        ]
+```
+Do NOT call `check_relevance` here. The real path still `raise NotImplementedError(...)`.
+
+Everything else (fetch, check_relevance dry-run returning the passing stub, the NotImplementedError
+real paths) is unchanged. `ruff`/`format`/`mypy` clean; `git diff` shows only `sdk/sfvf/media/web.py`.
+
+## Round 1 (already committed; retained for reference)
+
+
 Frozen RED contracts:
 - `tests/integration/test_media_web_surface.py`
 - `tests/registry/test_web_images_vocab.py`
