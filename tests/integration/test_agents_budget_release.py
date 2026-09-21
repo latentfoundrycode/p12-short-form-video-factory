@@ -172,6 +172,35 @@ def test_billed_200_with_unreadable_body_does_not_release_the_reserve(
     )
 
 
+def test_transport_error_does_not_release_the_reserve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A transport failure (no HTTP response) is AMBIGUOUS — OpenRouter may have processed and BILLED
+    # the request before the connection dropped — so it must NOT release the reserve (that would
+    # under-count real spend and let the daily ceiling be exceeded). Only a confirmed-unbilled
+    # failure (a non-2xx response / exhausted 429) releases. Mirrors app/learning/completion.py's
+    # test_transport_error_keeps_the_reservation for the identical OpenRouter path.
+    def boom(_request: httpx2.Request) -> httpx2.Response:
+        raise RuntimeError("simulated transport failure")
+
+    ctx = _ctx(tmp_path)
+    _install_mock(monkeypatch, boom)
+    with pytest.raises(RuntimeError):
+        _run(ctx, lambda: agents.llm("q", agent="w", model="m"))
+    lines = _ledger(tmp_path / "budget" / "ledger.jsonl")
+    reserved = [x for x in lines if x.get("kind") == "reserved"]
+    assert reserved, "expected the call to reserve"
+    tok = reserved[-1]["token"]
+    released = [
+        x
+        for x in lines
+        if x.get("token") == tok and x.get("kind") == "actual" and x.get("amount") == 0.0
+    ]
+    assert not released, (
+        "an ambiguous transport failure must NOT release the reserve (the call may have billed)"
+    )
+
+
 def test_billed_200_then_client_teardown_error_does_not_release_the_reserve(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
