@@ -271,12 +271,13 @@ def test_capabilities_offered_ignores_a_partially_configured_provider() -> None:
 
 
 def test_real_registry_offers_structured_output_and_vision_when_openrouter_configured() -> None:
-    # Against the REAL rows: media providers have no models yet, so only OpenRouter contributes —
-    # now both its provider-level capabilities.
+    # Against the REAL rows: media providers have no models yet. OpenRouter contributes its two
+    # provider-level capabilities once its key is set; keyless Openverse contributes
+    # web.images.commons unconditionally (no key required).
     assert capabilities_offered({"OPENROUTER_API_KEY"}) == frozenset(
-        {"agents.structured", "agents.vision"}
+        {"agents.structured", "agents.vision", "web.images.commons"}
     )
-    assert capabilities_offered(set()) == frozenset()
+    assert capabilities_offered(set()) == frozenset({"web.images.commons"})
 
 
 # ---------------------------------------------------------------------------
