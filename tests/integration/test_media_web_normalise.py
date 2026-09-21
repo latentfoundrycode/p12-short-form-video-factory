@@ -47,9 +47,21 @@ def _jpeg_with_exif() -> bytes:
 
 
 def _animated_gif() -> bytes:
-    frames = [Image.new("P", (8, 8), i) for i in range(3)]
+    # distinct-colour frames so Pillow writes a GENUINE multi-frame GIF (re-read n_frames == 3);
+    # solid single-index P frames get coalesced to a single frame and would not test animation.
+    frames = [
+        Image.new("RGB", (8, 8), c).convert("P") for c in [(255, 0, 0), (0, 200, 0), (0, 0, 255)]
+    ]
     buf = io.BytesIO()
-    frames[0].save(buf, format="GIF", save_all=True, append_images=frames[1:], duration=50, loop=0)
+    frames[0].save(buf, format="GIF", save_all=True, append_images=frames[1:], duration=100, loop=0)
+    return buf.getvalue()
+
+
+def _static_gif_with_loop_block() -> bytes:
+    # a SINGLE-frame GIF that still carries a NETSCAPE loop block (many encoders write loop=0 even
+    # for a static image). This is NOT animated and must be accepted, not treated as a frame bomb.
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), (1, 2, 3)).convert("P").save(buf, format="GIF", loop=0)
     return buf.getvalue()
 
 
@@ -123,6 +135,14 @@ def test_pixel_bound_is_a_sane_ceiling() -> None:
 def test_normalise_rejects_an_animated_image() -> None:
     with pytest.raises(ValueError):
         web_mod._normalise_image(_animated_gif())
+
+
+def test_normalise_accepts_a_static_gif_with_loop_block() -> None:
+    # a single-frame GIF carrying a NETSCAPE loop block must be accepted (animation detection must
+    # key on frame count / is_animated, NOT on the mere presence of a loop block).
+    canonical, ext = web_mod._normalise_image(_static_gif_with_loop_block())
+    assert ext == "png"
+    Image.open(io.BytesIO(canonical)).verify()
 
 
 # --- re-encode strips EXIF / metadata / trailing (polyglot) -------------------------------------
