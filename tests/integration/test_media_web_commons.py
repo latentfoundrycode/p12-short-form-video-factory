@@ -221,9 +221,58 @@ def test_commons_search_tolerates_schema_valid_nulls(
     c = out[0]
     assert c["url"] == "https://live.example.invalid/ok.jpg"
     assert "None" not in c["licence"] and c["licence"].strip() == "by"
-    assert c["title"] == "" and c["attribution"] == "" and c["thumbnail"] == ""
+    assert c["title"] == "" and c["thumbnail"] == ""
     assert c["width"] == 0 and c["height"] == 0
     json.dumps(out)
+
+
+def test_commons_results_always_carry_a_licence_and_non_empty_attribution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # SDK guarantee (§6.8a): every commons result carries a licence AND attribution. Openverse's
+    # ready-made `attribution` string CAN be null; when it is, the adapter SYNTHESISES a non-empty
+    # attribution from the available fields. A row with no licence code at all is not a valid
+    # commons/licensed result and is dropped.
+    rows = [
+        {  # no ready-made attribution -> must be synthesised (non-empty)
+            "url": "https://live.example.invalid/a.jpg",
+            "license": "by",
+            "license_version": "4.0",
+            "attribution": None,
+            "title": "A tractor",
+            "creator": "Sam",
+        },
+        {  # no licence code -> dropped (cannot be a licensed commons result)
+            "url": "https://live.example.invalid/b.jpg",
+            "license": None,
+            "attribution": None,
+            "title": "mystery",
+        },
+    ]
+
+    def handler(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        return httpx2.Response(200, json={"results": rows})
+
+    _install_mock(monkeypatch, handler)
+    out = _run(_ctx(tmp_path), lambda: media.web.search("barn", sources=("commons",)))
+    assert len(out) == 1, "the licence-less row must be dropped"
+    c = out[0]
+    assert c["url"] == "https://live.example.invalid/a.jpg"
+    assert c["licence"] and c["licence"] != "unknown", "a commons result must carry a licence"
+    assert c["attribution"].strip(), "a commons result must carry a non-empty attribution"
+
+
+def test_commons_search_tolerates_a_non_list_results_field(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Malformed 200: a non-list `results` (e.g. an int) must not raise a raw TypeError from
+    # enumerate(); the adapter treats a non-list results as empty.
+    def handler(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        return httpx2.Response(200, json={"results": 5})
+
+    _install_mock(monkeypatch, handler)
+    out = _run(_ctx(tmp_path), lambda: media.web.search("barn", sources=("commons",)))
+    assert out == []
 
 
 def test_web_tier_raises_before_any_openverse_request(
