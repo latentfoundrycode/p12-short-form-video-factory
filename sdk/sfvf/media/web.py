@@ -29,6 +29,12 @@ class Relevance(TypedDict):
     reason: str
 
 
+class SourcedImage(TypedDict):
+    path: str
+    candidate: ImageCandidate
+    relevance: Relevance
+
+
 def search(
     query: str,
     *,
@@ -37,22 +43,30 @@ def search(
     licence: str | None = None,
 ) -> list[ImageCandidate]:
     ctx = current_context()
+    if not sources or any(s not in ("commons", "web") for s in sources):
+        raise ValueError(
+            f"sources must be a non-empty subset of ('commons','web'); got {sources!r}"
+        )
     if ctx.dry_run:
         n = max(0, min(limit, _STUB_POOL))
-        return [
-            ImageCandidate(
-                source="commons",
-                url=f"https://example.invalid/{_sha8(['web.search', query, i])}.jpg",
-                thumbnail=f"https://example.invalid/{_sha8(['web.thumb', query, i])}-t.jpg",
-                licence="CC0-1.0",
-                attribution="dry-run stub",
-                width=800,
-                height=600,
-                title=f"{query} — stub {i}",
-                rank=i,
+        candidates: list[ImageCandidate] = []
+        for i in range(n):
+            tier = sources[i % len(sources)]
+            licence = "unknown" if tier == "web" else "CC0-1.0"
+            candidates.append(
+                ImageCandidate(
+                    source=tier,
+                    url=f"https://example.invalid/{_sha8(['web.search', query, i])}.jpg",
+                    thumbnail=f"https://example.invalid/{_sha8(['web.thumb', query, i])}-t.jpg",
+                    licence=licence,
+                    attribution="dry-run stub",
+                    width=800,
+                    height=600,
+                    title=f"{query} — stub {i}",
+                    rank=i,
+                )
             )
-            for i in range(n)
-        ]
+        return candidates
     raise NotImplementedError("media.web.search real path is built in increment 2 (commons tier)")
 
 
@@ -86,11 +100,11 @@ def source(
     consider: int = 8,
     min_score: float = 0.6,
     licence: str | None = None,
-) -> list[str]:
+) -> list[SourcedImage]:
     ctx = current_context()
     if ctx.dry_run:
-        # Short-circuit: compose the search + fetch STUBS and return `want` paths. Do NOT call
-        # check_relevance (design §3.2) — its gate is irrelevant in dry-run.
-        candidates = search(query, sources=sources, limit=consider, licence=licence)
-        return [fetch(c) for c in candidates[:want]]
+        n = max(0, want)  # clamp — no negative-slice leakage
+        candidates = search(query, sources=sources, limit=consider, licence=licence)[:n]
+        stub = Relevance(relevant=True, score=1.0, reason="dry-run stub")
+        return [SourcedImage(path=fetch(c), candidate=c, relevance=stub) for c in candidates]
     raise NotImplementedError("media.web.source real path is built in increment 5")
