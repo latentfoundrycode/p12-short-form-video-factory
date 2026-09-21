@@ -287,6 +287,32 @@ def test_limiter_slot_failure_before_dispatch_releases_the_reserve(
     _assert_released(tmp_path / "budget" / "ledger.jsonl")
 
 
+def test_penalize_failure_after_429_releases_the_reserve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A 429 response is CONFIRMED unbilled — the provider rate-limited the request, it was not
+    # processed/billed. If the limiter's penalize() (its injectable clock) then raises before the
+    # retry, the reserve must still RELEASE, not leak. So the 429 branch must mark unbilled=True.
+    import contextlib
+
+    class _PenalizeBoom:
+        def slot(self, _name: str):
+            return contextlib.nullcontext()
+
+        def penalize(self, *_a: object) -> None:
+            raise RuntimeError("penalize clock failed")
+
+    def r429(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(429, headers={"Retry-After": "1"}, json={"error": {"code": 429}})
+
+    _install_mock(monkeypatch, r429)
+    monkeypatch.setattr(agents, "_LIMITER", _PenalizeBoom())
+    ctx = _ctx(tmp_path)
+    with pytest.raises(RuntimeError):
+        _run(ctx, lambda: agents.llm("q", agent="w", model="m"))
+    _assert_released(tmp_path / "budget" / "ledger.jsonl")
+
+
 def test_success_reconciles_the_real_cost_not_a_release(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
