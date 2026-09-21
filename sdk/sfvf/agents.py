@@ -138,8 +138,10 @@ def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
             *body["messages"],
         ]
     key = ctx.secret("OPENROUTER_API_KEY")
-    with _http_client() as client:
-        with ctx._budget_reserved("openrouter", "usd") as token:
+    token = ctx._budget_reserve("openrouter", "usd")
+    unbilled = False
+    try:
+        with _http_client() as client:
             for _attempt in range(_MAX_ATTEMPTS):
                 with _LIMITER.slot("openrouter"):
                     resp = client.post(
@@ -153,31 +155,28 @@ def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
                     _LIMITER.penalize("openrouter", _retry_after_s(resp.headers.get("Retry-After")))
                     continue
                 if resp.status_code == 402:
+                    unbilled = True
                     raise RuntimeError("OpenRouter: insufficient credits (402)")
+                unbilled = True
                 raise RuntimeError(f"OpenRouter error {resp.status_code}: {resp.text}")
             else:
+                unbilled = True
                 raise RuntimeError("OpenRouter: rate limited after retries (429)")
-        post_error: Exception | None
-        data: dict[str, Any] | None
-        cost: float | None
-        try:
-            data = resp.json()
-            cost = _usage_cost(data)
-        except Exception as exc:
-            post_error, data, cost = exc, None, None
-        else:
-            post_error = None
+
+            try:
+                data: dict[str, Any] = resp.json()
+            except Exception as exc:
+                raise RuntimeError("OpenRouter: unreadable 200 response body") from exc
+        cost = _usage_cost(data)
         if cost is not None:
-            ctx._budget_reconcile(token, actual=cost)
-    if post_error is not None:
-        raise RuntimeError("OpenRouter: unreadable 200 response body") from post_error
-    if cost is not None:
-        ctx.emit(
-            {"t": "cost", "meter": "openrouter", "unit": "usd", "amount": cost, "cached": False}
-        )
-    if data is None:
-        raise RuntimeError("OpenRouter: unreadable 200 response body")
-    return data
+            ctx._budget_reconcile(token, actual=cost)  # reconcile the real cost BEFORE emit
+            ctx.emit(
+                {"t": "cost", "meter": "openrouter", "unit": "usd", "amount": cost, "cached": False}
+            )
+        return data
+    finally:
+        if unbilled:
+            ctx._budget_reconcile(token, actual=0.0, note="released")
 
 
 def llm(
