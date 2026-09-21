@@ -29,6 +29,13 @@ def _client() -> Any:
     return httpx2.Client(base_url=_BASE, timeout=_TIMEOUT_S)
 
 
+def _synth_attribution(r: dict[str, Any], licence_str: str) -> str:
+    title = r.get("title") or "Untitled"
+    creator = r.get("creator")
+    who = f" by {creator}" if creator else ""
+    return f'"{title}"{who} — {licence_str} (via Openverse)'
+
+
 def search(
     query: str,
     *,
@@ -47,23 +54,29 @@ def search(
     with _client() as client:
         resp = request(client, "GET", url, provider="openverse", auth=_Anon(), limiter=LIMITER)
     data = parse_json(resp, provider="openverse", where="GET /images/")
+    results = data.get("results")
+    if not isinstance(results, list):
+        results = []
     out: list[dict[str, Any]] = []
-    for i, r in enumerate(data.get("results") or []):
+    for i, r in enumerate(results):
         if not isinstance(r, dict):
             continue
         image_url = r.get("url")
         if not image_url:  # schema permits null url -> nothing to source, skip
             continue
         lic = r.get("license") or ""
+        if not lic:
+            continue
         ver = r.get("license_version") or ""
-        licence_str = f"{lic} {ver}".strip() or "unknown"
+        licence_str = f"{lic} {ver}".strip()
+        attribution = r.get("attribution") or _synth_attribution(r, licence_str)
         out.append(
             {
                 "source": "commons",
                 "url": image_url,
                 "thumbnail": r.get("thumbnail") or "",
                 "licence": licence_str,
-                "attribution": r.get("attribution") or "",
+                "attribution": attribution,
                 "width": int(r.get("width") or 0),
                 "height": int(r.get("height") or 0),
                 "title": r.get("title") or "",
