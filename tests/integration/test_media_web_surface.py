@@ -115,6 +115,20 @@ def test_fetch_dry_run_writes_a_workspace_relative_file(tmp_path: Path) -> None:
     json.dumps(rel)
 
 
+def test_fetch_dry_run_bytes_are_candidate_distinct(tmp_path: Path) -> None:
+    # Distinct candidates must produce distinct stub BYTES, not identical gray — otherwise a dry-run
+    # library intake (content-addressed) would collapse several sourced images into one asset and
+    # lose distinct provenance. Filenames already differ (per-url hash); the content must too.
+    def go() -> tuple[str, str]:
+        cands = media.web.search("red barn", limit=2)
+        return media.web.fetch(cands[0]), media.web.fetch(cands[1])
+
+    p0, p1 = _run(_ctx(tmp_path, dry_run=True), go)
+    b0 = _rel_file(tmp_path, p0).read_bytes()
+    b1 = _rel_file(tmp_path, p1).read_bytes()
+    assert b0 != b1, "distinct candidates must produce distinct stub bytes"
+
+
 def test_check_relevance_dry_run_returns_a_verdict(tmp_path: Path) -> None:
     def go():
         rel = media.web.fetch(media.web.search("red barn", limit=1)[0])

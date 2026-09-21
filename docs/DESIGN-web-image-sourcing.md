@@ -252,7 +252,10 @@ This intake model is exercised by increment 5 (`source()`), not the increment-1 
    animation bound, decode→re-encode→strip, content-hash filename, discard originals. Adversarial
    tests: pixel bomb, polyglot, EXIF, wrong-magic, animated bomb.
 4. **`check_relevance()`** — VLM gate over `agents.vision` with a structured schema; relevant vs
-   irrelevant scoring against mocked vision responses; live smoke. (After prerequisite #0.)
+   irrelevant scoring against mocked vision responses; live smoke. (After prerequisite #0.) Note
+   (Review B, banked — a broader existing SDK gap, not unique to web): dry-run paid stubs emit no
+   estimated cost event, so a dry-run cost preview under-counts; if/when the SDK adds dry-run cost
+   estimation, `check_relevance` participates.
 5. **`source()` high-level** — compose search→fetch→check with early stop; dry-run short-circuit.
    **Each considered candidate's fetch + VLM check runs inside its own cached `ctx.step`** (Review B),
    so a late failure in a `source(consider=N)` fan-out does not repay the already-completed
