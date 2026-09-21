@@ -100,3 +100,19 @@ Replace the `raise NotImplementedError(...)` in `fetch` (after the dry-run branc
 - `PYTHONPATH=sdk python -m pytest tests/integration/test_media_web_fetch.py tests/integration/test_media_web_surface.py tests/integration/test_media_web_commons.py -q` — all pass.
 - `ruff check` + `ruff format --check` + `mypy` clean on `sdk/sfvf/media/web.py`.
 - `git diff` shows exactly `sdk/sfvf/media/web.py`.
+
+## Round 2 (resolve hygiene)
+An unresolvable / malformed host currently lets `socket.getaddrinfo` raise a raw `socket.gaierror`
+out of `fetch`. Wrap the resolve in `_validated_pin_ip` so a resolution failure is a clean
+`ValueError` (an untrusted URL must not leak a low-level OSError):
+```python
+def _validated_pin_ip(host: str) -> str:
+    try:
+        ips = _resolve(host)
+    except OSError as exc:
+        raise ValueError(f"fetch: cannot resolve host {host!r}") from exc
+    if not ips:
+        raise ValueError(f"fetch: cannot resolve host {host!r}")
+    ... (rest unchanged)
+```
+Frozen test: `test_fetch_raises_valueerror_when_the_host_cannot_be_resolved`.
