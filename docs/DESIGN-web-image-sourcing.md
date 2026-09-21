@@ -179,11 +179,14 @@ allow-listing is impossible and a deny-list on the **resolved IP** is required:
 - **Re-encode / normalise, then DISCARD the originals:** decode and re-encode to a canonical image
   (strip EXIF/metadata/trailing data); the original bytes are never stored in the library or served.
   This — not the magic-byte check alone — is what defeats polyglot/EXIF-tracker/embedded payloads.
-- **Filename hash width (Review B):** the on-disk name is content-addressed, but an 8-hex `sha8`
-  (32 bits) collides at the birthday bound (~64k items). The per-run workspace holds few files so
-  `sha8` is fine THERE (matches `media.image`), but a fetch/library name derived from untrusted
-  content that could accumulate should use a wider digest (e.g. `sha256[:16]`/64 bits or more) to keep
-  collisions negligible; increment 3b picks the width when it writes the real fetch filename.
+- **Filename hash width — BINDING for increment 3b (owner-approved at PR #140 merge):** the on-disk
+  name is content-addressed, but an 8-hex `sha8` (32 bits) collides at the birthday bound (~64k items).
+  For the DRY-RUN stub (increment 1) the 32-bit `_sha8` was accepted as immaterial — fake images, a
+  per-run overlay that is discarded, ~tens of items — and matches `media.image`'s stub. But the REAL
+  fetch accumulates real assets in the PERSISTENT library across runs, where a 32-bit collision would
+  silently collapse distinct images and lose provenance. So **increment 3b MUST** (a) write the real
+  fetched-file name from a WIDER digest (`sha256[:16]` / 64 bits or more), and (b) carry a
+  persistent-library collision regression test. This is a committed follow-through, not optional.
 
 ### 7.3 Content safety (B3 — relevance ≠ safety)
 `check_relevance` gates relevance only; a relevant image can be NSFW/illegal/trademarked and would
