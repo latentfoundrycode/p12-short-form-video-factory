@@ -190,3 +190,12 @@ Add two entries to the `KNOWN_CAPABILITIES` frozenset (alongside `agents.vision`
 - `PYTHONPATH=sdk python -m pytest tests/sdk/test_providers_registry.py tests/registry/ -q` — still pass (no regression; you did NOT touch the provider registry).
 - `ruff check` + `ruff format --check` + `mypy` clean on `sdk/sfvf/media/web.py`, `sdk/sfvf/media/__init__.py`, `app/registry/validate.py`.
 - `git diff` shows exactly the three files above changed/created.
+
+## Round 3 (dry-run honours `want`)
+Cross-family Review B r2: `source(want=9, consider=9)` in dry-run returns 8 because the search stub
+caps at `_STUB_POOL = 8`. In dry-run every stub passes, so `source` must return exactly `want` when
+`want <= consider`. Fix: raise the stub pool cap so it is not the binding constraint for realistic
+fan-out. In `sdk/sfvf/media/web.py` change `_STUB_POOL = 8` to `_STUB_POOL = 256` (a generous safety
+bound; `search` still returns `min(limit, _STUB_POOL)`, so `search(limit=consider)` yields `consider`
+candidates for any realistic `consider`, and `source` then honours `want <= consider`). ONLY that one
+constant changes. Frozen test: `test_source_dry_run_honours_want_up_to_consider`.
