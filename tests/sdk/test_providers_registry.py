@@ -111,8 +111,16 @@ def _fake_models() -> dict[str, Model]:
 # ---------------------------------------------------------------------------
 
 _EXPECTED_PROVIDER_IDS = frozenset(
-    {"openrouter", "openai", "google", "bfl", "byteplus", "minimax", "kling"}
+    {"openrouter", "openai", "google", "bfl", "byteplus", "minimax", "kling", "openverse"}
 )
+
+# Providers that carry a PROVIDER-LEVEL capability (not model-derived): openrouter (agents.*) and
+# openverse (web.images.commons — the licensed/commons image-sourcing tier, keyless).
+_PROVIDER_LEVEL_CAP_IDS = frozenset({"openrouter", "openverse"})
+
+# Keyless providers: those reachable anonymously (no secret required). Openverse allows anonymous
+# image search, so its `secret_names` is empty — a deliberate exception to "every row has a key".
+_KEYLESS_PROVIDER_IDS = frozenset({"openverse"})
 
 
 def test_exactly_the_live_providers_are_registered() -> None:
@@ -125,7 +133,12 @@ def test_exactly_the_live_providers_are_registered() -> None:
 
 def test_every_provider_row_is_well_formed() -> None:
     for provider in PROVIDERS.values():
-        assert isinstance(provider.secret_names, tuple) and provider.secret_names
+        assert isinstance(provider.secret_names, tuple)
+        # Every row has a key EXCEPT the deliberately keyless (anonymous) providers.
+        if provider.id in _KEYLESS_PROVIDER_IDS:
+            assert provider.secret_names == ()
+        else:
+            assert provider.secret_names
         assert all(isinstance(n, str) and n for n in provider.secret_names)
         assert provider.base_url.startswith("https://")
         assert isinstance(provider.meter, str) and provider.meter
@@ -143,9 +156,19 @@ def test_openrouter_offers_structured_output_and_vision() -> None:
 
 
 def test_media_providers_declare_no_provider_level_capabilities() -> None:
-    # Media capabilities come from MODELS, added per adapter; the provider rows carry none at P-1.
-    for pid in _EXPECTED_PROVIDER_IDS - {"openrouter"}:
+    # Media capabilities come from MODELS, added per adapter; those provider rows carry none. The
+    # provider-level-capability rows (openrouter agents.*, openverse web.images) are excluded.
+    for pid in _EXPECTED_PROVIDER_IDS - _PROVIDER_LEVEL_CAP_IDS:
         assert PROVIDERS[pid].capabilities == frozenset()
+
+
+def test_openverse_offers_the_commons_image_tier_keylessly() -> None:
+    # The licensed/commons image-sourcing tier: Openverse advertises web.images.commons at the
+    # provider level, with NO secret (anonymous search), so it is offered whenever enabled.
+    openverse = PROVIDERS["openverse"]
+    assert openverse.capabilities == frozenset({"web.images.commons"})
+    assert openverse.secret_names == ()
+    assert openverse.base_url.startswith("https://api.openverse.org")
 
 
 def test_the_decided_meter_kinds_and_secret_names_are_pinned() -> None:
