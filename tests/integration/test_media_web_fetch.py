@@ -142,7 +142,10 @@ def test_fetch_raises_valueerror_when_the_host_cannot_be_resolved(
 
     monkeypatch.setattr(web_mod, "_resolve", boom)
     with pytest.raises(ValueError):
-        _run(_ctx(tmp_path), lambda: media.web.fetch(_candidate("https://nope.example.invalid/a.png")))
+        _run(
+            _ctx(tmp_path),
+            lambda: media.web.fetch(_candidate("https://nope.example.invalid/a.png")),
+        )
     assert seen == []
 
 

@@ -527,9 +527,13 @@ increments that logged them.
   before the UNTRUSTED web tier (increment 6) lands. (b) *Arbitrary port on a public host* —
   `port = parts.port or 443` allows connecting to any port of a validated-public host (not an internal
   SSRF vector; the IP is `is_global`). An allow-list to 443 would be tighter; weigh against breaking a
-  legit non-443 image URL. (c) *6to4 (2002::/16) / Teredo (2001::/32)* rejection relies on the
-  runtime's `is_global` table (correct on Python 3.12); pin a minimum Python or add an explicit
-  deny-net if ever run on an older stdlib. Real-world 6to4/Teredo routing is effectively dead —
-  benign. (d) *Nondeterministic pin ordering* — `ips[0]` depends on getaddrinfo order; not a hole (all
+  legit non-443 image URL. (c) *6to4 (2002::/16) / Teredo (2001::/32) / RFC 8215 local-use NAT64
+  (64:ff9b:1::/48)* — CLOSED (was residual). These IPv6 forms embed a private IPv4; CPython
+  3.12.0-3.12.3 misclassify them as `is_global=True` (a real SSRF bypass on that range), but 3.12.4+
+  return `is_global=False`, so the guard rejects them. Cross-family Review B (PR #142) raised the
+  version dependency; fixed by raising `requires-python` to `>=3.12.4` in sdk/pyproject.toml (a
+  security floor, documented inline). The well-known NAT64 `64:ff9b::/96` and IPv4-compat `::/96`
+  forms stay `is_global=True` even on current CPython and remain explicitly unwrapped-and-validated in
+  `_public_addr`, so coverage is version-independent on all supported interpreters. (d) *Nondeterministic pin ordering* — `ips[0]` depends on getaddrinfo order; not a hole (all
   resolved IPs are validated). (e) *64-bit content-hash* (`_content_hash` = sha256[:16]) — collision
   risk only; this is the increment-3b hash-widening commitment, recorded there.
