@@ -116,3 +116,47 @@ def _validated_pin_ip(host: str) -> str:
     ... (rest unchanged)
 ```
 Frozen test: `test_fetch_raises_valueerror_when_the_host_cannot_be_resolved`.
+
+## Round 3 (IPv6-embedded-IPv4 SSRF bypass — validation FIRST, then bracket)
+security-auditor found a real hole: NAT64 (64:ff9b::/96) and IPv4-compatible (::/96) IPv6 addresses
+embed a private/internal IPv4 (e.g. 64:ff9b::a9fe:a9fe == 169.254.169.254) but `is_global` returns
+True, so they passed the guard; only the unbracketed-IPv6 URL bug accidentally blocked the connect
+(and it also breaks legitimate IPv6). Fix BOTH, validation first, in `sdk/sfvf/media/web.py`:
+
+1. Add module nets + an unwrap helper, and use it in `_validated_pin_ip`:
+```python
+_NAT64_NET = ipaddress.ip_network("64:ff9b::/96")
+_V4COMPAT_NET = ipaddress.ip_network("::/96")
+
+
+def _public_addr(ip: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError as exc:                      # scoped/zoned/malformed -> reject, clean message
+        raise ValueError(f"fetch: unparseable resolved address {ip!r}") from exc
+    if isinstance(addr, ipaddress.IPv6Address):
+        embedded = addr.ipv4_mapped
+        if embedded is None and (addr in _NAT64_NET or addr in _V4COMPAT_NET):
+            embedded = ipaddress.IPv4Address(addr.packed[-4:])
+        if embedded is not None:
+            addr = embedded
+    return addr
+```
+In `_validated_pin_ip`, replace the per-ip body with:
+```python
+    for ip in ips:
+        addr = _public_addr(ip)
+        if not addr.is_global or addr.is_multicast:
+            raise ValueError(f"fetch: host {host!r} resolves to a non-public address {ip}")
+    return ips[0]
+```
+(Keep the OSError->ValueError resolve wrap and the empty-ips check.)
+
+2. Bracket IPv6 literals in the pinned URL (else httpx raises InvalidURL). In `_download_guarded`:
+```python
+        ip = _validated_pin_ip(host)
+        port = parts.port or 443
+        hostpart = f"[{ip}]" if ":" in ip else ip
+        pinned = f"https://{hostpart}:{port}{parts.path or '/'}"
+```
+Everything else unchanged. Frozen tests: the IPv6 cases added to `test_fetch_rejects_a_non_global_resolved_ip` and `test_fetch_pins_and_brackets_a_public_ipv6`.
