@@ -253,6 +253,40 @@ def test_pre_dispatch_client_build_failure_releases_the_reserve(
     _assert_released(tmp_path / "budget" / "ledger.jsonl")
 
 
+def test_limiter_slot_failure_before_dispatch_releases_the_reserve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A failure while QUEUED at the rate limiter (its slot() context, or the Retry-After wait) is
+    # BEFORE client.post ever dispatches — nothing was sent — so it is confirmed-unbilled and the
+    # reserve must be RELEASED. Every pre-dispatch surface must release; the `unbilled=False` flip
+    # belongs immediately before client.post, not at the top of the loop.
+    import contextlib
+
+    class _BoomLimiter:
+        def slot(self, _name: str):
+            @contextlib.contextmanager
+            def _cm():
+                raise RuntimeError("limiter slot failed while queued")
+                yield  # pragma: no cover
+
+            return _cm()
+
+        def penalize(self, *_a: object) -> None:  # pragma: no cover
+            pass
+
+    def ok(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200, json={"choices": [{"message": {"content": "hi"}}], "usage": {"cost": 0.02}}
+        )
+
+    _install_mock(monkeypatch, ok)
+    monkeypatch.setattr(agents, "_LIMITER", _BoomLimiter())
+    ctx = _ctx(tmp_path)
+    with pytest.raises(RuntimeError):
+        _run(ctx, lambda: agents.llm("q", agent="w", model="m"))
+    _assert_released(tmp_path / "budget" / "ledger.jsonl")
+
+
 def test_success_reconciles_the_real_cost_not_a_release(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
