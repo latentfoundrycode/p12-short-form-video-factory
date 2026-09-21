@@ -4,7 +4,7 @@ import hashlib
 import io
 import ipaddress
 import socket
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 from urllib.parse import urljoin, urlsplit
 
 from .._ffmpeg import solid_image
@@ -287,8 +287,31 @@ def check_relevance(image: str, *, subject: str, model: str = _VISION_MODEL) -> 
     ctx = current_context()
     if ctx.dry_run:
         return Relevance(relevant=True, score=1.0, reason="dry-run stub")
-    raise NotImplementedError(
-        "media.web.check_relevance real path is built in increment 4 (VLM gate)"
+    from sfvf import agents
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "relevant": {"type": "boolean"},
+            "score": {"type": "number"},
+            "reason": {"type": "string"},
+        },
+        "required": ["relevant", "score", "reason"],
+    }
+    prompt = (
+        f"Assess whether this image depicts the following subject.\nSubject: {subject}\nReturn "
+        "relevant (does it depict the subject), score (0.0-1.0 confidence it matches), "
+        "and a brief reason."
+    )
+    result = cast(
+        dict[str, Any],
+        agents.llm(prompt, agent="image-relevance", model=model, attach=[image], schema=schema),
+    )
+    score = min(1.0, max(0.0, float(result["score"])))
+    return Relevance(
+        relevant=bool(result["relevant"]),
+        score=score,
+        reason=str(result["reason"]),
     )
 
 
