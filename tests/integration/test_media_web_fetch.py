@@ -13,6 +13,7 @@ are the patched seams. The byte pipeline (magic-byte type gate, pixel-bomb bound
 increment 3b; increment 3a is the SAFE DOWNLOAD + SSRF guard + byte cap only.
 """
 
+import ipaddress
 import struct
 import zlib
 from pathlib import Path
@@ -181,6 +182,17 @@ def test_fetch_requires_https_before_any_resolve_or_request(
         "::7f00:1",  # IPv4-compatible (::/96) -> 127.0.0.1
         "::127.0.0.1",  # IPv4-compatible -> 127.0.0.1
         "fe80::1%eth0",  # scoped/zoned literal -> reject (fail closed, clean ValueError)
+        # IPv6 transition/reserved forms that must be rejected VERSION-INDEPENDENTLY, not by
+        # relying on `is_global` (CPython 3.12.0-3.12.3 misclassify several of these, and a
+        # cached workflow venv can run new fetch code on such an interpreter — Review B, PR #142).
+        "fec0::c0a8:101",  # deprecated site-local (fec0::/10) -> is_global=True on CPython; reject
+        "fec0::1",  # site-local
+        "2002:0a00:0001::",  # 6to4 (2002::/16) embedding 10.0.0.1 -> unwrap+reject
+        "2002:7f00:0001::",  # 6to4 embedding 127.0.0.1
+        "2002:a9fe:a9fe::",  # 6to4 embedding 169.254.169.254 (cloud metadata)
+        "2001:0:4136:e378:8000:63bf:3fff:fdd2",  # Teredo (2001::/32) -> reject the range
+        "64:ff9b:1::a9fe:a9fe",  # RFC 8215 local-use NAT64 (64:ff9b:1::/48) -> reject the range
+        "0100::1",  # discard-only / reserved -> reject
     ],
 )
 def test_fetch_rejects_a_non_global_resolved_ip(
@@ -190,6 +202,24 @@ def test_fetch_rejects_a_non_global_resolved_ip(
     with pytest.raises(ValueError):
         _run(_ctx(tmp_path), lambda: media.web.fetch(_candidate("https://evil.example.com/a.png")))
     assert seen == [], "a non-global resolved IP must be rejected before any request"
+
+
+@pytest.mark.parametrize(
+    "sixtofour,embedded",
+    [
+        ("2002:0a00:0001::", "10.0.0.1"),
+        ("2002:7f00:0001::", "127.0.0.1"),
+        ("2002:a9fe:a9fe::", "169.254.169.254"),  # cloud metadata via 6to4
+    ],
+)
+def test_public_addr_unwraps_6to4_to_the_embedded_ipv4(sixtofour: str, embedded: str) -> None:
+    # 6to4 (2002::/16) embeds an IPv4 at bytes 2-6. `_public_addr` must unwrap it so the
+    # embedded (here private) address is what gets validated by `_validated_pin_ip` — a
+    # VERSION-INDEPENDENT guard that does not lean on the interpreter's `is_global` table
+    # (CPython 3.12.0-3.12.3 misclassify these as global). This is the mechanism assertion:
+    # it is RED on every interpreter until the unwrap is added, whereas an outcome-only
+    # reject test passes trivially on 3.12.4+ where `is_global` already returns False.
+    assert web_mod._public_addr(sixtofour) == ipaddress.ip_address(embedded)
 
 
 def test_fetch_pins_and_brackets_a_public_ipv6(
