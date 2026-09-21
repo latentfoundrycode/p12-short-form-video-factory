@@ -17,25 +17,31 @@ A frozen RED contract is committed: `tests/integration/test_agents_budget_releas
 - No new dependencies. No test edits. No notes/markdown files.
 
 ## Required change
-**Do NOT use the `_budget_reserved` context manager** — its "release on ANY exception" is wrong for a
-paid call, because a transport error (or a post-200 failure) is AMBIGUOUS: the provider may have
-already billed. Mirror the EXISTING, TESTED sibling on the identical OpenRouter path,
-`app/learning/completion.py::make_openrouter_completion` — a bare `reserve` + an `unbilled` flag +
-`try/finally` that releases ONLY on a CONFIRMED-unbilled outcome. Only two outcomes are
-confirmed-unbilled and release: a non-2xx error RESPONSE (incl. 402) and 429-retries-exhausted.
-Everything else — a transport exception from `client.post`, a post-200 parse/teardown/emit failure,
-or a 200 with unknown cost — RETAINS the estimate (conservative over-count), matching
-`completion.py` and `test_learning_completion.py::test_transport_error_keeps_the_reservation`.
+**Do NOT use the `_budget_reserved` context manager.** Use a bare `reserve` + an `unbilled` flag +
+`try/finally` (like `app/learning/completion.py::make_openrouter_completion`), but with TWO refinements
+that fix edges completion.py still has (Review B P1/P2). The release rule is: RELEASE the reserve iff
+the call is CONFIRMED unbilled; RETAIN the estimate iff billing is AMBIGUOUS or confirmed billed.
 
-Use exactly this structure:
+- **Confirmed unbilled → release**: any failure BEFORE the first request is dispatched (e.g.
+  `_http_client()` construction), a non-2xx error RESPONSE (incl. 402), and 429-retries-exhausted.
+- **Ambiguous or billed → retain the estimate**: a transport exception FROM `client.post` (the request
+  may have reached the server and billed), a post-200 parse/teardown/emit failure, or a 200 lacking
+  `usage.cost`.
+- **Billed 200 with a cost → reconcile the REAL `usage.cost`, recorded INSIDE the client block (before
+  the client teardown) so a teardown error cannot lose it** (P1).
+
+Implement it with `unbilled = True` initially (a pre-dispatch failure releases — P2), flipped to
+`False` immediately before each `client.post` (from then on a transport error is ambiguous and
+retains), and set back to `True` only on a confirmed-unbilled RESPONSE. Use exactly this structure:
 
 ```
 key = ctx.secret("OPENROUTER_API_KEY")
 token = ctx._budget_reserve("openrouter", "usd")
-unbilled = False
+unbilled = True   # nothing dispatched yet -> a failure before the first request releases (P2)
 try:
     with _http_client() as client:
         for _attempt in range(_MAX_ATTEMPTS):
+            unbilled = False   # about to dispatch; a transport error from here is AMBIGUOUS -> retain
             with _LIMITER.slot("openrouter"):
                 resp = client.post("/chat/completions",
                                    headers={"Authorization": f"Bearer {key}"}, json=body)
@@ -53,28 +59,26 @@ try:
             unbilled = True
             raise RuntimeError("OpenRouter: rate limited after retries (429)")
 
+        # 200 (billed). Parse and reconcile the REAL cost INSIDE the client block, so it is recorded
+        # BEFORE the client teardown (P1). unbilled stays False (retain on any further failure).
         try:
             data: dict[str, Any] = resp.json()
         except Exception as exc:
             raise RuntimeError("OpenRouter: unreadable 200 response body") from exc
-    cost = _usage_cost(data)
-    if cost is not None:
-        ctx._budget_reconcile(token, actual=cost)   # reconcile the real cost BEFORE emit
-        ctx.emit({"t": "cost", "meter": "openrouter", "unit": "usd", "amount": cost, "cached": False})
-    return data
+        cost = _usage_cost(data)
+        if cost is not None:
+            ctx._budget_reconcile(token, actual=cost)   # BEFORE emit and BEFORE teardown
+            ctx.emit({"t": "cost", "meter": "openrouter", "unit": "usd", "amount": cost, "cached": False})
+        return data
 finally:
     if unbilled:
         ctx._budget_reconcile(token, actual=0.0, note="released")
 ```
 
-Semantics (each verified by a frozen test): 402 / non-2xx / 429-exhausted set `unbilled=True` before
-raising, so the `finally` releases (`actual=0.0`) — these are confirmed unbilled. A transport error
-from `client.post`, a post-200 `resp.json()` failure, the client teardown, or a 200 lacking
-`usage.cost` all leave `unbilled=False`, so the `finally` does NOT release and the reserve stands at
-its estimate (the ledger's `effective_amount` falls back to the reserved amount — a safe over-count).
-A billed 200 reconciles the real `usage.cost` (before the fragile `emit`, so a telemetry failure
-cannot lose it). Keep `data`'s type annotation for mypy; the parse `except` always raises, so `data`
-is bound at `_usage_cost(data)`.
+Note `return data` is INSIDE the `with _http_client()` block (so `data` is bound and the real cost is
+already reconciled before teardown). Keep `data`'s type annotation for mypy; the parse `except` always
+raises, so `data` is bound at `_usage_cost(data)`. Do not change the retry/limiter semantics, and never
+log the bearer key.
 
 Do not change the retry/limiter/error semantics for the 402/non-2xx/429 paths, and never log the
 bearer key.
