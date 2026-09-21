@@ -518,3 +518,40 @@ increments that logged them.
   when the fetch/parse path is next touched (increment 3). Change-log nit: the `openverse` METERS row
   is `fiat/usd` though the commons tier is free/keyless (no spend recorded); it fits the eventual paid
   web tier — revisit the meter model if the paid tier lands separately.
+- **H57 — `media.web.fetch` SSRF-guard residuals** (web-sourcing increment 3a; security-auditor
+  advisories after the guard PASSED — the IPv6-embedded-IPv4 bypass and unbracketed-IPv6 bug were
+  fixed and are NOT residual; these are non-blocking hardening notes). (a) *Host header carries
+  userinfo/port verbatim* — the pinned request sets `Host: parts.netloc`, so a `user:pass@host` URL
+  emits a malformed Host header (and echoes any credentials to the pinned host). Immaterial for the
+  commons tier (Openverse returns clean CDN URLs) but should use `parts.hostname` (+ non-default port)
+  before the UNTRUSTED web tier (increment 6) lands. (b) *Arbitrary port on a public host* —
+  `port = parts.port or 443` allows connecting to any port of a validated-public host (not an internal
+  SSRF vector; the IP is `is_global`). An allow-list to 443 would be tighter; weigh against breaking a
+  legit non-443 image URL. (c) *6to4 (2002::/16) / Teredo (2001::/32) / RFC 8215 local-use NAT64
+  (64:ff9b:1::/48) / site-local (fec0::/10) / reserved* — CLOSED, version-independently. These IPv6
+  forms embed or route to a private/internal target; CPython 3.12.0-3.12.3 misclassify several as
+  `is_global=True`. Cross-family Review B (PR #142) showed a version floor alone is NOT sufficient:
+  `app/core/env.py` reuses a cached workflow venv on a requirements-hash match without rechecking the
+  interpreter or reinstalling the editable SDK, so new fetch code can run on a pre-3.12.4 interpreter.
+  Fixed in `media.web` (increment 3a-r2) by explicit, `is_global`-independent handling: `_public_addr`
+  unwraps 6to4 (embedded IPv4 at bytes 2-6) so the embedded address is validated; and the guard
+  rejects Teredo `2001::/32`, local-use NAT64 `64:ff9b:1::/48`, `is_site_local`, and `is_reserved`
+  addresses by explicit membership/property. `requires-python >=3.12.4` (sdk/pyproject.toml) is
+  retained as defense-in-depth but is no longer load-bearing. The well-known NAT64 `64:ff9b::/96` and
+  IPv4-compat `::/96` forms stay `is_global=True` even on current CPython and remain explicitly
+  unwrapped-and-validated in `_public_addr`. (d) *Nondeterministic pin ordering* — `ips[0]` depends on getaddrinfo order; not a hole (all
+  resolved IPs are validated). (e) *64-bit content-hash* (`_content_hash` = sha256[:16]) — collision
+  risk only; this is the increment-3b hash-widening commitment, recorded there.
+- **H58 — cached workflow venvs do not re-validate the interpreter or reinstall on an SDK security
+  fix** (surfaced by cross-family Review B while reviewing the media.web SSRF guard, PR #142; broader
+  than that guard). `app/core/env.py::ensure_env` returns a cached venv whenever the workflow's
+  `requirements.txt` hash matches, without rechecking the interpreter version or reinstalling. Because
+  the SDK is installed editable (`pip install -e`), a venv keeps whatever interpreter first created it
+  (e.g. a pre-`requires-python`-floor Python) while immediately picking up new SDK source — so a
+  security fix or a raised `requires-python` floor does NOT propagate to existing cached venvs, and an
+  out-of-floor interpreter can keep running new code. The media.web guard was made interpreter-version
+  independent (H57(c)) so this does not leave a live SSRF hole, but the general patch-propagation gap
+  remains: consider folding the SDK version (or `requires-python`) into the venv cache key, or
+  recording the creating interpreter in the hash marker and invalidating on mismatch. Address before
+  the SDK is relied on as a security boundary across long-lived cached environments (revisit with the
+  untrusted web tier, increment 6). Owner FYI.

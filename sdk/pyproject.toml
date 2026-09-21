@@ -6,7 +6,15 @@ build-backend = "hatchling.build"
 name = "sfvf"
 version = "0.0.0"
 description = "SFVF workflow SDK"
-requires-python = ">=3.12"
+# >=3.12.4 (not just >=3.12) is a SECURITY floor for the media.web SSRF guard: CPython
+# 3.12.0-3.12.3 misclassify several IPv6 forms that embed a private IPv4 (6to4 2002::/16,
+# RFC 8215 local-use NAT64 64:ff9b:1::/48, Teredo 2001::/32) as globally routable, so
+# `ipaddress.is_global` returns True for them and the fetch guard would admit an internal
+# target. 3.12.4+ classifies them as non-global; combined with the explicit unwrap of the
+# well-known NAT64 64:ff9b::/96 and IPv4-compat ::/96 forms (which stay is_global=True even
+# on current CPython) in media.web._public_addr, the guard is version-independent on all
+# supported interpreters. See docs/HARDENING.md H57.
+requires-python = ">=3.12.4"
 dependencies = [
     "pydantic>=2.13,<3",
 ]
