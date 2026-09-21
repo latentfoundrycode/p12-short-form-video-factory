@@ -17,20 +17,47 @@ A frozen RED contract is committed: `tests/integration/test_agents_budget_releas
 - No new dependencies. No test edits. No notes/markdown files.
 
 ## Required change
-Replace the bare reserve with the `_budget_reserved` context manager, wrapping ONLY the paid-call
-region (the HTTP client + retry loop + `resp.json()` + cost reconcile). Concretely:
-- Keep `instructions`/`body` assembly and `key = ctx.secret("OPENROUTER_API_KEY")` where they are
-  (not paid).
-- Change `token = ctx._budget_reserve("openrouter", "usd")` to
-  `with ctx._budget_reserved("openrouter", "usd") as token:` and indent the existing
-  `with _http_client() as client: ...` block, the `data = resp.json()`, `cost = _usage_cost(data)`,
-  and the success-path `ctx.emit(...)` / `ctx._budget_reconcile(token, actual=cost)` inside it.
-- `return data` stays after the `with` block (or at its end) — unchanged behaviour on success.
+Use `with ctx._budget_reserved("openrouter", "usd") as token:` but END the reserved region at the
+BILLABLE BOUNDARY — a received HTTP 200 means the provider has already billed, so a failure AFTER
+that point must NOT release the reserve to 0.0 (the ledger is last-actual-wins, so a release would
+overwrite a real cost and under-count genuine spend, breaching the per-day ceiling). Concretely:
 
-The effect: every non-success exit (402 raise, non-2xx raise, 429-exhausted raise, or any exception)
-propagates through `_budget_reserved`, which reconciles the reserve to 0.0 ("released"); the 200 path
-still reconciles the real `usage.cost`. Do not otherwise change the retry/limiter/error semantics
-(the bearer key must still never be logged or put in an error message).
+- Keep `instructions`/`body` assembly and `key = ctx.secret("OPENROUTER_API_KEY")` OUTSIDE (not paid).
+- `with ctx._budget_reserved("openrouter", "usd") as token:` wraps the `with _http_client()` retry
+  loop. The PRE-200 failures — 402 raise, generic non-2xx raise, 429-retries-exhausted raise, or any
+  transport exception — propagate out of the block, so `_budget_reserved` reconciles `actual=0.0`
+  ("released"). This is correct: those calls were not billed.
+- Once the loop `break`s on a 200 (billed), determine the cost WITHOUT letting a failure escape the
+  reserved block as a bare exception. Parse defensively, e.g.:
+  ```
+      try:
+          data = resp.json()
+          cost = _usage_cost(data)
+      except Exception as exc:
+          post_error, data, cost = exc, None, None
+      else:
+          post_error = None
+      if cost is not None:
+          ctx._budget_reconcile(token, actual=cost)   # real billed cost
+      # cost is None (missing usage OR unreadable body): leave the reserve at its estimate — do NOT
+      # release. effective_amount falls back to the reserved estimate (conservative over-count).
+  ```
+- AFTER the `with` block (outside the reserved region, so these cannot trigger a release): surface a
+  parse failure and emit telemetry:
+  ```
+  if post_error is not None:
+      raise RuntimeError("OpenRouter: unreadable 200 response body") from post_error
+  if cost is not None:
+      ctx.emit({"t": "cost", "meter": "openrouter", "unit": "usd", "amount": cost, "cached": False})
+  return data
+  ```
+  (Move the `ctx.emit(...)` cost event OUT of the reserved region — a telemetry/stdout failure must
+  never release a genuine spend.)
+
+Net: a failed (unbilled) call releases the reserve; a billed 200 reconciles the real `usage.cost`; a
+billed 200 whose body is unreadable or lacks `usage.cost` keeps the reserve at its estimate and raises
+a clean `RuntimeError` (never a raw JSONDecodeError, never a release to 0). Do not change the
+retry/limiter/error semantics for the 402/non-2xx/429 paths, and never log the bearer key.
 
 ## Acceptance
 - `PYTHONPATH=sdk python -m pytest tests/integration/test_agents_budget_release.py tests/integration/test_agents_openrouter_llm.py -q`
