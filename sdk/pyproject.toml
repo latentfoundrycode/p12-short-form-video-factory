@@ -30,6 +30,14 @@ edit = [
 openrouter = [
     "httpx2==2.10.0",
 ]
+# `media.web` (search/fetch/source) makes guarded HTTPS calls (httpx2) and, for the fetch byte
+# pipeline, decodes+re-encodes untrusted image bytes to strip metadata/trailing data and bound
+# decode (Pillow). Both are lazy-imported and raise a clear error if absent, so the core SDK stays
+# lean and only image-sourcing environments install them.
+web = [
+    "httpx2==2.10.0",
+    "pillow==12.3.0",
+]
 # `media.speech.speak` real mode synthesizes locally (Chatterbox TTS) and force-aligns the known
 # text to the audio for word timings (WhisperX). Both drag a heavy GPU stack (torch, transformers,
 # faster-whisper), so they are an OPTIONAL extra; the adapter lazy-imports them and raises a clear

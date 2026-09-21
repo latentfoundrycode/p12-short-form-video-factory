@@ -14,6 +14,7 @@ increment 3b; increment 3a is the SAFE DOWNLOAD + SSRF guard + byte cap only.
 """
 
 import gzip
+import io
 import ipaddress
 import struct
 import zlib
@@ -21,6 +22,7 @@ from pathlib import Path
 
 import httpx2
 import pytest
+from PIL import Image
 from sfvf import media
 from sfvf._runtime import reset_active, set_active
 from sfvf.context import Context, ContextFile, ContextPaths
@@ -116,7 +118,12 @@ def test_fetch_pins_the_validated_public_ip_and_writes_the_file(
     )
     assert isinstance(rel, str) and not Path(rel).is_absolute()
     target = tmp_path / rel
-    assert target.is_file() and target.read_bytes() == _png_bytes()
+    # increment 3b: fetch writes the NORMALISED (decoded+re-encoded) image and discards the
+    # original download, so the file is a valid image of the right size named with a real image
+    # extension — not the raw downloaded bytes.
+    assert target.is_file() and rel.endswith(".png")
+    out = Image.open(io.BytesIO(target.read_bytes()))
+    assert out.format == "PNG" and out.size == (8, 8)
     # pinned to the RESOLVED-and-validated IP, but TLS/Host stay the real hostname
     assert len(seen) == 1
     req = seen[0]

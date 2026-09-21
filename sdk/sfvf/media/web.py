@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import ipaddress
 import socket
 from typing import Any, TypedDict
@@ -15,6 +16,7 @@ _VISION_MODEL = "openai/gpt-4o"
 _STUB_POOL = 256  # dry-run search returns up to this many deterministic candidates
 _MAX_CONSIDER = 50
 _MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024  # 25 MiB
+_MAX_IMAGE_PIXELS = 40_000_000
 _MAX_REDIRECTS = 3
 _DL_CHUNK = 65536
 _NAT64_NET = ipaddress.ip_network("64:ff9b::/96")
@@ -75,6 +77,58 @@ def _validated_pin_ip(host: str) -> str:
 def _content_hash(data: bytes) -> str:
     # 64-bit content hash (inc3b commitment, done here)
     return hashlib.sha256(data).hexdigest()[:16]
+
+
+def _normalise_image(data: bytes) -> tuple[bytes, str]:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        sniffed = "png"
+    elif data.startswith(b"\xff\xd8\xff"):
+        sniffed = "jpeg"
+    elif data.startswith((b"GIF87a", b"GIF89a")):
+        sniffed = "gif"
+    elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        sniffed = "webp"
+    else:
+        raise ValueError("unsupported image type")
+
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError(
+            "media.web requires the 'Pillow' package. Install the SDK "
+            "'web' extra: pip install 'sfvf[web]'."
+        ) from exc
+
+    expected = {"png": "PNG", "jpeg": "JPEG", "gif": "GIF", "webp": "WEBP"}[sniffed]
+    Image.MAX_IMAGE_PIXELS = _MAX_IMAGE_PIXELS
+    try:
+        img = Image.open(io.BytesIO(data))
+        if img.width * img.height > _MAX_IMAGE_PIXELS:
+            raise ValueError("image exceeds the pixel cap")
+        if img.format != expected:
+            raise ValueError("image format does not match magic bytes")
+        if getattr(img, "n_frames", 1) > 1 or getattr(img, "is_animated", False):
+            raise ValueError("animated images are not allowed")
+        has_alpha = img.mode in ("RGBA", "LA", "PA") or "transparency" in img.info
+        if sniffed == "jpeg":
+            out = img.convert("RGB")
+            out.info.clear()
+            buf = io.BytesIO()
+            out.save(buf, format="JPEG", quality=90, exif=b"")
+            return buf.getvalue(), "jpg"
+        mode = "RGBA" if has_alpha else "RGB"
+        out = img.convert(mode)
+        out.info.clear()
+        buf = io.BytesIO()
+        if sniffed == "webp":
+            out.save(buf, format="WEBP")
+            return buf.getvalue(), "webp"
+        out.save(buf, format="PNG")
+        return buf.getvalue(), "png"
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"unreadable image: {exc}") from exc
 
 
 def _download_guarded(url: str) -> bytes:
@@ -222,9 +276,10 @@ def fetch(candidate: ImageCandidate) -> str:
             fh.write(b"\nweb-stub:" + stem.encode())
         return rel
     data = _download_guarded(candidate["url"])
-    stem = _content_hash(data)
-    dest, rel = _artifact(ctx, f"web-{stem}.bin")  # raw bytes; 3b re-encodes to a real ext
-    dest.write_bytes(data)
+    canonical, ext = _normalise_image(data)
+    stem = _content_hash(canonical)
+    dest, rel = _artifact(ctx, f"web-{stem}.{ext}")
+    dest.write_bytes(canonical)
     return rel
 
 
