@@ -202,6 +202,25 @@ def test_source_caches_each_candidate_fetch_and_check_across_runs(
     assert len(calls["check"]) == checks_after_first, "cached run must not re-check"
 
 
+def test_source_cache_invalidates_when_the_vision_model_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The cached verdict depends on the vision model, but cache versioning keys on the WORKFLOW
+    # version, not the SDK revision. So the per-candidate step key must include the model — else
+    # changing _VISION_MODEL silently reuses the old model's verdict and skips the new paid check.
+    cands = [_cand("u0", 0)]
+    calls = _install(monkeypatch, cands, {"u0": 0.9})
+    ctx = _ctx(tmp_path)
+    _run(ctx, lambda: media.web.source("q", subject="s", want=1, consider=8))
+    assert len(calls["check"]) == 1
+    # a different default vision model must NOT hit the prior cache entry — it re-checks
+    monkeypatch.setattr(web_mod, "_VISION_MODEL", "anthropic/claude-vision-next")
+    _run(ctx, lambda: media.web.source("q", subject="s", want=1, consider=8))
+    assert len(calls["check"]) == 2, (
+        "a changed vision model must invalidate the per-candidate cache"
+    )
+
+
 # --- dry-run short-circuit stays (no gate call) ------------------------------------------------
 
 
