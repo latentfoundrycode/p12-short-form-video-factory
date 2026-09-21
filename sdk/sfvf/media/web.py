@@ -72,6 +72,9 @@ def search(
 
     from ..providers.registry import PROVIDERS
 
+    if "web" in sources:
+        raise NotImplementedError("media.web.search web tier is built in increment 6")
+
     out: list[ImageCandidate] = []
     for tier in sources:
         if tier == "commons":
