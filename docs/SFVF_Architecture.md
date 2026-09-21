@@ -501,7 +501,7 @@ One adapter per provider. Each is responsible for its own authentication, its ow
 
 This queue is also what bounds the two concurrency settings of §3.1a. Because both compose into it, neither needs to know about the other, and raising either cannot flood a provider.
 
-**Each adapter declares its capabilities**, from a fixed vocabulary the chassis owns: `image.generate`, `image.edit`, `video.generate`, `video.refs`, `video.first_frame`, `agents.vision`, `agents.structured`. Workflows declare what they require, and the registry blocks a workflow whose requirements are unmet with a message naming the capability.
+**Each adapter declares its capabilities**, from a fixed vocabulary the chassis owns: `image.generate`, `image.edit`, `video.generate`, `video.refs`, `video.first_frame`, `agents.vision`, `agents.structured`, `web.images.commons`, `web.images.web`. Workflows declare what they require, and the registry blocks a workflow whose requirements are unmet with a message naming the capability. (`web.images.commons`/`web.images.web` gate the web-image-sourcing surface — split by tier so an owner can permit the keyless licensed/commons tier without the paid, unknown-licence general-web tier.)
 
 The vocabulary is deliberately coarse. A finer one — naming which reference *kinds* a given model accepts, say — would have to be maintained against providers whose surfaces move, and would be wrong more often than it was useful. Coarse declarations catch the case that matters, which is a workflow that cannot possibly work being started anyway; anything finer than that fails at the call, where the error is at least specific.
 

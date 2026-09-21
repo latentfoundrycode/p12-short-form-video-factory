@@ -15,11 +15,11 @@ Surface:
   * `fetch(candidate) -> str`   (a workspace-relative path to the downloaded file)
   * `check_relevance(image, *, subject, model=...) -> Relevance`
   * `source(query, *, subject, sources=("commons",), want=1, consider=8, min_score=0.6,
-            licence=None) -> list[str]`
+            licence=None) -> list[SourcedImage]`   (path + candidate + relevance, design §3.2/§8)
 
 Dry-run returns deterministic stubs with no network, mirroring `media.image.generate`'s stub
-convention. Crucially `source()` in dry-run short-circuits to `want` stub paths and must NOT
-depend on the relevance gate passing (design §3.2).
+convention. Crucially `source()` in dry-run short-circuits to `want` `SourcedImage` results and
+must NOT call the relevance gate (design §3.2); it honours `want` when `want <= consider`.
 """
 
 import json
@@ -162,6 +162,18 @@ def test_source_dry_run_does_not_call_the_relevance_gate(
     assert len(out) == 1
 
 
+def test_source_dry_run_honours_want_up_to_consider(tmp_path: Path) -> None:
+    # In dry-run every stub "passes", so source() must return exactly `want` when `want <= consider`
+    # — an artificial stub pool must not cap it below `want`. (Above `consider` it may return fewer,
+    # per design §3.2.)
+    for want in (1, 9, 12):
+        out = _run(
+            _ctx(tmp_path, dry_run=True),
+            lambda w=want: media.web.source("red barn", subject="a red barn", want=w, consider=w),
+        )
+        assert len(out) == want, f"want={want} (== consider) must yield exactly {want} in dry-run"
+
+
 def test_source_want_is_clamped_to_non_negative(tmp_path: Path) -> None:
     for want in (0, -1):
         out = _run(
@@ -216,6 +228,8 @@ def test_real_paths_not_implemented_yet(tmp_path: Path) -> None:
         _run(ctx, lambda: media.web.source("red barn", subject="a red barn"))
     # keep the Relevance/SourcedImage TypedDicts referenced so the imports are load-bearing
     _ = Relevance(relevant=True, score=1.0, reason="ok")
-    _ = SourcedImage(path="web-x.png", candidate=candidate, relevance=Relevance(
-        relevant=True, score=1.0, reason="ok"
-    ))
+    _ = SourcedImage(
+        path="web-x.png",
+        candidate=candidate,
+        relevance=Relevance(relevant=True, score=1.0, reason="ok"),
+    )
