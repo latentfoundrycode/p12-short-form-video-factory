@@ -13,6 +13,7 @@ are the patched seams. The byte pipeline (magic-byte type gate, pixel-bomb bound
 increment 3b; increment 3a is the SAFE DOWNLOAD + SSRF guard + byte cap only.
 """
 
+import gzip
 import ipaddress
 import struct
 import zlib
@@ -264,6 +265,43 @@ def test_fetch_enforces_the_byte_cap(tmp_path: Path, monkeypatch: pytest.MonkeyP
             _ctx(tmp_path),
             lambda: media.web.fetch(_candidate("https://images.example.com/big.png")),
         )
+
+
+# --- content-encoding: no HTTP decompression bomb before the cap --------------------------------
+
+
+def test_fetch_requests_identity_encoding(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The byte cap must bound WIRE bytes, not decoded bytes: httpx2.iter_bytes() applies
+    # Content-Encoding decoders before yielding, so an attacker origin returning gzipped content
+    # can expand in memory before the cap runs. fetch must ask for identity so no decoder runs.
+    seen = _install(monkeypatch, _ok)
+    _run(_ctx(tmp_path), lambda: media.web.fetch(_candidate("https://images.example.com/a.png")))
+    assert len(seen) == 1
+    assert seen[0].headers.get("accept-encoding") == "identity"
+
+
+def test_fetch_rejects_a_compressed_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Even if the origin ignores Accept-Encoding: identity and returns a Content-Encoding, fetch
+    # must reject it (a decompression bomb: a tiny wire body decodes to gigabytes) rather than let
+    # httpx2 decode it. A small decoded payload here would slip past the byte cap on the current
+    # code, so this asserts the encoding is rejected outright — RED until that check exists.
+    def gz(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        body = gzip.compress(b"\x89PNG\r\n\x1a\n" + b"x" * 32)
+        return httpx2.Response(
+            200, content=body, headers={"content-encoding": "gzip", "content-type": "image/png"}
+        )
+
+    seen = _install(monkeypatch, gz)
+    with pytest.raises(ValueError):
+        _run(
+            _ctx(tmp_path),
+            lambda: media.web.fetch(_candidate("https://images.example.com/a.png")),
+        )
+    # the request was sent, then rejected on the response's Content-Encoding; nothing written
+    assert len(seen) == 1
+    assert list((tmp_path / "artifacts").glob("web-*.bin")) == []
 
 
 # --- redirects are re-validated -----------------------------------------------------------------
