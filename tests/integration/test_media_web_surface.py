@@ -116,17 +116,19 @@ def test_fetch_dry_run_writes_a_workspace_relative_file(tmp_path: Path) -> None:
 
 
 def test_fetch_dry_run_bytes_are_candidate_distinct(tmp_path: Path) -> None:
-    # Distinct candidates must produce distinct stub BYTES, not identical gray — otherwise a dry-run
+    # Distinct candidates must produce distinct stub BYTES, not identical content — else a dry-run
     # library intake (content-addressed) would collapse several sourced images into one asset and
-    # lose distinct provenance. Filenames already differ (per-url hash); the content must too.
-    def go() -> tuple[str, str]:
-        cands = media.web.search("red barn", limit=2)
-        return media.web.fetch(cands[0]), media.web.fetch(cands[1])
+    # lose distinct provenance. Content-distinctness must match filename-distinctness (both keyed on
+    # the FULL per-url stem, not a truncated prefix). Regression for the r6 prefix collision: query
+    # "collision-7091" ranks 1 & 9 had stems 1ffe0881 / 1ffe0824 sharing the 6-hex prefix 1ffe08.
+    def go() -> list[str]:
+        cands = media.web.search("collision-7091", limit=10)
+        return [media.web.fetch(c) for c in cands]
 
-    p0, p1 = _run(_ctx(tmp_path, dry_run=True), go)
-    b0 = _rel_file(tmp_path, p0).read_bytes()
-    b1 = _rel_file(tmp_path, p1).read_bytes()
-    assert b0 != b1, "distinct candidates must produce distinct stub bytes"
+    paths = _run(_ctx(tmp_path, dry_run=True), go)
+    blobs = [_rel_file(tmp_path, p).read_bytes() for p in paths]
+    assert len(blobs) == 10
+    assert len(set(blobs)) == len(blobs), "each distinct candidate must produce distinct stub bytes"
 
 
 def test_check_relevance_dry_run_returns_a_verdict(tmp_path: Path) -> None:

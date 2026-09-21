@@ -860,9 +860,10 @@ Two tiers, chosen with `sources`: `"commons"` (licensed/commons — every image 
 attribution) and `"web"` (general search — `licence="unknown"`; requires the paid provider's key).
 Requires the `web.images.commons` and/or `web.images.web` capability; the relevance check also requires
 `agents.vision`. `source()` returns `SourcedImage` = `{path, candidate, relevance}` so you keep full
-provenance; do your `ctx.library.put(ctx.video_dir / si["path"], …)` in `prepare()` with your
-manifest-declared facets, and call `ctx.library.find(...)` before sourcing to reuse a past selection
-for free. `consider` (how many candidates a `source()` call fetches + checks) is capped at 50 — the
+provenance; do your `ctx.library.put(name, ctx.video_dir / si["path"], facets={…})` in `prepare()`
+with your manifest-declared facets (`put` takes the asset `name` first, then the resolved `Path`
+source — a plain `str` path would be stored as a value, not the image), and call
+`ctx.library.find(...)` before sourcing to reuse a past selection for free. `consider` (how many candidates a `source()` call fetches + checks) is capped at 50 — the
 fan-out is the cost knob, and a larger request raises rather than silently fanning out unbounded. Downloaded bytes are
 untrusted: they are size-bounded, type-checked, re-encoded, and confined to the workspace, and fetches
 are SSRF-guarded. (Being built incrementally — see `docs/DESIGN-web-image-sourcing.md`; the
