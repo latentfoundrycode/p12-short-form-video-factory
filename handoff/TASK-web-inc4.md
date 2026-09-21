@@ -29,6 +29,7 @@ verdict onto `Relevance`, coercing/clamping the untrusted model output:
            "reason": {"type": "string"},
        },
        "required": ["relevant", "score", "reason"],
+       "additionalProperties": False,  # REQUIRED: agents.llm sets strict=True; OpenAI 400s without it
    }
    ```
 3. Build a prompt that puts `subject` to the model and asks it to judge whether the image depicts it,
