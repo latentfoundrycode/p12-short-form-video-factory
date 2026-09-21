@@ -154,6 +154,7 @@ def _post_chat_completion(ctx: Context, body: dict[str, Any]) -> dict[str, Any]:
                 if resp.status_code == 200:
                     break
                 if resp.status_code == 429:
+                    unbilled = True
                     _LIMITER.penalize("openrouter", _retry_after_s(resp.headers.get("Retry-After")))
                     continue
                 if resp.status_code == 402:
