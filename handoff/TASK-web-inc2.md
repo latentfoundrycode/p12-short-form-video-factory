@@ -227,3 +227,27 @@ tiers so a mixed `("commons","web")` request makes no Openverse call then fails:
 - `PYTHONPATH=sdk python -m pytest tests/integration/test_media_web_commons.py tests/integration/test_media_web_surface.py tests/sdk/test_providers_registry.py tests/registry/ tests/core/test_meters_registry.py tests/core/test_meters.py -q` — all pass.
 - `ruff check` + `ruff format --check` + `mypy` clean on `app/core/meters.py`, `sdk/sfvf/providers/openverse.py`, `sdk/sfvf/media/web.py`.
 - `git diff` shows exactly those three files.
+
+## Round 3 (commons attribution guarantee + malformed-results guard)
+Cross-family Review B r2. In `sdk/sfvf/providers/openverse.py::search` (ONLY this file):
+1. Guard a non-list `results` (malformed 200): after parse_json, do
+   `results = data.get("results"); if not isinstance(results, list): results = []` and iterate
+   `results` (not `data.get("results") or []`).
+2. Enforce the SDK §6.8a commons guarantee (every result carries a licence AND attribution):
+   - `lic = r.get("license") or ""`; `if not lic: continue`  # drop a licence-less row (not a valid
+     commons/licensed result). licence_str is then `f"{lic} {ver}".strip()` (never "unknown"; drop the
+     old `or "unknown"`).
+   - attribution: `attribution = r.get("attribution") or _synth_attribution(r, licence_str)` where a
+     module helper synthesises a NON-EMPTY string from the available fields, e.g.:
+     ```python
+     def _synth_attribution(r: dict[str, Any], licence_str: str) -> str:
+         title = r.get("title") or "Untitled"
+         creator = r.get("creator")
+         who = f" by {creator}" if creator else ""
+         return f'"{title}"{who} — {licence_str} (via Openverse)'
+     ```
+   Use `attribution` for the candidate's `attribution` field.
+Everything else (page_size cap, limit<=0, null url/thumbnail/title coercion, the shared-kit routing,
+rank=i) unchanged. Frozen tests:
+`test_commons_results_always_carry_a_licence_and_non_empty_attribution`,
+`test_commons_search_tolerates_a_non_list_results_field`, and the existing commons tests still pass.
