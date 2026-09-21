@@ -1,6 +1,10 @@
 # DESIGN — Web image sourcing (SFVF core capability)
 
-Status: DRAFT v2 for owner sign-off (v2 folds in the plan-critic pass). Depends on `agents.vision`
+Status: **SIGNED OFF 2026-09-21** (v3). v2 folded in the plan-critic pass; v3 folds in the increment-1
+cross-family Review B (source() returns an enriched result carrying provenance; library intake model;
+dry-run/tier semantics; increment-1 scope = vocabulary only). The vision-model default, `min_score`,
+and the `consider`/`want` fan-out defaults are accepted-but-revisitable (owner approved proceeding on
+the proposed defaults; revisit at increment 4 / the §10 web-tier decisions). Depends on `agents.vision`
 (merged, PR #139).
 
 ## 1. Goal
@@ -28,21 +32,23 @@ Two layers so workflows compose freely ("in tandem") or take the easy path. `Ima
 
 ```python
 search(query, *, sources=("commons",), limit=10, licence=None) -> list[ImageCandidate]
-fetch(candidate) -> Path                      # download into the run workspace, sanitised
+fetch(candidate) -> str                       # workspace-relative path; downloads + sanitises
 check_relevance(image, *, subject, model=VISION_MODEL) -> Relevance   # the SFVF VLM gate
 ```
 
-- `sources`: any of `"commons"` and `"web"`; passing both merges and **URL-deduplicates** results
-  (content-hash dedup is impossible pre-download — bytes aren't in hand yet; content-identical
-  downloads instead converge in the content-addressed library, §8).
+- `sources`: a non-empty tuple of `"commons"` and/or `"web"` (an empty or unknown tier is a
+  `ValueError`). Passing both merges and **URL-deduplicates** results (content-hash dedup is
+  impossible pre-download — bytes aren't in hand yet; content-identical downloads instead converge in
+  the content-addressed library, §8). A stub/real candidate's `source` and `licence` reflect the tier
+  it came from (`web`-tier → `licence="unknown"`).
 - `ImageCandidate` TypedDict: `source`, `url`, `thumbnail`, `licence` (SPDX-ish or `"unknown"`),
   `attribution`, `width`, `height`, `title`, `rank` (search-provider rank — NOT relevance, which is
   unknown until `check_relevance` runs).
 - `fetch()` downloads **only the candidate's own image URL** (no crawling) into `ctx.paths.video`
-  through the untrusted-bytes pipeline (§7). The on-disk name is `web-{sha8(url|bytes)}.{ext}` from the
-  **validated** extension — never derived from the raw URL (traversal/null-byte/length risk). Returns
-  a workspace-relative path, same shape `media.image.generate()` returns, so it drops straight into
-  `agents.llm(attach=[...])`.
+  through the untrusted-bytes pipeline (§7), and returns a workspace-relative **`str`** path (the same
+  shape `media.image.generate()` returns, so it drops straight into `agents.llm(attach=[...])`). The
+  on-disk name is `web-{sha8(url|bytes)}.{ext}` from the **validated** extension — never derived from
+  the raw URL (traversal/null-byte/length risk).
 - `check_relevance()` shows the image to a vision model via `agents.llm(attach=[image], schema=...)`
   and returns `Relevance` = `{relevant: bool, score: float, reason: str}`. `subject` is the
   plain-language description of what the workflow wanted.
@@ -51,17 +57,30 @@ check_relevance(image, *, subject, model=VISION_MODEL) -> Relevance   # the SFVF
 
 ```python
 source(query, *, subject, sources=("commons",), want=1, consider=8,
-       min_score=0.6, licence=None) -> list[Path]
+       min_score=0.6, licence=None) -> list[SourcedImage]
+```
+
+`source()` returns an **enriched** result so the caller keeps full provenance (path alone loses where
+the image came from and why it was kept):
+
+```python
+class SourcedImage(TypedDict):
+    path: str                # workspace-relative downloaded image
+    candidate: ImageCandidate  # source/url/licence/attribution/… of the hit that was kept
+    relevance: Relevance     # the VLM verdict (score/reason) that passed the gate
 ```
 
 Searches, fetches candidates in **search-provider rank order** (relevance is unknown pre-check; no
 recency default), runs `check_relevance` on each, and returns the first `want` that pass `min_score` —
-the "checked selection" primitive. Stops fetching/checking once `want` pass or `consider` are
-exhausted, bounding fan-out. `consider`/`want` have conservative defaults (§10.  fan-out is a cost
-knob). **Dry-run:** `source()` short-circuits to `want` deterministic stub paths (it must NOT run the
-relevance gate, whose dry-run stub scores 0 and would return `[]` — diverging from
-`media.image.generate()`'s real stub). `search`/`fetch` return deterministic stub candidates/images,
-no network.
+the "checked selection" primitive. `want` is clamped to `>= 0`; it stops fetching/checking once `want`
+pass or `consider` are exhausted (so it may return FEWER than `want` when fewer qualify), bounding
+fan-out. `consider`/`want` have conservative defaults (§10; fan-out is the cost knob). **Dry-run:**
+`source()` short-circuits to `want` deterministic `SourcedImage` stubs and must NOT call the relevance
+gate (a dry-run has no VLM to assess with); each stub carries a passing `relevance` stub so a workflow
+exercises its happy path. `check_relevance()` dry-run likewise returns a passing stub verdict
+(`relevant=True, score=1.0, reason="dry-run stub"`) — the dry-run-stub convention (return usable
+happy-path values so downstream wiring runs), same as `media.image.generate()` returning a real stub
+image. `search`/`fetch` return deterministic stub candidates/images, no network.
 
 ## 4. Providers / adapters
 
@@ -145,22 +164,44 @@ Library descriptor records `source`, `source_url`, `licence`, `attribution`; `we
 flagged `licence="unknown"` so a workflow/owner decides whether they may appear in a produced video
 (§10.3).
 
-## 8. Library intake
+## 8. Library intake (the WORKFLOW owns the put; the SDK hands back provenance)
 
-Sourced-and-approved images are library assets (outlive a run, content-addressed). `source()`/`fetch()`
-results flow through `ctx.library.put(...)` with facets: `source`, `licence`, `attribution`, `subject`,
-`relevance_score` + existing image facets — mirroring how music licences are recorded. Content-identical
-downloads converge to one blob (this is where real dedup happens). A later run reuses the checked
-selection for free.
+The library contract constrains how intake must work, so `media.web` does NOT call `ctx.library.put`
+itself:
+- **Facets must be workflow-declared.** `library.put` rejects an undeclared facet key
+  (`LibraryError`), so `source`/`licence`/`attribution`/`subject`/`relevance_score` must be declared in
+  the workflow's manifest `library.facets`. A workflow that wants sourced images in its library
+  declares those facets; the SDK cannot invent them.
+- **Writes belong in `prepare()`, not concurrent `run()`.** Per the SDK's write-in-prepare rule,
+  sourcing-then-intake is a `prepare()`-time activity; `run()` reads the library.
+- **The SDK returns provenance, the workflow writes it.** `source()` returns `list[SourcedImage]`
+  (path + candidate + relevance), so the workflow does
+  `ctx.library.put(key, si["path"], facets={"source": si["candidate"]["source"], "licence":
+  si["candidate"]["licence"], …, "relevance_score": si["relevance"]["score"]}, description=…)` with
+  its declared facets. This keeps library policy with the workflow and avoids the undeclared-facet
+  conflict.
+- **Reuse is not automatic from content-addressing.** Identical bytes converge to one blob, but a
+  fresh run still pays for search + fetch + VLM unless it FIRST calls `ctx.library.find(...)` and
+  sources only on a miss. The reuse pattern (find-before-source) is the workflow's, shown in the
+  worked example. Note: a content-identical re-`put` keeps the first descriptor, so the FIRST intake's
+  provenance wins — acceptable (same bytes, same image), but the workflow should prefer find-then-reuse
+  over blind re-source.
+
+This intake model is exercised by increment 5 (`source()`), not the increment-1 skeleton.
 
 ## 9. Build increments (each a gated RED→GREEN loop)
 
 0. **Prerequisite:** land `agents.llm` budget-reserve-leak fix (task_1a4cc2f0) — ordered before #4.
-1. **Contract + surface skeleton** — `media.web` module, `ImageCandidate`/`Relevance` TypedDicts,
-   `web.images.commons`/`web.images.web` in KNOWN_CAPABILITIES, dry-run stubs (incl. `source()`
-   short-circuit), provider rows (no live calls). Frozen surface + capability-availability tests.
-2. **`commons` tier (Openverse)** — real search + candidate mapping (licence/attribution), mocked HTTP
-   contract; then a free live smoke. Wikimedia fast-follow.
+1. **Contract + surface skeleton (VOCABULARY ONLY — no provider yet)** — `media.web` module,
+   `ImageCandidate`/`Relevance`/`SourcedImage` TypedDicts, `web.images.commons`/`web.images.web` in
+   KNOWN_CAPABILITIES, dry-run stubs (incl. `source()` short-circuit), real paths raise
+   `NotImplementedError`. NO provider row this increment (advertising a capability whose real path is
+   unbuilt is worse than deferring it), so the tests assert the two capabilities are currently
+   **unavailable**. The provider that OFFERS `web.images.commons` — and the availability flip — arrive
+   with the real adapter in increment 2.
+2. **`commons` tier (Openverse)** — real search + candidate mapping (licence/attribution), the
+   Openverse provider row (keyless) advertising `web.images.commons` + the availability flip, mocked
+   HTTP contract; then a free live smoke. Wikimedia fast-follow.
 3a. **URL/SSRF guard + safe download** — resolved-IP deny-list, IP-pinned connect, per-hop redirect
    re-validation, streaming byte cap. Adversarial tests: private/loopback/link-local/CGNAT IP,
    encoded-IP forms, DNS-rebinding, redirect-to-internal, oversize stream.
