@@ -76,8 +76,11 @@ def fetch(candidate: ImageCandidate) -> str:
     if ctx.dry_run:
         stem = _sha8(["web.fetch", candidate["url"]])
         dest, rel = _artifact(ctx, f"web-{stem}.png")
-        width = 16 + int(stem[6:], 16)  # last byte -> width 16..271; colour carries the first 6 hex
-        solid_image(dest, width=width, height=64, color=f"0x{stem[:6]}")
+        solid_image(dest, width=64, height=64)
+        # valid PNGs ignore bytes after IEND; append the full stem so the stub is byte-distinct per
+        # candidate (a dry-run content-addressed intake keeps distinct candidates distinct)
+        with dest.open("ab") as fh:
+            fh.write(b"\nweb-stub:" + stem.encode())
         return rel
     raise NotImplementedError(
         "media.web.fetch real path is built in increment 3 (download + safety)"
