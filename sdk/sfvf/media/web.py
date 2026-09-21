@@ -76,7 +76,7 @@ def fetch(candidate: ImageCandidate) -> str:
     if ctx.dry_run:
         stem = _sha8(["web.fetch", candidate["url"]])
         dest, rel = _artifact(ctx, f"web-{stem}.png")
-        solid_image(dest, width=64, height=64)
+        solid_image(dest, width=64, height=64, color=f"0x{stem[:6]}")
         return rel
     raise NotImplementedError(
         "media.web.fetch real path is built in increment 3 (download + safety)"
