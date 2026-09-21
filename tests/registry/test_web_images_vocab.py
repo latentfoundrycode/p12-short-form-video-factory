@@ -23,14 +23,12 @@ def test_web_image_capabilities_are_known_vocabulary() -> None:
     assert "web.images.web" in KNOWN_CAPABILITIES
 
 
-def _wf(tmp: Path, cap: str) -> Path:
-    toml = minimal_toml(extra=f'requires_capabilities = ["{cap}"]')
-    return write_plugin(tmp, "photo-explainer", toml)
-
-
 def test_requiring_a_web_image_capability_is_not_a_vocabulary_error(tmp_path: Path) -> None:
     # A workflow may declare either tier without CAPABILITY_UNKNOWN. (offered=None skips the
     # availability check, which belongs to increment 2 once a provider offers the capability.)
-    for cap in ("web.images.commons", "web.images.web"):
-        entry = validate(_wf(tmp_path, cap))
+    # Distinct folder per case so write_plugin does not re-create the same directory.
+    for i, cap in enumerate(("web.images.commons", "web.images.web")):
+        toml = minimal_toml(extra=f'requires_capabilities = ["{cap}"]')
+        plugin = write_plugin(tmp_path, f"photo-explainer-{i}", toml)
+        entry = validate(plugin)
         assert _UNKNOWN not in problem_codes(entry), f"{cap} should be known vocabulary"
