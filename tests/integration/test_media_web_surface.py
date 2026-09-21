@@ -1,0 +1,170 @@
+"""Frozen contract — web-image-sourcing increment 1: the `sfvf.media.web` surface skeleton.
+
+Per docs/DESIGN-web-image-sourcing.md §3. This increment establishes the SDK surface and its
+dry-run behaviour ONLY — the real (non-dry-run) paths are not built yet and must raise
+`NotImplementedError` (they are filled by later increments: commons search #2, fetch/safety #3,
+check_relevance #4, source #5). No network is ever touched here.
+
+Shapes (TypedDicts, read by subscript like `agents.Source`):
+  * `ImageCandidate` — a search hit: source/url/thumbnail/licence/attribution/width/height/
+    title/rank.
+  * `Relevance` — a VLM verdict: relevant(bool)/score(float in [0,1])/reason(str).
+
+Surface:
+  * `search(query, *, sources=("commons",), limit=10, licence=None) -> list[ImageCandidate]`
+  * `fetch(candidate) -> str`   (a workspace-relative path to the downloaded file)
+  * `check_relevance(image, *, subject, model=...) -> Relevance`
+  * `source(query, *, subject, sources=("commons",), want=1, consider=8, min_score=0.6,
+            licence=None) -> list[str]`
+
+Dry-run returns deterministic stubs with no network, mirroring `media.image.generate`'s stub
+convention. Crucially `source()` in dry-run short-circuits to `want` stub paths and must NOT
+depend on the relevance gate passing (design §3.2).
+"""
+
+import json
+from pathlib import Path
+
+import pytest
+from sfvf import media
+from sfvf._runtime import reset_active, set_active
+from sfvf.context import Context, ContextFile, ContextPaths
+from sfvf.media.web import ImageCandidate, Relevance  # TypedDicts must exist
+
+
+def _ctx(video_dir: Path, *, dry_run: bool) -> Context:
+    return Context(
+        ContextFile(
+            settings={},
+            dry_run=dry_run,
+            paths=ContextPaths(
+                video=video_dir,
+                artifacts=video_dir / "artifacts",
+                steps=video_dir / ".steps",
+                shared=video_dir,
+            ),
+        )
+    )
+
+
+def _run(ctx: Context, fn):
+    token = set_active(ctx)
+    try:
+        return fn()
+    finally:
+        reset_active(token)
+
+
+def _rel_file(video_dir: Path, rel: str) -> Path:
+    assert isinstance(rel, str), "a produced path must be a string"
+    assert not Path(rel).is_absolute(), "a produced path must be workspace-relative"
+    target = video_dir / rel
+    assert target.is_file(), f"expected a real stub file at {rel}"
+    return target
+
+
+_CANDIDATE_KEYS = {
+    "source",
+    "url",
+    "thumbnail",
+    "licence",
+    "attribution",
+    "width",
+    "height",
+    "title",
+    "rank",
+}
+
+
+# --- active-context requirement -----------------------------------------------------------------
+
+
+def test_web_surface_requires_an_active_context() -> None:
+    # Every media.web entrypoint reads the active context and refuses without one.
+    with pytest.raises(RuntimeError):
+        media.web.search("red barn")
+    with pytest.raises(RuntimeError):
+        media.web.source("red barn", subject="a red barn")
+
+
+# --- dry-run stubs (no network) -----------------------------------------------------------------
+
+
+def test_search_dry_run_returns_candidate_stubs(tmp_path: Path) -> None:
+    out = _run(_ctx(tmp_path, dry_run=True), lambda: media.web.search("red barn", limit=5))
+    assert isinstance(out, list) and out, "search must return a non-empty list of candidates"
+    assert len(out) <= 5, "search must honour limit"
+    for cand in out:
+        assert set(cand) >= _CANDIDATE_KEYS, "each candidate must carry the ImageCandidate keys"
+        assert isinstance(cand["url"], str) and cand["url"]
+        assert isinstance(cand["licence"], str)
+    json.dumps(out)  # JSON-native
+    # deterministic
+    again = _run(_ctx(tmp_path, dry_run=True), lambda: media.web.search("red barn", limit=5))
+    assert again == out
+
+
+def test_fetch_dry_run_writes_a_workspace_relative_file(tmp_path: Path) -> None:
+    def go():
+        candidate = media.web.search("red barn", limit=1)[0]
+        return media.web.fetch(candidate)
+
+    rel = _run(_ctx(tmp_path, dry_run=True), go)
+    _rel_file(tmp_path, rel)
+    json.dumps(rel)
+
+
+def test_check_relevance_dry_run_returns_a_verdict(tmp_path: Path) -> None:
+    def go():
+        rel = media.web.fetch(media.web.search("red barn", limit=1)[0])
+        return media.web.check_relevance(rel, subject="a red barn in a field")
+
+    verdict = _run(_ctx(tmp_path, dry_run=True), go)
+    assert set(verdict) >= {"relevant", "score", "reason"}
+    assert isinstance(verdict["relevant"], bool)
+    assert isinstance(verdict["score"], float) and 0.0 <= verdict["score"] <= 1.0
+    assert isinstance(verdict["reason"], str)
+    json.dumps(verdict)
+
+
+def test_source_dry_run_returns_want_checked_paths(tmp_path: Path) -> None:
+    # source() composes search->fetch->check and returns the passing selection. In dry-run it must
+    # short-circuit to `want` real stub paths WITHOUT depending on the relevance gate (design §3.2),
+    # so a workflow dry-run (cost preview / wiring check) sees real sourced paths, not [].
+    out = _run(
+        _ctx(tmp_path, dry_run=True),
+        lambda: media.web.source("red barn", subject="a red barn", want=2),
+    )
+    assert isinstance(out, list)
+    assert len(out) == 2, "source must return `want` paths in dry-run"
+    for rel in out:
+        _rel_file(tmp_path, rel)
+    json.dumps(out)
+
+
+# --- real path not built yet (skeleton) ---------------------------------------------------------
+
+
+def test_real_paths_not_implemented_yet(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path, dry_run=False)
+    candidate = ImageCandidate(
+        source="commons",
+        url="https://example.invalid/x.jpg",
+        thumbnail="https://example.invalid/x-t.jpg",
+        licence="CC0-1.0",
+        attribution="stub",
+        width=800,
+        height=600,
+        title="x",
+        rank=0,
+    )
+    with pytest.raises(NotImplementedError):
+        _run(ctx, lambda: media.web.search("red barn"))
+    with pytest.raises(NotImplementedError):
+        _run(ctx, lambda: media.web.fetch(candidate))
+    with pytest.raises(NotImplementedError):
+        _run(ctx, lambda: media.web.check_relevance("shot.png", subject="a red barn"))
+    with pytest.raises(NotImplementedError):
+        _run(ctx, lambda: media.web.source("red barn", subject="a red barn"))
+    # keep the Relevance TypedDict referenced so the import is load-bearing
+    _ = Relevance(relevant=True, score=1.0, reason="ok")
