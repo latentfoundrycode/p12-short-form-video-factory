@@ -117,9 +117,14 @@ name(s). `commons` needs no key (or a free one); `web` needs the chosen provider
   `PriceHint` off **`Model`** rows via `adapter.image_price(model, size)`; a search API has no model
   and bills **per query / per 1000 queries** (a basis no `PriceHint.basis` covers). The design resolves
   this by giving the web adapter a **synthetic search "model" row** carrying a per-query price, and a
-  new `basis="per_call"`. Because `_budget_reserve` **fails closed** (raises unless the meter has a
-  configured ceiling AND a positive estimate), shipping the web tier REQUIRES a budget-config entry for
-  its meter — recorded as an operational item in increment 6.
+  new `basis="per_call"`. **Budget correction (Review B):** `_budget_reserve` does NOT fail closed on a
+  missing ceiling — per `_budget.py` a meter absent from the `per_run`/`per_day` maps is **unlimited**,
+  and `reserve()` only checks ceilings that are configured, so a meter with an estimate but no ceiling
+  reserves against an unbounded budget. Therefore the web-tier meter MUST have a per-run/per-day
+  **ceiling** configured (an operational requirement in increment 6, NOT auto-enforced), and increment 6
+  adds a validation/startup check that the web meter has a ceiling before the tier is enabled. This
+  "meter-without-ceiling is unlimited" gap is general (all meters); it is recorded as a budget-hardening
+  candidate alongside the `agents.llm` reserve-leak below.
 - **HARD prerequisite (S1):** the `agents.llm` budget-reserve-leak (task_1a4cc2f0) MUST land before
   increment 4. `_post_chat_completion` reserves via the bare `_budget_reserve` and only reconciles on
   the 200 path, so a failed VLM check leaks its reserve; `source(consider=8)` runs up to 8 checks per
@@ -179,11 +184,15 @@ itself:
 - **Writes belong in `prepare()`, not concurrent `run()`.** Per the SDK's write-in-prepare rule,
   sourcing-then-intake is a `prepare()`-time activity; `run()` reads the library.
 - **The SDK returns provenance, the workflow writes it.** `source()` returns `list[SourcedImage]`
-  (path + candidate + relevance), so the workflow does
-  `ctx.library.put(key, si["path"], facets={"source": si["candidate"]["source"], "licence":
-  si["candidate"]["licence"], …, "relevance_score": si["relevance"]["score"]}, description=…)` with
-  its declared facets. This keeps library policy with the workflow and avoids the undeclared-facet
-  conflict.
+  (path + candidate + relevance). `si["path"]` is a workspace-relative **`str`**; `ctx.library.put`
+  dispatches a `Path` argument to the file store and any non-`Path` (incl. a `str`) to `put_value`
+  (which would store the string, not the image). So the workflow MUST resolve the path to a `Path`
+  first:
+  `ctx.library.put(key, ctx.paths.video / si["path"], facets={"source": si["candidate"]["source"],
+  "licence": si["candidate"]["licence"], …, "relevance_score": si["relevance"]["score"]},
+  description=…)` with its declared facets. This keeps library policy with the workflow and avoids the
+  undeclared-facet conflict. Increment 5 carries an end-to-end intake test (a sourced stub image is
+  `put` and reads back as an image, not as its path string).
 - **Reuse is not automatic from content-addressing.** Identical bytes converge to one blob, but a
   fresh run still pays for search + fetch + VLM unless it FIRST calls `ctx.library.find(...)` and
   sources only on a miss. The reuse pattern (find-before-source) is the workflow's, shown in the
