@@ -163,3 +163,76 @@ def test_commons_search_raises_a_clean_error_on_openverse_400(
             _ctx(tmp_path),
             lambda: media.web.search("barn", sources=("commons",), licence="bogus"),
         )
+
+
+def test_commons_search_caps_page_size_to_the_anonymous_maximum(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Live finding: anonymous Openverse rejects page_size > 20 with HTTP 401. The adapter MUST cap
+    # the requested page_size to the anonymous maximum (20) rather than passing a `limit` (up to
+    # _MAX_CONSIDER=50) straight through, so a valid caller `limit` does not 401.
+    seen = _install_mock(monkeypatch, _ok)
+    _run(_ctx(tmp_path), lambda: media.web.search("barn", sources=("commons",), limit=50))
+    assert seen[0].url.params.get("page_size") == "20"
+
+
+def test_commons_search_returns_empty_for_a_nonpositive_limit_without_a_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Live finding: limit <= 0 is HTTP 400 at Openverse. A non-positive limit requests nothing, so
+    # the adapter short-circuits to [] and makes NO call (mirrors the dry-run clamp).
+    seen = _install_mock(monkeypatch, _ok)
+    for bad_limit in (0, -1):
+        out = _run(
+            _ctx(tmp_path),
+            lambda n=bad_limit: media.web.search("barn", sources=("commons",), limit=n),
+        )
+        assert out == []
+    assert seen == []
+
+
+def test_commons_search_tolerates_schema_valid_nulls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Live finding: Openverse's schema permits null url / license_version / attribution / title on a
+    # 200. These are VALID provider data, not malformed. A result with a null/missing url is skipped
+    # (nothing to source); null string fields coerce to "" and a null license_version does NOT leak
+    # the literal "None" into the licence.
+    nully = [
+        {"url": None, "license": "cc0", "title": None},  # null url -> skipped
+        {
+            "url": "https://live.example.invalid/ok.jpg",
+            "thumbnail": None,
+            "license": "by",
+            "license_version": None,
+            "attribution": None,
+            "title": None,
+            "width": None,
+            "height": None,
+        },
+    ]
+
+    def handler(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        return httpx2.Response(200, json={"results": nully})
+
+    _install_mock(monkeypatch, handler)
+    out = _run(_ctx(tmp_path), lambda: media.web.search("barn", sources=("commons",)))
+    assert len(out) == 1, "the null-url result must be skipped"
+    c = out[0]
+    assert c["url"] == "https://live.example.invalid/ok.jpg"
+    assert "None" not in c["licence"] and c["licence"].strip() == "by"
+    assert c["title"] == "" and c["attribution"] == "" and c["thumbnail"] == ""
+    assert c["width"] == 0 and c["height"] == 0
+    json.dumps(out)
+
+
+def test_web_tier_raises_before_any_openverse_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An unsupported tier must be rejected BEFORE any dispatch, so a mixed ("commons","web")
+    # request does not perform the Openverse call and then fail — regardless of tuple order.
+    seen = _install_mock(monkeypatch, _ok)
+    for src in (("commons", "web"), ("web", "commons")):
+        with pytest.raises(NotImplementedError):
+            _run(_ctx(tmp_path), lambda s=src: media.web.search("barn", sources=s))
+    assert seen == []
