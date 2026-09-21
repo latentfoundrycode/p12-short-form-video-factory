@@ -13,10 +13,13 @@ module (search's Openverse HTTP and fetch's download/normalise are covered by th
 `ctx.paths.cache` is set because the real path uses `ctx.step`.
 """
 
+import io
 from pathlib import Path
 
+import httpx2
 import pytest
-from sfvf import media
+from PIL import Image
+from sfvf import agents, media
 from sfvf._runtime import reset_active, set_active
 from sfvf.context import Context, ContextFile, ContextPaths
 from sfvf.media import web as web_mod
@@ -215,3 +218,54 @@ def test_source_dry_run_short_circuits_without_calling_the_gate(
     assert calls["check"] == [], "dry-run must NOT call check_relevance"
     for si in out:
         assert set(si) >= {"path", "candidate", "relevance"}
+
+
+# --- end-to-end intake: a sourced path resolves to a REAL image, not the string (design §8) ----
+
+
+def test_source_end_to_end_yields_a_real_image_path_for_library_intake(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Full commons pipeline through the REAL fetch (SSRF download + normalise) and REAL
+    # check_relevance, mocked only at the network + vision boundary. The returned si["path"] must
+    # resolve under ctx.video_dir to a REAL decodable image — so a workflow's
+    # `ctx.library.put(key, ctx.video_dir / si["path"], ...)` stores the image, not the path string.
+    png = _png_bytes()
+
+    # search: one real commons candidate (bypass the Openverse HTTP)
+    def fake_search(query, *, sources=("commons",), limit=10, licence=None):
+        return [_cand("https://cdn.example.com/barn.png", 0)][:limit]
+
+    monkeypatch.setattr(web_mod, "search", fake_search)
+    # fetch's SSRF/download seams -> a public IP + a real PNG response
+    monkeypatch.setattr(web_mod, "_resolve", lambda host: ["93.184.216.34"])
+
+    def _client() -> httpx2.Client:
+        def handler(_req: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(200, content=png, headers={"content-type": "image/png"})
+
+        return httpx2.Client(
+            transport=httpx2.MockTransport(handler), trust_env=False, follow_redirects=False
+        )
+
+    monkeypatch.setattr(web_mod, "_client", _client)
+    # check_relevance's vision call -> a passing verdict
+    monkeypatch.setattr(
+        agents, "llm", lambda *a, **k: {"relevant": True, "score": 0.95, "reason": "a barn"}
+    )
+
+    ctx = _ctx(tmp_path)
+    out = _run(ctx, lambda: media.web.source("barn", subject="a red barn", want=1, consider=4))
+    assert len(out) == 1
+    si = out[0]
+    assert isinstance(si["path"], str) and not Path(si["path"]).is_absolute()
+    resolved = ctx.video_dir / si["path"]  # the workflow's intake resolution (design §8)
+    assert resolved.is_file(), "the sourced path must resolve to a real file on disk"
+    img = Image.open(io.BytesIO(resolved.read_bytes()))
+    assert img.format in ("PNG", "JPEG", "WEBP") and img.size == (8, 8)
+
+
+def _png_bytes(n: int = 8) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (n, n), (200, 30, 30)).save(buf, format="PNG")
+    return buf.getvalue()
