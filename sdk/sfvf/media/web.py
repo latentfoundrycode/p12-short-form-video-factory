@@ -238,9 +238,6 @@ def search(
 
     from ..providers.registry import PROVIDERS
 
-    if "web" in sources:
-        raise NotImplementedError("media.web.search web tier is built in increment 6")
-
     out: list[ImageCandidate] = []
     for tier in sources:
         if tier == "commons":
@@ -253,7 +250,14 @@ def search(
                 )
             )
         else:  # "web"
-            raise NotImplementedError("media.web.search web tier is built in increment 6")
+            provider = PROVIDERS["serpapi"]
+            secrets = {name: ctx.secret(name) for name in provider.secret_names}
+            adapter = importlib.import_module(f"sfvf.providers.{provider.adapter}")
+            out.extend(
+                adapter.search(
+                    query, limit=limit, licence=licence, provider=provider, secrets=secrets
+                )
+            )
     # URL-deduplicate across tiers, preserving first-seen order (design §3.1).
     seen: set[str] = set()
     deduped: list[ImageCandidate] = []

@@ -46,6 +46,7 @@ METERS: dict[str, MeterInfo] = {
     "higgsfield": MeterInfo(kind="credit", provider="Higgsfield", unit="credits"),
     "elevenlabs": MeterInfo(kind="quota", provider="ElevenLabs", unit="chars"),
     "openverse": MeterInfo(kind="fiat", provider="Openverse", unit="usd"),
+    "serpapi": MeterInfo(kind="fiat", provider="SerpApi", unit="usd"),
 }
 
 
