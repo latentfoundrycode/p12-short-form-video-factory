@@ -422,9 +422,7 @@ def _ledger_entries(tmp: Path) -> list[dict]:
     if not ledger.is_file():
         return []
     return [
-        json.loads(line)
-        for line in ledger.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
 
 
