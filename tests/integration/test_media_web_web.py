@@ -245,6 +245,22 @@ def test_web_search_raises_a_clean_error_without_leaking_the_key(
     assert _KEY not in str(exc.value), "the API key must never appear in the error"
 
 
+def test_web_search_does_not_leak_the_key_in_a_non_auth_error_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The api_key is a QUERY-param secret. A non-401 error (here 400) surfaces the response body,
+    # and _http's auth-HEADER redaction cannot see a query-param secret — so if SerpApi reflects the
+    # key in that body it would leak into the error/logs. The adapter must pass the key to the
+    # redactor. (The 401 path above discards the body, so it does not exercise this.)
+    def reflect_key(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        return httpx2.Response(400, json={"error": f"invalid api_key={_KEY}"})
+
+    _install_mock(monkeypatch, reflect_key)
+    with pytest.raises(RuntimeError) as exc:
+        _run(_ctx(tmp_path), lambda: media.web.search("barn", sources=("web",)))
+    assert _KEY not in str(exc.value), "the api_key must never appear in an error, even a 400 body"
+
+
 # --- capability gating on the secret ------------------------------------------------------------
 
 

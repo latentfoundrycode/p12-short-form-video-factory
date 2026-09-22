@@ -107,3 +107,36 @@ def test_request_redacts_the_submitted_credential_from_a_non_auth_error_body() -
     assert sent not in message  # the submitted credential (token) is redacted from a non-auth body
     assert marker in detail  # the rest of the 5xx body is preserved for diagnostics
     assert "500" in message
+
+
+def test_request_redacts_extra_query_param_secrets_from_a_non_auth_error_body() -> None:
+    # H50 extension: a query-param-auth provider (SerpApi) carries NO auth header — its secret rides
+    # in the URL query — so auth-header redaction alone cannot scrub it. When a non-2xx body echoes
+    # that key, request() must still redact it, given the secret value(s) via `redact=`. Without it,
+    # a 400/5xx body echoing the api_key would leak the owner's credential into the error and logs.
+    key = "serpapi-style-query-key-abcdef123456"
+    marker = "invalid-parameter-marker-xyz"
+
+    class _Anon:
+        def headers(self) -> dict[str, str]:
+            return {}
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(400, json={"error": f"{marker}: api_key={key}"})
+
+    with pytest.raises(AdapterError) as exc:
+        request(
+            _client(handler),
+            "GET",
+            f"/search?api_key={key}",
+            provider="acme",
+            auth=_Anon(),
+            limiter=_idle_limiter(),
+            redact=[key],
+        )
+
+    message = str(exc.value)
+    detail = exc.value.detail or ""
+    assert key not in message and key not in detail  # the query-param secret is scrubbed
+    assert marker in detail  # the rest of the diagnostic body survives
+    assert "400" in message
