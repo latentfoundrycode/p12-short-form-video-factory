@@ -249,19 +249,15 @@ def search(
                     query, limit=limit, licence=licence, provider=provider, secrets=secrets
                 )
             )
-        else:  # "web" — PAID tier: reserve serpapi/usd BEFORE dispatch (H21), reconcile on success
-            if limit <= 0:
-                continue
+        else:  # "web" — PAID tier; the serpapi adapter owns the budget reserve/reconcile
             provider = PROVIDERS["serpapi"]
             secrets = {name: ctx.secret(name) for name in provider.secret_names}
             adapter = importlib.import_module(f"sfvf.providers.{provider.adapter}")
-            price = adapter.search_price()
-            with ctx._budget_reserved(provider.meter, provider.unit, estimate=price) as token:
-                results = adapter.search(
+            out.extend(
+                adapter.search(
                     query, limit=limit, licence=licence, provider=provider, secrets=secrets
                 )
-            ctx.record_cost(provider.meter, provider.unit, price, "priced", token=token)
-            out.extend(results)
+            )
     # URL-deduplicate across tiers, preserving first-seen order (design §3.1).
     seen: set[str] = set()
     deduped: list[ImageCandidate] = []

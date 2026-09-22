@@ -6,17 +6,14 @@ from typing import Any
 from urllib.parse import urlencode
 
 from .._ratelimit import LIMITER
+from .._runtime import current_context
 from ._http import parse_json, request
+from .base import AdapterError
 
 _BASE = "https://serpapi.com"
 _TIMEOUT_S = 30.0
 _SEARCH_PRICE_USD = 0.02  # conservative per-search estimate; >= SerpApi's standard plan rates
 LIMITER.configure("serpapi", max_concurrency=2, min_interval_s=0.0)
-
-
-def search_price() -> float:
-    """Per-search cost used to reserve budget (SerpApi bills per successful search)."""
-    return _SEARCH_PRICE_USD
 
 
 class _Anon:
@@ -50,35 +47,56 @@ def search(
         raise RuntimeError("serpapi: SERPAPI_API_KEY is required for the web tier")
     params = {"engine": "google_images", "q": query, "safe": "active", "ijn": 0, "api_key": key}
     url = f"/search?{urlencode(params)}"
-    with _client() as client:
-        resp = request(client, "GET", url, provider="serpapi", auth=_Anon(), limiter=LIMITER)
-    data = parse_json(resp, provider="serpapi", where="GET /search")
-    results = data.get("images_results")
-    if not isinstance(results, list):
-        results = []
-    out: list[dict[str, Any]] = []
-    for i, r in enumerate(results):
-        if not isinstance(r, dict):
-            continue
-        if r.get("unsafe") is True:  # safeSearch defence-in-depth: drop flagged items
-            continue
-        image_url = r.get("original")  # the full-resolution image URL
-        if not image_url:  # null/missing original -> nothing to source, skip
-            continue
-        title = r.get("title") or ""
-        out.append(
-            {
-                "source": "web",
-                "url": image_url,
-                "thumbnail": r.get("thumbnail") or "",
-                "licence": "unknown",  # web-tier licence is always unknown (owner decision)
-                "attribution": _synth_attribution(title or "Untitled", r.get("source") or ""),
-                "width": int(r.get("original_width") or 0),
-                "height": int(r.get("original_height") or 0),
-                "title": title,
-                "rank": i,
-            }
-        )
-        if len(out) >= limit:
-            break
-    return out
+    ctx = current_context()
+    token = ctx._budget_reserve(provider.meter, provider.unit, estimate=_SEARCH_PRICE_USD)
+    billed = False
+    try:
+        with _client() as client:
+            # request about to be dispatched; an ambiguous failure from here
+            # RETAINS (fail closed)
+            billed = True
+            try:
+                resp = request(
+                    client, "GET", url, provider="serpapi", auth=_Anon(), limiter=LIMITER
+                )
+            except AdapterError:
+                # request() raises only for a non-2xx response (after its 429 retries); SerpApi does
+                # not bill a failed search, so this is CONFIRMED unbilled -> release in finally.
+                billed = False
+                raise
+        # request() returned -> a 2xx -> SerpApi billed this search. From here (parse + mapping) any
+        # failure RETAINS the estimate: the search was billed even if the body is unusable.
+        data = parse_json(resp, provider="serpapi", where="GET /search")
+        results = data.get("images_results")
+        if not isinstance(results, list):
+            results = []
+        out: list[dict[str, Any]] = []
+        for i, r in enumerate(results):
+            if not isinstance(r, dict):
+                continue
+            if r.get("unsafe") is True:  # safeSearch defence-in-depth: drop flagged items
+                continue
+            image_url = r.get("original")  # the full-resolution image URL
+            if not image_url:  # null/missing original -> nothing to source, skip
+                continue
+            title = r.get("title") or ""
+            out.append(
+                {
+                    "source": "web",
+                    "url": image_url,
+                    "thumbnail": r.get("thumbnail") or "",
+                    "licence": "unknown",  # web-tier licence is always unknown (owner decision)
+                    "attribution": _synth_attribution(title or "Untitled", r.get("source") or ""),
+                    "width": int(r.get("original_width") or 0),
+                    "height": int(r.get("original_height") or 0),
+                    "title": title,
+                    "rank": i,
+                }
+            )
+            if len(out) >= limit:
+                break
+        ctx.record_cost(provider.meter, provider.unit, _SEARCH_PRICE_USD, "priced", token=token)
+        return out
+    finally:
+        if not billed:
+            ctx._budget_reconcile(token, actual=0.0, note="released")
