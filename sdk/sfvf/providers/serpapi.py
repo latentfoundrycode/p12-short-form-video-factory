@@ -10,8 +10,13 @@ from ._http import parse_json, request
 
 _BASE = "https://serpapi.com"
 _TIMEOUT_S = 30.0
-_MAX_PER_PAGE = 100  # SerpApi returns up to 100 images_results per search (ijn page)
+_SEARCH_PRICE_USD = 0.02  # conservative per-search estimate; >= SerpApi's standard plan rates
 LIMITER.configure("serpapi", max_concurrency=2, min_interval_s=0.0)
+
+
+def search_price() -> float:
+    """Per-search cost used to reserve budget (SerpApi bills per successful search)."""
+    return _SEARCH_PRICE_USD
 
 
 class _Anon:
