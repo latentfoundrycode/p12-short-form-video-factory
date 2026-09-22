@@ -12,6 +12,13 @@ Seam the adapter exposes (patched here): `sfvf.providers.serpapi._client() -> ht
 SerpApi images_results item -> ImageCandidate: source="web"; url=item["original"] (full-res image);
 thumbnail=item["thumbnail"]; licence="unknown"; width/height from original_width/original_height;
 title=item["title"]; rank=position. A null `original` is skipped; an `unsafe` item is dropped.
+
+The SerpApi search is a PAID upstream call (SerpApi bills per successful search), so it is gated by
+the SDK budget exactly like every other paid provider (design §6, invariant H21): the web tier
+RESERVES against `serpapi/usd` BEFORE dispatching the HTTP request and reconciles the priced cost on
+success. A missing budget config, a missing `serpapi` ceiling, or an engaged kill switch REFUSES the
+call (BudgetError) before any request reaches the network — an un-budgeted paid call is a defect.
+The keyless commons/Openverse tier stays free and un-metered; only the `web` tier reserves.
 """
 
 import json
@@ -20,12 +27,14 @@ from pathlib import Path
 import httpx2
 import pytest
 from sfvf import media
+from sfvf._budget import BudgetError, KillSwitchEngagedError
 from sfvf._runtime import reset_active, set_active
-from sfvf.context import Context, ContextFile, ContextPaths
+from sfvf.context import BudgetConfig, Context, ContextFile, ContextPaths
 from sfvf.providers import capabilities_offered, openverse, serpapi
 
 _BASE = "https://serpapi.com"
 _KEY = "serpapi-fake-key-not-real"
+_SENTINEL = object()
 
 _RESULTS = [
     {
@@ -51,7 +60,28 @@ _RESULTS = [
 ]
 
 
-def _ctx(tmp: Path, *, secrets: dict[str, object] | None = None) -> Context:
+def _budget(tmp: Path, *, kill_switch: Path | None = None, ceiling: bool = True) -> BudgetConfig:
+    # A permissive per_day ceiling for the `serpapi` meter is what makes the paid web call
+    # admissible (H21 needs a configured ceiling for the meter); `ceiling=False` omits it so the
+    # call fails closed. `estimates` is left empty on purpose — the serpapi adapter supplies its
+    # own conservative per-search estimate, exactly as the image adapters price per image.
+    return BudgetConfig(
+        ledger_path=tmp / "budget" / "ledger.jsonl",
+        kill_switch_path=kill_switch,
+        per_day={"serpapi": 1_000_000.0} if ceiling else {},
+        estimates={},
+    )
+
+
+def _ctx(
+    tmp: Path,
+    *,
+    secrets: dict[str, object] | None = None,
+    budget: BudgetConfig | None | object = _SENTINEL,
+) -> Context:
+    # Default: a permissive serpapi budget so the paid web tier is admissible. Pass budget=None to
+    # exercise the fail-closed refusal (no budget config => no paid call), or an explicit config.
+    resolved = _budget(tmp) if budget is _SENTINEL else budget
     return Context(
         ContextFile(
             settings={},
@@ -60,8 +90,23 @@ def _ctx(tmp: Path, *, secrets: dict[str, object] | None = None) -> Context:
             paths=ContextPaths(
                 video=tmp, artifacts=tmp / "artifacts", steps=tmp / ".steps", shared=tmp
             ),
+            budget=None if budget is None else resolved,  # type: ignore[arg-type]
         )
     )
+
+
+def _cost_events(captured: str) -> list[dict]:
+    events = []
+    for line in captured.splitlines():
+        s = line.strip()
+        if s.startswith("{"):
+            try:
+                obj = json.loads(s)
+            except ValueError:
+                continue
+            if obj.get("t") == "cost":
+                events.append(obj)
+    return events
 
 
 def _install_mock(monkeypatch: pytest.MonkeyPatch, handler) -> list[httpx2.Request]:
@@ -262,3 +307,105 @@ def test_mixed_commons_and_web_dispatches_both_tiers_and_dedups(
         "https://cdn.example.invalid/full-1.jpg",
     ]
     assert out[0]["source"] == "commons", "first-seen wins for a duplicate url"
+
+
+# --- budget gate: the paid SerpApi search reserves before dispatch (H21, design §6) -------------
+
+
+def test_web_search_reserves_and_records_a_priced_serpapi_cost(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A successful web search RESERVES against serpapi/usd before the request and reconciles a
+    # priced cost after it — the same reserve→record discipline as the paid image/video adapters.
+    seen = _install_mock(monkeypatch, _ok)
+    _run(_ctx(tmp_path), lambda: media.web.search("red barn", sources=("web",), limit=5))
+    assert len(seen) == 1  # the call went through (budget admitted it)
+
+    events = _cost_events(capsys.readouterr().out)
+    assert events, "a paid web search must emit a cost event"
+    event = events[-1]
+    assert event["meter"] == "serpapi" and event["unit"] == "usd"
+    assert isinstance(event["amount"], int | float) and event["amount"] > 0
+    # the reservation was reconciled to a real 'actual' ledger entry (not left dangling)
+    ledger = tmp_path / "budget" / "ledger.jsonl"
+    actual = [
+        json.loads(line)
+        for line in ledger.read_text(encoding="utf-8").splitlines()
+        if line and json.loads(line).get("kind") == "actual"
+    ]
+    assert actual and actual[-1]["amount"] == pytest.approx(event["amount"])
+
+
+def test_web_search_without_a_budget_is_refused_before_any_http(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No budget config at all => the paid web call fails closed (H21) BEFORE the network is touched.
+    seen = _install_mock(monkeypatch, _ok)
+    with pytest.raises(BudgetError):
+        _run(
+            _ctx(tmp_path, budget=None),
+            lambda: media.web.search("barn", sources=("web",)),
+        )
+    assert seen == [], "a budget-refused paid call must not dispatch any HTTP request"
+
+
+def test_web_search_without_a_serpapi_ceiling_is_refused_before_any_http(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A budget exists but has no ceiling for the serpapi meter => still fail closed, no dispatch.
+    seen = _install_mock(monkeypatch, _ok)
+    with pytest.raises(BudgetError):
+        _run(
+            _ctx(tmp_path, budget=_budget(tmp_path, ceiling=False)),
+            lambda: media.web.search("barn", sources=("web",)),
+        )
+    assert seen == []
+
+
+def test_web_search_with_the_kill_switch_engaged_is_refused_before_any_http(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The global kill switch must stop the paid web call — the invariant Review B named explicitly.
+    kill = tmp_path / "STOP"
+    kill.write_text("halt", encoding="utf-8")
+    seen = _install_mock(monkeypatch, _ok)
+    with pytest.raises((BudgetError, KillSwitchEngagedError)):
+        _run(
+            _ctx(tmp_path, budget=_budget(tmp_path, kill_switch=kill)),
+            lambda: media.web.search("barn", sources=("web",)),
+        )
+    assert seen == []
+
+
+def test_commons_only_search_needs_no_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The keyless commons tier is FREE and un-metered: a commons-only search must not require a
+    # budget (only the paid web tier reserves). Proven by running it with budget=None.
+    def openverse_client() -> httpx2.Client:
+        def handler(_req: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "url": "https://cdn.example.invalid/commons.jpg",
+                            "license": "cc0",
+                            "license_version": "1.0",
+                            "attribution": "x",
+                            "title": "commons",
+                        }
+                    ]
+                },
+            )
+
+        return httpx2.Client(
+            base_url="https://api.openverse.org/v1", transport=httpx2.MockTransport(handler)
+        )
+
+    monkeypatch.setattr(openverse, "_client", openverse_client)
+    out = _run(
+        _ctx(tmp_path, budget=None, secrets={}),
+        lambda: media.web.search("barn", sources=("commons",)),
+    )
+    assert [c["url"] for c in out] == ["https://cdn.example.invalid/commons.jpg"]
