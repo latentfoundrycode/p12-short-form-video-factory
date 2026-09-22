@@ -469,3 +469,24 @@ def test_repeated_billed_but_malformed_200s_accumulate_toward_the_serpapi_ceilin
     with pytest.raises(BudgetError):  # 0.02 retained + 0.02 > 0.03 => refused before dispatch
         _run(ctx, lambda: media.web.search("barn", sources=("web",)))
     assert len(seen) == 1, "the second paid search must be refused before any HTTP dispatch"
+
+
+def test_web_search_releases_the_reserve_on_a_pre_dispatch_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A failure BEFORE the request is dispatched (here: building the HTTP client raises) is a
+    # CONFIRMED-unbilled outcome — nothing reached SerpApi — so the reserve must be RELEASED, not
+    # retained. (The billed flag must flip only at the dispatch, mirroring agents.py, so a failure
+    # up to that point does not leak an estimate toward the ceilings.)
+    def boom_client() -> httpx2.Client:
+        raise RuntimeError("cannot construct the HTTP client")
+
+    monkeypatch.setattr(serpapi, "_client", boom_client)
+    with pytest.raises(RuntimeError):
+        _run(_ctx(tmp_path), lambda: media.web.search("barn", sources=("web",)))
+
+    entries = _ledger_entries(tmp_path)
+    reserved = [e for e in entries if e.get("kind") == "reserved" and e.get("meter") == "serpapi"]
+    released = [e for e in entries if e.get("kind") == "actual" and e.get("note") == "released"]
+    assert reserved, "a reservation was taken before the (failed) dispatch"
+    assert released, "an unbilled pre-dispatch failure must release the reserve to $0"
