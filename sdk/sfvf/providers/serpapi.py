@@ -57,7 +57,13 @@ def search(
             billed = True
             try:
                 resp = request(
-                    client, "GET", url, provider="serpapi", auth=_Anon(), limiter=LIMITER
+                    client,
+                    "GET",
+                    url,
+                    provider="serpapi",
+                    auth=_Anon(),
+                    limiter=LIMITER,
+                    redact=[key],
                 )
             except AdapterError:
                 # request() raises only for a non-2xx response (after its 429 retries); SerpApi does
