@@ -275,13 +275,13 @@ def test_commons_search_tolerates_a_non_list_results_field(
     assert out == []
 
 
-def test_web_tier_raises_before_any_openverse_request(
+def test_commons_search_rejects_an_unknown_tier_before_any_request(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # An unsupported tier must be rejected BEFORE any dispatch, so a mixed ("commons","web")
-    # request does not perform the Openverse call and then fail — regardless of tuple order.
+    # An unknown tier is a ValueError raised at validation, before any dispatch. (The `web` tier is
+    # a KNOWN, built tier as of increment 6 — mixed commons+web dispatch is covered in
+    # test_media_web_web.py; here we only pin that a bogus tier is rejected up front.)
     seen = _install_mock(monkeypatch, _ok)
-    for src in (("commons", "web"), ("web", "commons")):
-        with pytest.raises(NotImplementedError):
-            _run(_ctx(tmp_path), lambda s=src: media.web.search("barn", sources=s))
+    with pytest.raises(ValueError):
+        _run(_ctx(tmp_path), lambda: media.web.search("barn", sources=("commons", "bogus")))
     assert seen == []

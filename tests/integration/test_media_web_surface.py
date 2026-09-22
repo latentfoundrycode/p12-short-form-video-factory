@@ -254,14 +254,17 @@ def test_search_stub_reflects_the_requested_tier(tmp_path: Path) -> None:
     assert all(c["licence"] == "unknown" for c in out)
 
 
-# --- only the paid WEB tier is unbuilt now (commons search/fetch/check/source are real) ---
+# --- all real paths are built now; the paid WEB tier is key-gated (increment 6) ---
 
 
-def test_only_the_web_tier_real_path_is_unbuilt(tmp_path: Path) -> None:
-    # commons search (#2), fetch (#3a/#3b), check_relevance (#4), source (#5) all have real paths.
-    # The paid WEB tier (search sources=("web",)) stays NotImplementedError until increment 6.
-    ctx = _ctx(tmp_path, dry_run=False)
-    with pytest.raises(NotImplementedError):
+def test_web_tier_is_built_and_requires_the_serpapi_key(tmp_path: Path) -> None:
+    # commons search (#2), fetch (#3), check_relevance (#4), source (#5), and the paid web tier (#6)
+    # all have real paths. The web tier is key-gated: with no SERPAPI_API_KEY configured, a web-tier
+    # search fails (it does NOT silently fall back) — it must not raise NotImplementedError anymore.
+    ctx = _ctx(tmp_path, dry_run=False)  # no secrets configured
+    # the web tier is built (not NotImplementedError) and key-gated: a missing secret fails closed
+    # with a KeyError from ctx.secret, before any network call.
+    with pytest.raises(KeyError):
         _run(ctx, lambda: media.web.search("red barn", sources=("web",)))
     # keep the ImageCandidate/Relevance/SourcedImage TypedDicts referenced (load-bearing imports)
     candidate = ImageCandidate(
