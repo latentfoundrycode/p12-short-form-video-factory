@@ -37,16 +37,19 @@ def test_requiring_a_web_image_capability_is_not_a_vocabulary_error(tmp_path: Pa
         assert _UNKNOWN not in problem_codes(entry), f"{cap} should be known vocabulary"
 
 
-def test_commons_tier_is_offered_keylessly_but_web_tier_is_not() -> None:
+def test_commons_tier_is_offered_keylessly_but_web_tier_needs_a_key() -> None:
     # Increment 2 registers the keyless Openverse provider for the licensed/commons tier, so
-    # web.images.commons is offered (by "Openverse") with NO key configured. The general-web tier
-    # has no provider yet, so web.images.web stays unoffered.
+    # web.images.commons is offered (by "Openverse") with NO key configured. Increment 6 registers
+    # the paid SerpApi provider for the general-web tier — so web.images.web has a provider now, but
+    # it is KEY-GATED: offered only when SERPAPI_API_KEY is configured, never keylessly.
     assert providers_offering("web.images.commons") == ["Openverse"]
-    assert providers_offering("web.images.web") == []
-    # keyless => offered even against an empty configured set; web tier absent.
+    assert providers_offering("web.images.web") == ["SerpApi"]
+    # keyless => commons is offered against an empty configured set; the web tier is NOT.
     offered = capabilities_offered(set())
     assert "web.images.commons" in offered
     assert "web.images.web" not in offered
+    # with the key configured, the web tier IS offered.
+    assert "web.images.web" in capabilities_offered({"SERPAPI_API_KEY"})
 
 
 def test_availability_reflects_the_commons_flip(tmp_path: Path) -> None:

@@ -111,12 +111,23 @@ def _fake_models() -> dict[str, Model]:
 # ---------------------------------------------------------------------------
 
 _EXPECTED_PROVIDER_IDS = frozenset(
-    {"openrouter", "openai", "google", "bfl", "byteplus", "minimax", "kling", "openverse"}
+    {
+        "openrouter",
+        "openai",
+        "google",
+        "bfl",
+        "byteplus",
+        "minimax",
+        "kling",
+        "openverse",
+        "serpapi",
+    }
 )
 
-# Providers that carry a PROVIDER-LEVEL capability (not model-derived): openrouter (agents.*) and
-# openverse (web.images.commons — the licensed/commons image-sourcing tier, keyless).
-_PROVIDER_LEVEL_CAP_IDS = frozenset({"openrouter", "openverse"})
+# Providers that carry a PROVIDER-LEVEL capability (not model-derived): openrouter (agents.*),
+# openverse (web.images.commons — keyless commons image tier), and serpapi (web.images.web — the
+# paid, key-gated general web image tier).
+_PROVIDER_LEVEL_CAP_IDS = frozenset({"openrouter", "openverse", "serpapi"})
 
 # Keyless providers: those reachable anonymously (no secret required). Openverse allows anonymous
 # image search, so its `secret_names` is empty — a deliberate exception to "every row has a key".
@@ -124,8 +135,8 @@ _KEYLESS_PROVIDER_IDS = frozenset({"openverse"})
 
 
 def test_exactly_the_live_providers_are_registered() -> None:
-    # The seven live providers. The deprecated `higgsfield` row (added at P-4 to carry the legacy
-    # inline video path) was removed at P-11 once a generic provider layer + smoke_provider existed.
+    # The live providers, incl. the two image-sourcing tiers: openverse (keyless commons, inc2) and
+    # serpapi (paid key-gated web tier, inc6). The deprecated `higgsfield` row was removed at P-11.
     assert set(PROVIDERS) == _EXPECTED_PROVIDER_IDS
     for pid, provider in PROVIDERS.items():
         assert provider.id == pid
