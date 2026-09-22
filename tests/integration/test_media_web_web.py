@@ -409,3 +409,65 @@ def test_commons_only_search_needs_no_budget(
         lambda: media.web.search("barn", sources=("commons",)),
     )
     assert [c["url"] for c in out] == ["https://cdn.example.invalid/commons.jpg"]
+
+
+# --- billing boundary: a billed 200 whose body fails to parse must RETAIN the charge ------------
+# (SerpApi bills per SUCCESSFUL search: once a 200 is received the search is billed, so a later
+#  parse/mapping failure must NOT release the reserve to $0 — otherwise malformed payloads incur
+#  real spend that never counts toward the ceilings. Cross-family Review B P1.)
+
+
+def _ledger_entries(tmp: Path) -> list[dict]:
+    ledger = tmp / "budget" / "ledger.jsonl"
+    if not ledger.is_file():
+        return []
+    return [
+        json.loads(line)
+        for line in ledger.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def test_web_search_retains_the_charge_when_a_billed_200_body_is_malformed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def malformed(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        # HTTP 200 => SerpApi billed this search, but the body is not parseable JSON.
+        return httpx2.Response(200, content=b"<<not json at all>>")
+
+    seen = _install_mock(monkeypatch, malformed)
+    # a parse failure on a billed 200 surfaces as an error (like an HTTP error), but the charge
+    # must be RETAINED, never released to $0.
+    with pytest.raises(RuntimeError):
+        _run(_ctx(tmp_path), lambda: media.web.search("barn", sources=("web",)))
+    assert len(seen) == 1  # the request WAS dispatched (200 received => billed)
+
+    entries = _ledger_entries(tmp_path)
+    reserved = [e for e in entries if e.get("kind") == "reserved" and e.get("meter") == "serpapi"]
+    released = [e for e in entries if e.get("kind") == "actual" and e.get("note") == "released"]
+    assert reserved, "a reservation must have been taken for the paid search"
+    assert not released, "a billed 200 must NOT release the reserve to $0 on a parse failure"
+
+
+def test_repeated_billed_but_malformed_200s_accumulate_toward_the_serpapi_ceiling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The daily ceiling admits exactly ONE search. The first billed-but-malformed 200 must RETAIN
+    # its charge, so the SECOND search is refused BEFORE any HTTP dispatch. If the reserve were
+    # released on the parse failure (the defect), both would dispatch and bypass the cap.
+    def malformed(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        return httpx2.Response(200, content=b"garbage")
+
+    seen = _install_mock(monkeypatch, malformed)
+    budget = BudgetConfig(
+        ledger_path=tmp_path / "budget" / "ledger.jsonl",
+        per_day={"serpapi": 0.03},  # room for exactly one ~0.02 search
+        estimates={},
+    )
+    ctx = _ctx(tmp_path, budget=budget)
+    with pytest.raises(RuntimeError):  # first search: billed 200, malformed body, charge retained
+        _run(ctx, lambda: media.web.search("barn", sources=("web",)))
+    assert len(seen) == 1
+    with pytest.raises(BudgetError):  # 0.02 retained + 0.02 > 0.03 => refused before dispatch
+        _run(ctx, lambda: media.web.search("barn", sources=("web",)))
+    assert len(seen) == 1, "the second paid search must be refused before any HTTP dispatch"
