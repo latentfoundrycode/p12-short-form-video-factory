@@ -325,6 +325,61 @@ def test_mixed_commons_and_web_dispatches_both_tiers_and_dedups(
     assert out[0]["source"] == "commons", "first-seen wins for a duplicate url"
 
 
+def test_mixed_source_search_caps_the_merged_result_at_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Each tier is queried with `limit`, but the MERGED, de-duplicated result must not exceed
+    # `limit` total. Otherwise sources=("commons","web") returns up to 2*limit, and because
+    # source() runs one PAID VLM check per returned candidate, source(consider=50, both tiers)
+    # would fan out to ~100 paid checks — busting the signed-off 50-candidate cost ceiling.
+    limit = 4
+
+    def commons_client() -> httpx2.Client:
+        def handler(_req: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "url": f"https://cdn.example.invalid/commons-{i}.jpg",
+                            "license": "cc0",
+                            "license_version": "1.0",
+                            "attribution": "x",
+                            "title": f"c{i}",
+                        }
+                        for i in range(limit)
+                    ]
+                },
+            )
+
+        return httpx2.Client(
+            base_url="https://api.openverse.org/v1", transport=httpx2.MockTransport(handler)
+        )
+
+    def web_handler(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        rows = [
+            {
+                "original": f"https://cdn.example.invalid/web-{i}.jpg",
+                "thumbnail": "",
+                "title": f"w{i}",
+                "original_width": 10,
+                "original_height": 10,
+            }
+            for i in range(limit)
+        ]
+        return httpx2.Response(200, json={"images_results": rows})
+
+    monkeypatch.setattr(openverse, "_client", commons_client)
+    _install_mock(monkeypatch, web_handler)  # each tier returns `limit` distinct urls => 2*limit
+
+    out = _run(
+        _ctx(tmp_path),
+        lambda: media.web.search("barn", sources=("commons", "web"), limit=limit),
+    )
+    assert len(out) == limit, "the merged result must be capped at `limit`, not limit-per-tier"
+    assert out[0]["source"] == "commons", "first-seen (commons-first) order is preserved by the cap"
+
+
 # --- budget gate: the paid SerpApi search reserves before dispatch (H21, design §6) -------------
 
 
