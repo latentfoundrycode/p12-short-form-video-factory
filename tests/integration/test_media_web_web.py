@@ -78,19 +78,24 @@ def _ctx(
     *,
     secrets: dict[str, object] | None = None,
     budget: BudgetConfig | None | object = _SENTINEL,
+    disabled_web_tiers: list[str] | None = None,
+    dry_run: bool = False,
 ) -> Context:
     # Default: a permissive serpapi budget so the paid web tier is admissible. Pass budget=None to
     # exercise the fail-closed refusal (no budget config => no paid call), or an explicit config.
+    # `disabled_web_tiers` is the owner governance off-switch carried on the ContextFile (DESIGN
+    # §5), distinct from the workflow-controlled `settings`/`params`.
     resolved = _budget(tmp) if budget is _SENTINEL else budget
     return Context(
         ContextFile(
             settings={},
-            dry_run=False,
+            dry_run=dry_run,
             secrets={"SERPAPI_API_KEY": _KEY} if secrets is None else secrets,
             paths=ContextPaths(
                 video=tmp, artifacts=tmp / "artifacts", steps=tmp / ".steps", shared=tmp
             ),
             budget=None if budget is None else resolved,  # type: ignore[arg-type]
+            disabled_web_tiers=disabled_web_tiers or [],
         )
     )
 
@@ -615,3 +620,104 @@ def test_web_search_releases_the_reserve_on_a_pre_dispatch_failure(
     released = [e for e in entries if e.get("kind") == "actual" and e.get("note") == "released"]
     assert reserved, "a reservation was taken before the (failed) dispatch"
     assert released, "an unbilled pre-dispatch failure must release the reserve to $0"
+
+
+# --- governance off-switch: an owner may disable a web-image tier at RUNTIME (DESIGN §5) ---------
+# The enabled-tier policy is carried on the run Context (owner-controlled, NOT the workflow's
+# settings/params), and media.web re-checks it: a search/source targeting a disabled tier raises at
+# call time, BEFORE any secret load or upstream dispatch — the SDK call is the enforcement point, so
+# a workflow that calls the SDK directly cannot bypass a scan-time-only flag.
+
+
+def test_web_search_refuses_a_disabled_web_tier_before_secret_or_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = _install_mock(monkeypatch, _ok)
+    # web disabled AND no key configured: the governance refusal must fire before the secret is even
+    # read (so it is a policy error, not a missing-key KeyError) and before any HTTP dispatch.
+    ctx = _ctx(tmp_path, secrets={}, disabled_web_tiers=["web"])
+    with pytest.raises(media.web.WebTierDisabledError):
+        _run(ctx, lambda: media.web.search("barn", sources=("web",)))
+    assert seen == [], "a disabled tier must not dispatch any request"
+
+
+def test_disabled_web_tier_is_refused_even_in_dry_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Governance is not mode-scoped: a disabled tier is refused in dry-run too (a workflow must not
+    # depend on a tier the owner has switched off).
+    ctx = _ctx(tmp_path, disabled_web_tiers=["web"], dry_run=True)
+    with pytest.raises(media.web.WebTierDisabledError):
+        _run(ctx, lambda: media.web.search("barn", sources=("web",)))
+
+
+def test_commons_still_works_when_the_web_tier_is_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def openverse_client() -> httpx2.Client:
+        def handler(_req: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "url": "https://cdn.example.invalid/commons.jpg",
+                            "license": "cc0",
+                            "license_version": "1.0",
+                            "attribution": "x",
+                            "title": "commons",
+                        }
+                    ]
+                },
+            )
+
+        return httpx2.Client(
+            base_url="https://api.openverse.org/v1", transport=httpx2.MockTransport(handler)
+        )
+
+    monkeypatch.setattr(openverse, "_client", openverse_client)
+    ctx = _ctx(tmp_path, secrets={}, budget=None, disabled_web_tiers=["web"])
+    out = _run(ctx, lambda: media.web.search("barn", sources=("commons",)))
+    assert [c["url"] for c in out] == ["https://cdn.example.invalid/commons.jpg"]
+
+
+def test_mixed_sources_refuse_when_any_requested_tier_is_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = _install_mock(monkeypatch, _ok)  # serpapi mock; commons is not mocked -> must not be hit
+
+    def openverse_boom() -> httpx2.Client:
+        def handler(_req: httpx2.Request) -> httpx2.Response:  # pragma: no cover - must not run
+            raise AssertionError(
+                "a request targeting a disabled tier must not dispatch either tier"
+            )
+
+        return httpx2.Client(
+            base_url="https://api.openverse.org/v1", transport=httpx2.MockTransport(handler)
+        )
+
+    monkeypatch.setattr(openverse, "_client", openverse_boom)
+    ctx = _ctx(tmp_path, disabled_web_tiers=["web"])
+    with pytest.raises(media.web.WebTierDisabledError):
+        _run(ctx, lambda: media.web.search("barn", sources=("commons", "web"), limit=5))
+    assert seen == []
+
+
+def test_source_refuses_a_disabled_web_tier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = _install_mock(monkeypatch, _ok)
+    ctx = _ctx(tmp_path, disabled_web_tiers=["web"])
+    with pytest.raises(media.web.WebTierDisabledError):
+        _run(ctx, lambda: media.web.source("barn", subject="a red barn", sources=("web",), want=1))
+    assert seen == []
+
+
+def test_web_tier_enabled_by_default_when_not_disabled(tmp_path: Path) -> None:
+    # No disabled tiers => the Context reports every tier enabled (design default: on with key).
+    ctx = _ctx(tmp_path)
+    assert ctx.web_tier_enabled("web") is True
+    assert ctx.web_tier_enabled("commons") is True
+    ctx_off = _ctx(tmp_path, disabled_web_tiers=["web"])
+    assert ctx_off.web_tier_enabled("web") is False
+    assert ctx_off.web_tier_enabled("commons") is True
