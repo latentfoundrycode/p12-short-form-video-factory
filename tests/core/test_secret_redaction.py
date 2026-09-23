@@ -109,6 +109,30 @@ def test_scrub_result_secrets_redacts_an_on_disk_result(tmp_path: Path):
     assert "hello" in dumped  # non-secret content preserved
 
 
+@pytest.mark.parametrize(
+    "payload,secret_must_be_gone",
+    [
+        (None, False),  # prepare()->None writes result.json = null (the standard contract)
+        ("sk-secret-xyz", True),  # a top-level JSON string secret must be redacted
+        (["ok", "sk-secret-xyz"], True),  # a secret inside a top-level array must be redacted
+        (42, False),  # a scalar must not crash
+    ],
+)
+def test_scrub_result_secrets_handles_non_object_result(
+    tmp_path: Path, payload: object, secret_must_be_gone: bool
+):
+    # result.json is whatever prepare returned/wrote — commonly `null` (prepare()->None), and
+    # possibly a bare string/array. The scrub must NEVER raise (teardown runs it on every prepare,
+    # success included) and must still redact a secret carried by a non-object payload.
+    result_path = tmp_path / "result.json"
+    result_path.write_text(json.dumps(payload), encoding="utf-8")
+    _scrub_result_secrets(result_path, frozenset({"sk-secret-xyz"}))  # must not raise on any type
+    on_disk = result_path.read_text(encoding="utf-8")
+    json.loads(on_disk)  # still valid JSON
+    if secret_must_be_gone:
+        assert "sk-secret-xyz" not in on_disk
+
+
 def test_scrub_result_secrets_is_best_effort_on_missing_or_bad_file(tmp_path: Path):
     # Never raises: a missing file is a no-op, and unparsable JSON is left as-is (the download
     # block / event redaction remain the backstops); scrubbing must not crash the run teardown.
