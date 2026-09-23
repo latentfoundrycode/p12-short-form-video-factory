@@ -87,6 +87,7 @@ def create_app(
             driver = SchedulerDriver(
                 schedules_path=scheduler_schedules_path,
                 start=make_scheduler_start(deps),
+                fired_path=scheduler_schedules_path.parent / "scheduler_fired.json",
             )
             scheduler_app.state.scheduler_driver = driver
             driver.start()

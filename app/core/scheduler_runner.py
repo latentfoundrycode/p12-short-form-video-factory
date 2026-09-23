@@ -12,7 +12,7 @@ from sfvf.context import BudgetConfig
 
 from app.api.runs import AdmissionResult, admit_run
 from app.core.env import ensure_env as default_ensure_env
-from app.core.scheduler import DEFAULT_GRACE, SchedulerState, StartFn, TickResult, tick
+from app.core.scheduler import DEFAULT_GRACE, SchedulerState, StartFn, TickResult, read_fired, tick
 from app.core.schedules import ScheduleEntry
 from app.core.supervisor import EnsureEnv, PopenFn
 
@@ -71,13 +71,20 @@ class SchedulerDriver:
         interval: float = 60.0,
         grace: timedelta = DEFAULT_GRACE,
         state: SchedulerState | None = None,
+        fired_path: Path | None = None,
     ) -> None:
         self._schedules_path = schedules_path
         self._start = start
         self._now = now
         self._interval = interval
         self._grace = grace
-        self._state = state if state is not None else SchedulerState()
+        self._fired_path = fired_path
+        if state is not None:
+            self._state = state
+        elif fired_path is not None:
+            self._state = SchedulerState(fired=read_fired(fired_path))
+        else:
+            self._state = SchedulerState()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lifecycle_lock = threading.Lock()
@@ -94,6 +101,7 @@ class SchedulerDriver:
             state=self._state,
             start=self._start,
             grace=self._grace,
+            fired_path=self._fired_path,
         )
 
     def start(self) -> None:
