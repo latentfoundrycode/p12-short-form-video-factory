@@ -214,15 +214,6 @@ not-applicable.
   or make `run_id` globally unique. Low likelihood (same-second cross-workflow starts), report/accounting
   accuracy only — never authorizes extra spend (ceilings only tighten under a merge). _Source: T2b-2c
   review B._ Open.
-- **H23 — `BudgetGuard.reserve` can leak non-`BudgetError` exceptions from a poisoned ledger.** During a
-  reserve, the engine re-reads the ledger; a valid-JSON line with a bad/overflowing `amount` raises
-  `ValueError`/`OverflowError` (and a read fault `OSError`) straight out of `reserve()`, not wrapped as a
-  `BudgetError`. The runner's `_budget_reason` keys on `BudgetError`, so such a corruption-driven refusal
-  is labeled generic `failed` rather than a budget stop — arguably correct (a corrupt ledger is infra, not
-  exhaustion, and a top-up won't fix it), but the engine's public methods should be uniformly
-  fail-closed-as-`BudgetError` so callers get one refusal type. Fix in the T2a engine: wrap ledger-parse
-  errors inside `reserve`/`day_total`/`run_total` as `BudgetError`. (T2b-2c's report read is already fully
-  best-effort and unaffected.) _Source: T2b-2c review B (High #3, de-scoped from the label increment)._ Open.
 - **H24 — budget-denial signal is the runner exit code alone.** The supervisor maps child exit code
   `EXIT_BUDGET_DENIED=2` to `stopped-budget`. A workflow that itself terminates with code 2 (e.g.
   `sys.exit(2)`, or an argparse error — `SystemExit` bypasses the runner's `except Exception`) would be
@@ -274,14 +265,6 @@ not-applicable.
   requested `video_count` in the pre-flight (scale `estimate.per_meter` before `check_atomic_budget`,
   keeping its frozen signature). The frozen C-3/C-4 tests use one-video runs, so per-run == per-video
   there and they remain valid. _Source: C-4 review B (P1 video_count + P2 partial-video cost)._ Open.
-- **H28 — atomic pre-flight raises on an unreadable ledger instead of a controlled refusal (C-4).**
-  `check_atomic_budget` calls `guard.run_total`/`day_total`, which today propagate a ledger-parse/IO
-  error rather than a `BudgetError`; on such an error the pre-flight would raise out of `run_request`
-  after the request was already written `running`, leaving it stuck. This is the same engine gap as
-  **H23** (make the `BudgetGuard` read methods uniformly fail-closed as `BudgetError`) now with the
-  pre-flight as an additional caller; resolving H23 resolves this. Until then the exposure is a
-  corrupt/permission-denied ledger file, which equally affects the reservation path. _Source: C-4
-  review B (P2); see H23._ Open.
 - **H29 — the paid/cheap cache layout orphans pre-existing single-partition entries (C-6).** C-6
   moved cache storage from `<root>/{entries,blobs}` to `<root>/{paid,cheap}/{entries,blobs}`. Any
   cache written before C-6 is now unreachable (a one-time miss — recomputed on next use) and its
@@ -580,3 +563,26 @@ not-applicable.
   recording the creating interpreter in the hash marker and invalidating on mismatch. Address before
   the SDK is relied on as a security boundary across long-lived cached environments (revisit with the
   untrusted web tier, increment 6). Owner FYI.
+- **H23 — `BudgetGuard` read methods leak non-`BudgetError` from a poisoned ledger** (resolved by this
+  PR). `reserve`/`day_total`/`run_total` now fail closed as `BudgetError`: `_read_ledger` wraps
+  `OSError` (in addition to decode/JSON faults), and `_snapshot` wraps `ValueError`/`OverflowError`
+  from a valid-JSON-but-non-numeric or overflowing `amount`. Argument validation on
+  `reserve(estimate=…)` / `reconcile(actual=…)` still raises raw `ValueError`. `read_run_spend` stays
+  best-effort. Covered by
+  `tests/sdk/test_budget.py::test_a_bad_amount_on_a_valid_json_line_fails_closed_as_budgeterror`.
+  _Source: T2b-2c review B (High #3); closed by this PR._
+- **H28 — atomic pre-flight raises on an unreadable ledger instead of a controlled refusal** (resolved
+  by this PR). `check_atomic_budget` now catches `BudgetError` from `run_total`/`day_total` and
+  returns `budget ledger unreadable, refusing to start atomic run: {exc}` so a poisoned ledger
+  refuses the run instead of propagating out of `run_request` and stranding it `running`. Existing
+  headroom messages and the empty-estimate → None contract are unchanged. Covered by
+  `tests/core/test_preflight.py::test_check_atomic_budget_refuses_on_a_poisoned_ledger`.
+  _Source: C-4 review B (P2); closed by this PR (with H23)._
+- **H59 — `_token_states` silently skips a reserved/actual line missing its token** (resolved by this
+  PR). A `reserved`/`actual` ledger line without a token is corruption (the engine always writes one);
+  skipping it under-counts spend and lets a later reserve overshoot. `_token_states` now raises
+  `BudgetError("budget ledger spend entry is missing its token")` for those lines. A non-spend
+  token-less line is still skipped. `_snapshot` does not catch `BudgetError`, so the refusal
+  propagates; `read_run_spend` stays best-effort. Covered by
+  `tests/sdk/test_budget.py::test_a_spend_record_missing_its_token_fails_closed`.
+  _Source: H23 completeness review; closed by this PR._

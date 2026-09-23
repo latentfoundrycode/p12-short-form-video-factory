@@ -277,3 +277,105 @@ def test_kill_switch_path_is_canonicalized(tmp_path: Path):
     assert guard._kill_switch_path is not None
     assert guard._kill_switch_path.is_absolute()
     assert guard._kill_switch_path == (Path("relative") / ".." / "relative" / "STOP").resolve()
+
+
+# --- H23: every read method fails closed as BudgetError on a poisoned (valid-JSON) ledger ---------
+
+
+def _reserved_line(amount: object, *, meter: str = "openrouter") -> dict:
+    return {
+        "ts": "2026-09-05T10:00:00Z",
+        "token": "t1",
+        "run_id": "r1",
+        "meter": meter,
+        "unit": "EUR",
+        "amount": amount,
+        "kind": "reserved",
+        "note": "",
+    }
+
+
+@pytest.mark.parametrize("bad_amount", ["not-a-number", True, [1]])
+@pytest.mark.parametrize("method", ["reserve", "day_total", "run_total"])
+def test_a_bad_amount_on_a_valid_json_line_fails_closed_as_budgeterror(
+    tmp_path: Path, method: str, bad_amount: object
+) -> None:
+    # H23: a complete, VALID-JSON ledger line whose `amount` is non-numeric parses fine but poisons
+    # `_require_amount`. Today that raises a raw ValueError/OverflowError out of reserve/day_total/
+    # run_total — which the runner mislabels (not a budget stop) and which stalls the atomic
+    # pre-flight (H28). Every read method must instead fail closed as BudgetError.
+    ledger = tmp_path / "ledger.jsonl"
+    ledger.write_text(json.dumps(_reserved_line(bad_amount)) + "\n", encoding="utf-8")
+    guard = _guard(tmp_path, per_run={"openrouter": 100.0}, per_day={"openrouter": 100.0})
+    with pytest.raises(BudgetError):
+        if method == "reserve":
+            guard.reserve(run_id="r2", meter="openrouter", unit="EUR", estimate=0.1)
+        elif method == "day_total":
+            guard.day_total("openrouter")
+        else:
+            guard.run_total("r1", "openrouter")
+
+
+# --- H23 completeness: every ledger filesystem/integrity fault fails closed as BudgetError ---
+
+
+def test_a_stat_oserror_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # `_read_ledger` calls `path.is_file()` outside its try; a stat PermissionError must still fail
+    # closed as BudgetError, not escape raw (which check_atomic_budget cannot catch → stranded run).
+    (tmp_path / "ledger.jsonl").write_text("", encoding="utf-8")
+    guard = _guard(tmp_path, per_day={"openrouter": 100.0})
+
+    def boom_is_file(self: Path) -> bool:
+        raise PermissionError("stat denied")
+
+    monkeypatch.setattr(Path, "is_file", boom_is_file)
+    with pytest.raises(BudgetError):
+        guard.day_total("openrouter")
+
+
+def test_a_lock_acquisition_oserror_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The interprocess lock acquired by every read/write method can leak an OSError (open / msvcrt /
+    # fcntl fault); it must be converted to BudgetError so the guard is uniformly fail-closed.
+    import sfvf._budget as budget_mod
+
+    guard = _guard(tmp_path, per_day={"openrouter": 100.0})
+
+    def boom_lock(handle: object) -> None:
+        raise OSError("lock unavailable")
+
+    monkeypatch.setattr(budget_mod, "_lock_exclusive", boom_lock)
+    with pytest.raises(BudgetError):
+        guard.day_total("openrouter")
+
+
+def test_a_spend_record_missing_its_token_fails_closed(tmp_path: Path) -> None:
+    # A reserved/actual ledger line carrying an `amount` but no token is corruption (the engine
+    # writes a token). Silently skipping it under-counts spend and lets a run overshoot, so it must
+    # fail closed rather than lower the total.
+    line = {
+        "ts": "2026-09-05T10:00:00Z",
+        "run_id": "r1",
+        "meter": "openrouter",
+        "unit": "EUR",
+        "amount": 0.5,
+        "kind": "reserved",
+        "note": "",
+    }
+    (tmp_path / "ledger.jsonl").write_text(json.dumps(line) + "\n", encoding="utf-8")
+    guard = _guard(tmp_path, per_day={"openrouter": 100.0})
+    with pytest.raises(BudgetError):
+        guard.day_total("openrouter")
+
+
+def test_reconcile_fails_closed_on_a_poisoned_ledger(tmp_path: Path) -> None:
+    # reconcile() reads the ledger (its own loop) to find the token's meter/unit, bypassing the
+    # validated _snapshot path. A valid-JSON reserved line with a non-numeric amount must make
+    # reconcile fail closed too — not silently append an `actual` to a corrupt ledger.
+    (tmp_path / "ledger.jsonl").write_text(
+        json.dumps(_reserved_line("not-a-number")) + "\n", encoding="utf-8"
+    )
+    guard = _guard(tmp_path, per_day={"openrouter": 100.0})
+    with pytest.raises(BudgetError):
+        guard.reconcile("t1", actual=0.25)
