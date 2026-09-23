@@ -77,6 +77,11 @@ def search(
         # request() returned -> a 2xx -> SerpApi billed this search. From here (parse + mapping) any
         # failure RETAINS the estimate: the search was billed even if the body is unusable.
         data = parse_json(resp, provider="serpapi", where="GET /search")
+        # SerpApi serves repeated queries from its cache and marks them free
+        # ("Cached"); only a fresh ("Success"/unknown) 200 is billed. Fail
+        # toward charging on an unknown status.
+        meta = data.get("search_metadata")
+        cached = isinstance(meta, dict) and str(meta.get("status") or "").lower() == "cached"
         results = data.get("images_results")
         if not isinstance(results, list):
             results = []
@@ -105,7 +110,10 @@ def search(
             )
             if len(out) >= limit:
                 break
-        ctx.record_cost(provider.meter, provider.unit, price, "priced", token=token)
+        if cached:
+            ctx.record_cost(provider.meter, provider.unit, 0.0, "cached", token=token)
+        else:
+            ctx.record_cost(provider.meter, provider.unit, price, "priced", token=token)
         return out
     finally:
         if not billed:
