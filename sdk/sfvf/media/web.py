@@ -265,7 +265,7 @@ def search(
         if c["url"] not in seen:
             seen.add(c["url"])
             deduped.append(c)
-    return deduped
+    return deduped[:limit]
 
 
 def fetch(candidate: ImageCandidate) -> str:
