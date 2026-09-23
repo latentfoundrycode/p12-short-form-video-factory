@@ -18,7 +18,12 @@ from fastapi.testclient import TestClient
 
 import app.core.supervisor as supervisor_mod
 from app.core.env import EnvReady
-from app.core.supervisor import _redact_secrets, _RunState, _scrub_result_secrets
+from app.core.supervisor import (
+    _redact_secrets,
+    _RunState,
+    _scrub_context_secrets,
+    _scrub_result_secrets,
+)
 from app.main import create_app
 
 _STUBS = Path(__file__).resolve().parent.parent / "stubs"
@@ -89,6 +94,21 @@ def test_redact_secrets_handles_overlapping_values():
     assert "sk-ab" not in dumped  # no prefix left
     assert "cdefghij" not in dumped  # no suffix of the longer value left
     assert "[REDACTED]" in dumped
+
+
+# --- H18: the finally's context scrub must not crash and skip the result scrub ---
+
+
+def test_scrub_context_secrets_survives_pathologically_nested(tmp_path: Path):
+    # _scrub_context_secrets runs FIRST in the _run_prepare finally; its docstring promises "never
+    # raises". A prepare can overwrite context.json with a deeply nested object, making json.loads
+    # raise RecursionError (not OSError/ValueError) — which would abort the finally before
+    # _scrub_result_secrets runs and crash teardown. It must swallow that and return.
+    depth = 2000
+    nested = '{"secrets": {"K": "v"}, "deep": ' + "[" * depth + "0" + "]" * depth + "}"
+    context_path = tmp_path / "context.json"
+    context_path.write_text(nested, encoding="utf-8")
+    _scrub_context_secrets(context_path)  # must not raise (RecursionError swallowed)
 
 
 # --- H18: an on-disk result.json is scrubbed of secret values best-effort (failure path too) ---
