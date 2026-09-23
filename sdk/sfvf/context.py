@@ -506,6 +506,18 @@ class Context:
         """
         return str(self._file.secrets[name])
 
+    def budget_estimate(self, meter: str) -> float | None:
+        """The owner-configured per-call cost estimate for `meter`, or None when unset/no budget.
+        Adapters whose provider does not return a per-call cost (e.g. SerpApi) use this as the
+        authoritative price, falling back to their own conservative default."""
+        cfg = self._file.budget
+        if cfg is None:
+            return None
+        value = cfg.estimates.get(meter)
+        if isinstance(value, int | float) and not isinstance(value, bool) and value > 0:
+            return value
+        return None
+
     def _budget_reserve(self, meter: str, unit: str, estimate: float | None = None) -> str:
         """Reserve the configured estimate for `meter` before a paid call (T2b-1).
 

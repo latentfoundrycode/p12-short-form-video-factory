@@ -12,7 +12,10 @@ from .base import AdapterError
 
 _BASE = "https://serpapi.com"
 _TIMEOUT_S = 30.0
-_SEARCH_PRICE_USD = 0.02  # conservative per-search estimate; >= SerpApi's standard plan rates
+# SerpApi's priciest standard plan (Starter, $25/1k). Conservative default when
+# the owner has not configured estimates["serpapi"]; they should set their
+# actual plan rate there for precise accounting.
+_SEARCH_PRICE_DEFAULT_USD = 0.025
 LIMITER.configure("serpapi", max_concurrency=2, min_interval_s=0.0)
 
 
@@ -48,7 +51,8 @@ def search(
     params = {"engine": "google_images", "q": query, "safe": "active", "ijn": 0, "api_key": key}
     url = f"/search?{urlencode(params)}"
     ctx = current_context()
-    token = ctx._budget_reserve(provider.meter, provider.unit, estimate=_SEARCH_PRICE_USD)
+    price = ctx.budget_estimate(provider.meter) or _SEARCH_PRICE_DEFAULT_USD
+    token = ctx._budget_reserve(provider.meter, provider.unit, estimate=price)
     billed = False
     try:
         with _client() as client:
@@ -101,7 +105,7 @@ def search(
             )
             if len(out) >= limit:
                 break
-        ctx.record_cost(provider.meter, provider.unit, _SEARCH_PRICE_USD, "priced", token=token)
+        ctx.record_cost(provider.meter, provider.unit, price, "priced", token=token)
         return out
     finally:
         if not billed:
