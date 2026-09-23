@@ -25,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from app.core.scheduler import SchedulerState, TickResult
+from app.core.scheduler import SchedulerState, TickResult, slot_key, write_fired
 from app.core.scheduler_runner import (
     SchedulerDeps,
     SchedulerDriver,
@@ -161,6 +161,31 @@ def test_tick_once_does_not_refire_same_slot(tmp_path: Path) -> None:
     driver.tick_once()
     driver.tick_once()  # same fixed `now` → slot already fired → no second call
     assert calls == 1
+
+
+def test_driver_seeds_fired_from_disk_and_does_not_refire(tmp_path: Path) -> None:
+    # H39.1 wiring: on restart the driver is rebuilt; if the slot's key is already persisted at
+    # fired_path, the driver seeds SchedulerState from it and tick_once must not re-fire (no
+    # duplicate paid run within the grace window).
+    schedules_path = tmp_path / "schedules.json"
+    write_schedules(schedules_path, [_entry(allow_real_spend=True)])
+    fired_path = tmp_path / "scheduler_fired.json"
+    write_fired(fired_path, {slot_key(_entry(), DUE_NOW)}, today=DUE_NOW.date())
+    calls = 0
+
+    def start(_entry_arg: ScheduleEntry, _dry: bool) -> None:
+        nonlocal calls
+        calls += 1
+
+    driver = SchedulerDriver(
+        schedules_path=schedules_path,
+        start=start,
+        now=lambda: DUE_NOW,
+        interval=0.01,
+        fired_path=fired_path,
+    )
+    assert driver.tick_once() == []
+    assert calls == 0
 
 
 def test_tick_once_no_schedule_file_is_noop(tmp_path: Path) -> None:
