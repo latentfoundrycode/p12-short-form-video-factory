@@ -401,6 +401,16 @@ not-applicable.
   narrow trigger (a workflow must write its own key into one of those files). Fix options: run a
   best-effort value-redaction pass on served run files, and/or add a dot-part guard to `get_run_file`
   so `.steps` is not fetchable by path. _Source: H18 security-auditor advisory (PR #152)._ Open (low).
+- **H62 — `_run_prepare` success-path re-parse crashes on a pathological `result.json`.** After the
+  `finally` scrub, the success path re-reads `result.json` with
+  `json.loads(result_path.read_text(encoding="utf-8"))`. A `prepare()` that RETURNS a pathologically
+  deep payload (≈2000 nested levels) makes that `json.loads` raise `RecursionError`, and an invalid
+  byte would make `read_text` raise `UnicodeDecodeError` — either crashes `_run_prepare` on the
+  success path (the failure path returns earlier and is unaffected). Pre-existing and NOT a secret
+  leak (the `finally` scrub already redacted the file by then); a robustness gap only, triggered by a
+  hostile/buggy prepare return. Fix: bound/relax the re-parse (guard `RecursionError`/decode there,
+  or reuse the already-parsed payload). _Source: H18 review A (diff-reviewer NOTED + security-auditor
+  advisory, PR #152)._ Open (low).
 
 ## Resolved
 
