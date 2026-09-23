@@ -277,3 +277,40 @@ def test_kill_switch_path_is_canonicalized(tmp_path: Path):
     assert guard._kill_switch_path is not None
     assert guard._kill_switch_path.is_absolute()
     assert guard._kill_switch_path == (Path("relative") / ".." / "relative" / "STOP").resolve()
+
+
+# --- H23: every read method fails closed as BudgetError on a poisoned (valid-JSON) ledger ---------
+
+
+def _reserved_line(amount: object, *, meter: str = "openrouter") -> dict:
+    return {
+        "ts": "2026-09-05T10:00:00Z",
+        "token": "t1",
+        "run_id": "r1",
+        "meter": meter,
+        "unit": "EUR",
+        "amount": amount,
+        "kind": "reserved",
+        "note": "",
+    }
+
+
+@pytest.mark.parametrize("bad_amount", ["not-a-number", True, [1]])
+@pytest.mark.parametrize("method", ["reserve", "day_total", "run_total"])
+def test_a_bad_amount_on_a_valid_json_line_fails_closed_as_budgeterror(
+    tmp_path: Path, method: str, bad_amount: object
+) -> None:
+    # H23: a complete, VALID-JSON ledger line whose `amount` is non-numeric parses fine but poisons
+    # `_require_amount`. Today that raises a raw ValueError/OverflowError out of reserve/day_total/
+    # run_total — which the runner mislabels (not a budget stop) and which stalls the atomic
+    # pre-flight (H28). Every read method must instead fail closed as BudgetError.
+    ledger = tmp_path / "ledger.jsonl"
+    ledger.write_text(json.dumps(_reserved_line(bad_amount)) + "\n", encoding="utf-8")
+    guard = _guard(tmp_path, per_run={"openrouter": 100.0}, per_day={"openrouter": 100.0})
+    with pytest.raises(BudgetError):
+        if method == "reserve":
+            guard.reserve(run_id="r2", meter="openrouter", unit="EUR", estimate=0.1)
+        elif method == "day_total":
+            guard.day_total("openrouter")
+        else:
+            guard.run_total("r1", "openrouter")

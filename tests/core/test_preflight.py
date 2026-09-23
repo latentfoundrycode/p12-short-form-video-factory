@@ -155,3 +155,24 @@ def test_atomic_run_refuses_to_start_when_estimate_exceeds_budget(tmp_path: Path
     request = read_request(launched[0])
     assert request.status == "stopped-budget"
     assert all(v.status == "stopped" for v in request.videos)
+
+
+def test_check_atomic_budget_refuses_on_a_poisoned_ledger(tmp_path: Path) -> None:
+    # H28: the atomic pre-flight reads the ledger via guard.run_total/day_total. A ledger the guard
+    # cannot read (H23 makes those raise BudgetError) must become a controlled REFUSAL string here —
+    # not an exception that propagates out of run_request and strands the run `running`.
+    budget = _budget(tmp_path, per_run={"openrouter": 1.0}, per_day={"openrouter": 1.0})
+    budget.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    # a complete, valid-JSON line whose `amount` is non-numeric (real corruption)
+    budget.ledger_path.write_text(
+        '{"ts":"2026-09-05T10:00:00Z","token":"t1","run_id":"r1","meter":"openrouter",'
+        '"unit":"EUR","amount":"not-a-number","kind":"reserved","note":""}\n',
+        encoding="utf-8",
+    )
+    refusal = check_atomic_budget(
+        Estimate(per_meter={"openrouter": 0.1}, confidence="matched", matches=1),
+        1.0,
+        budget,
+        "r1",
+    )
+    assert refusal is not None, "a poisoned ledger must refuse the run, not raise"
