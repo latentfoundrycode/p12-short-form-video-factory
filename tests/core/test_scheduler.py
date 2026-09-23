@@ -162,6 +162,12 @@ def test_read_fired_missing_or_corrupt_is_empty(tmp_path) -> None:
     not_list = tmp_path / "obj.json"
     not_list.write_text('{"a": 1}', encoding="utf-8")
     assert read_fired(not_list) == set()
+    # A pathologically nested file makes json.loads raise RecursionError (not OSError/ValueError);
+    # read_fired must still degrade to an empty set, never raise — it runs in
+    # SchedulerDriver.__init__ and an uncaught raise would abort scheduler-enabled app startup.
+    deep = tmp_path / "deep.json"
+    deep.write_text("[" * 5000 + "]" * 5000, encoding="utf-8")
+    assert read_fired(deep) == set()
 
 
 def test_restart_within_grace_seeded_from_disk_does_not_refire(tmp_path) -> None:
