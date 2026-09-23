@@ -101,6 +101,30 @@ def test_context_json_is_not_downloadable(tmp_path):
     assert client.get(f"{base}/note.txt").status_code == 200  # ordinary file still served
 
 
+def test_result_json_is_not_downloadable(tmp_path):
+    # H18: result.json can carry a prepare's injected secret in arbitrary bytes/encoding a workflow
+    # controls (e.g. UTF-16) that best-effort value redaction cannot fully strip. Like context.json
+    # it must not be served (closing the download exfil vector for every encoding) and is excluded
+    # from the listing. The engine reads it from disk directly, not via this endpoint.
+    workflows_dir = tmp_path / "workflows"
+    workflows_dir.mkdir()
+    _install_stub(workflows_dir, "succeeds")
+    client = _client(tmp_path)
+    run_dir = tmp_path / "runs" / "succeeds" / "20260101-000000" / "shared"
+    run_dir.mkdir(parents=True)
+    # a secret encoded as UTF-16 — value redaction that scans UTF-8 bytes would miss it
+    (run_dir / "result.json").write_bytes('{"leaked": "sk-x"}'.encode("utf-16"))
+    (run_dir / "note.txt").write_text("ordinary", "utf-8")
+
+    base = "/api/workflows/succeeds/runs/20260101-000000/files/shared"
+    assert client.get(f"{base}/result.json").status_code == 404  # secret-riskable file blocked
+    assert client.get(f"{base}/note.txt").status_code == 200  # ordinary file still served
+    listing = client.get("/api/workflows/succeeds/runs/20260101-000000/files").json()
+    names = [f["path"] for f in listing["files"]]
+    assert "shared/result.json" not in names  # excluded from the listing, like context.json
+    assert "shared/note.txt" in names
+
+
 def test_secrets_scrubbed_even_when_runner_spawn_fails(tmp_path):
     # Even if the runner subprocess fails to spawn, the injected secrets must not linger on disk
     # in context.json (the scrub runs in a finally that wraps the spawn).

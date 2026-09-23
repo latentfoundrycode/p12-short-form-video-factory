@@ -319,12 +319,12 @@ def test_failed_prepare_result_secret_is_redacted_on_disk_and_download(tmp_path:
     assert results, "prepare did not write result.json (trigger precondition not met)"
     for jf in (tmp_path / "runs").rglob("*.json"):
         assert "sk-leaked-value" not in jf.read_text(encoding="utf-8"), f"secret leaked into {jf}"
-    # result.json is downloadable (unlike context.json); the served copy must be redacted.
+    # result.json is not served at all (like context.json), so the download exfil vector is closed
+    # for any encoding; the on-disk best-effort redaction above is defence-in-depth.
     resp = client.get(
         f"/api/workflows/leaks_secret_prepare_fail/runs/{run_id}/files/shared/result.json"
     )
-    if resp.status_code == 200:
-        assert "sk-leaked-value" not in resp.text
+    assert resp.status_code == 404
 
 
 def test_prepare_returning_none_completes_and_does_not_crash_in_scrub(tmp_path: Path):
