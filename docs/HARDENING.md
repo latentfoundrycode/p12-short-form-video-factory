@@ -141,15 +141,6 @@ not-applicable.
   full inherited env — NOT a real vector (taskkill is a fixed trusted OS binary executing no workflow code),
   but routing it through `subprocess_env()` too would make "no spawn inherits the passphrase" universal.
   _Source: S1 review B (fixed S2a); S2a review A note (PR #35)._ Open (low, residual).
-- **H18 — failed-prepare `result.json` not redacted (residual).** S2c redacts the `prepare()` return payload and
-  rewrites `shared/result.json` on the SUCCESS path, and redacts the per-video `result`→`video.json` path, so no
-  injected secret VALUE persists into any consumed record. Residual (low): if a `prepare()` writes `result.json`
-  and then exits non-zero, `_run_prepare` returns `False, None` before the redact/rewrite, leaving that
-  failed-run `result.json` unredacted on disk — and (unlike `context.json`) it is downloadable via
-  `get_run_file`. Same defect class as the closed success-path leak; narrow trigger (prepare must both leak its
-  key into `result.json` AND fail after writing it). Fix: redact `result.json` best-effort in the `_run_prepare`
-  `finally` (covering both paths uniformly), or block `result.json` download alongside `context.json`.
-  _Source: S2c review B residual note (PR #37)._ Open (low, residual).
 - **H19 — budget-breaker model residuals (T2a).** The T2a `BudgetGuard` (`sfvf._budget`) is a hard
   pre-call gate; these are limits inherent to its minimal reserve-then-reconcile / calendar-day model,
   to close as the engine grows (T2b wiring + Stage C metering):
@@ -603,3 +594,13 @@ not-applicable.
   review (attribute-corruption residual); covered by
   `tests/sdk/test_budget.py::test_a_non_string_meter_on_a_spend_line_fails_closed`.
   _Source: H22 security review; closed by this PR._
+- **H18 — failed-prepare `result.json` not redacted** (resolved by this PR). `_run_prepare` scrubbed
+  `context.json` in its `finally` on both paths but redacted `result.json` only on the SUCCESS path,
+  so a `prepare()` that wrote `shared/result.json` with an injected secret VALUE then exited non-zero
+  left the secret unredacted on disk — in a file that, unlike `context.json`, is downloadable via
+  `get_run_file`. A new best-effort `_scrub_result_secrets` helper (mirroring `_scrub_context_secrets`)
+  now runs in the `finally`, redacting `result.json` uniformly on both paths; never raises during
+  teardown. Covered by `tests/core/test_secret_redaction.py::test_scrub_result_secrets_redacts_an_on_disk_result`,
+  `::test_scrub_result_secrets_is_best_effort_on_missing_or_bad_file`, and (end-to-end)
+  `::test_failed_prepare_result_secret_is_redacted_on_disk_and_download` with the
+  `leaks_secret_prepare_fail` stub. _Source: S2c review B residual note (PR #37); closed by this PR._
