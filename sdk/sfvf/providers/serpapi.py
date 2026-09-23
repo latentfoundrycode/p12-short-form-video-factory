@@ -82,6 +82,10 @@ def search(
         # toward charging on an unknown status.
         meta = data.get("search_metadata")
         cached = isinstance(meta, dict) and str(meta.get("status") or "").lower() == "cached"
+        if cached:
+            # a cached SerpApi response is free regardless of whether its body maps cleanly;
+            # reconcile to $0 NOW so a later mapping failure cannot leave the reservation charged.
+            ctx.record_cost(provider.meter, provider.unit, 0.0, "cached", token=token)
         results = data.get("images_results")
         if not isinstance(results, list):
             results = []
@@ -110,9 +114,7 @@ def search(
             )
             if len(out) >= limit:
                 break
-        if cached:
-            ctx.record_cost(provider.meter, provider.unit, 0.0, "cached", token=token)
-        else:
+        if not cached:
             ctx.record_cost(provider.meter, provider.unit, price, "priced", token=token)
         return out
     finally:
