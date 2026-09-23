@@ -36,6 +36,7 @@ from sfvf._budget import (
     BudgetGuard,
     Ceilings,
     KillSwitchEngagedError,
+    read_run_spend,
 )
 
 
@@ -379,3 +380,85 @@ def test_reconcile_fails_closed_on_a_poisoned_ledger(tmp_path: Path) -> None:
     guard = _guard(tmp_path, per_day={"openrouter": 100.0})
     with pytest.raises(BudgetError):
         guard.reconcile("t1", actual=0.25)
+
+
+# --- H22: ledger isolation by workflow_id (a run_id is only per-workflow-unique) ---
+
+
+def test_run_total_isolates_two_workflows_sharing_a_run_id(tmp_path: Path) -> None:
+    # H22: two DIFFERENT workflows started in the same UTC second get the same run_id. The ledger
+    # is machine-wide; run_total must key by (run_id, workflow_id, meter) so their spend does not
+    # merge and over-count each other's per-run ceiling.
+    guard = _guard(tmp_path, per_run={"openrouter": 100.0}, per_day={"openrouter": 100.0})
+    guard.reserve(
+        run_id="20260923-171500", workflow_id="wfA", meter="openrouter", unit="usd", estimate=1.0
+    )
+    guard.reserve(
+        run_id="20260923-171500", workflow_id="wfB", meter="openrouter", unit="usd", estimate=2.0
+    )
+    assert guard.run_total("20260923-171500", "openrouter", workflow_id="wfA") == pytest.approx(1.0)
+    assert guard.run_total("20260923-171500", "openrouter", workflow_id="wfB") == pytest.approx(2.0)
+
+
+def test_read_run_spend_isolates_two_workflows_sharing_a_run_id(tmp_path: Path) -> None:
+    # H22: read_run_spend must mirror the gate's filter — key by workflow_id too — so per-run
+    # reporting does not cross-report a same-run_id sibling workflow's spend.
+    guard = _guard(tmp_path, per_run={"openrouter": 100.0}, per_day={"openrouter": 100.0})
+    guard.reserve(
+        run_id="20260923-171500", workflow_id="wfA", meter="openrouter", unit="usd", estimate=1.0
+    )
+    guard.reserve(
+        run_id="20260923-171500", workflow_id="wfB", meter="openrouter", unit="usd", estimate=2.0
+    )
+    ledger = tmp_path / "ledger.jsonl"
+    assert read_run_spend(ledger, "20260923-171500", workflow_id="wfA") == {"openrouter": 1.0}
+    assert read_run_spend(ledger, "20260923-171500", workflow_id="wfB") == {"openrouter": 2.0}
+
+
+def test_reconcile_preserves_workflow_id_isolation(tmp_path: Path) -> None:
+    # H22: reconcile recovers the reserved line's workflow_id (by token) and writes it on the
+    # actual, so the reconciled spend stays in its own workflow's namespace.
+    guard = _guard(tmp_path, per_run={"openrouter": 100.0}, per_day={"openrouter": 100.0})
+    token_a = guard.reserve(
+        run_id="20260923-171500", workflow_id="wfA", meter="openrouter", unit="usd", estimate=1.0
+    )
+    guard.reserve(
+        run_id="20260923-171500", workflow_id="wfB", meter="openrouter", unit="usd", estimate=2.0
+    )
+    guard.reconcile(token_a, actual=0.5)
+    assert guard.run_total("20260923-171500", "openrouter", workflow_id="wfA") == pytest.approx(0.5)
+    assert guard.run_total("20260923-171500", "openrouter", workflow_id="wfB") == pytest.approx(2.0)
+
+
+def test_legacy_ledger_line_without_workflow_id_totals_in_the_default_namespace(
+    tmp_path: Path,
+) -> None:
+    # Backward compatibility: a durable ledger written before H22 has no workflow_id field. Those
+    # lines must still count under the default ("") namespace, not fail closed — the field is new.
+    (tmp_path / "ledger.jsonl").write_text(json.dumps(_reserved_line(1.5)) + "\n", encoding="utf-8")
+    guard = _guard(tmp_path, per_run={"openrouter": 100.0}, per_day={"openrouter": 100.0})
+    assert guard.run_total("r1", "openrouter") == pytest.approx(1.5)
+    assert guard.run_total("r1", "openrouter", workflow_id="") == pytest.approx(1.5)
+
+
+# --- H60: a non-string meter on a spend line fails closed (uniform with token/amount) ---
+
+
+@pytest.mark.parametrize("bad_meter", [123, True, ["openrouter"], None])
+@pytest.mark.parametrize("kind", ["reserved", "actual"])
+def test_a_non_string_meter_on_a_spend_line_fails_closed(
+    tmp_path: Path, kind: str, bad_meter: object
+) -> None:
+    # H60: a valid-JSON reserved/actual line whose `meter` is present but not a usable string
+    # currently drops out of _run_sum/_day_sum (silent under-count). The engine always writes a
+    # string meter, so a non-string meter is corruption and must fail closed as BudgetError,
+    # uniform with the missing-token (H59) and bad-amount (H23) checks.
+    line = _reserved_line(1.0)
+    line["kind"] = kind
+    line["meter"] = bad_meter
+    (tmp_path / "ledger.jsonl").write_text(json.dumps(line) + "\n", encoding="utf-8")
+    guard = _guard(tmp_path, per_run={"openrouter": 100.0}, per_day={"openrouter": 100.0})
+    with pytest.raises(BudgetError):
+        guard.day_total("openrouter")
+    with pytest.raises(BudgetError):
+        guard.run_total("r1", "openrouter")

@@ -60,6 +60,7 @@ def make_default_learning_optimizer(
                 budget=budget,
                 model=LEARNING_MODEL,
                 run_id=run_id,
+                workflow_id=workflow_id,
             )
         )
 

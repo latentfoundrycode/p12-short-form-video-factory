@@ -204,16 +204,6 @@ not-applicable.
   the secret-injection/redaction suites were untouched (their stubs never reserve), avoiding the feared
   security-suite migration. A `BudgetError` here is mapped to `stopped-budget` by T2b-2c, so an
   unconfigured real run stops cleanly with no spend. See Resolved.
-- **H22 — budget ledger keys spend by a run_id that is only per-workflow-unique.** `allocate_run`
-  (`app/core/ids.py`) suffixes for collisions only within one workflow's runs dir, so two *different*
-  workflows started in the same UTC second share the same `run_id`. The ledger is machine-wide, and both
-  the gate's per-run accounting (`_run_sum`) and T2b-2c's `read_run_spend` filter by `run_id`+`meter`
-  only — so those two runs' spend merges, over-counting each other's per-run ceiling and cross-reporting
-  spend. Pre-existing to the T2a engine; `read_run_spend` faithfully mirrors the gate's own filter (fixing
-  one without the other would desync them). Fix: namespace ledger entries by `workflow_id` (write+filter),
-  or make `run_id` globally unique. Low likelihood (same-second cross-workflow starts), report/accounting
-  accuracy only — never authorizes extra spend (ceilings only tighten under a merge). _Source: T2b-2c
-  review B._ Open.
 - **H24 — budget-denial signal is the runner exit code alone.** The supervisor maps child exit code
   `EXIT_BUDGET_DENIED=2` to `stopped-budget`. A workflow that itself terminates with code 2 (e.g.
   `sys.exit(2)`, or an argparse error — `SystemExit` bypasses the runner's `except Exception`) would be
@@ -586,3 +576,30 @@ not-applicable.
   propagates; `read_run_spend` stays best-effort. Covered by
   `tests/sdk/test_budget.py::test_a_spend_record_missing_its_token_fails_closed`.
   _Source: H23 completeness review; closed by this PR._
+- **H22 — budget ledger keyed spend by a run_id that is only per-workflow-unique** (resolved by this
+  PR). Two *different* workflows started in the same UTC second share a `run_id` (`allocate_run`
+  suffixes for collisions only within one workflow's runs dir); the machine-wide ledger then merged
+  their per-run spend. Every ledger entry now carries a `workflow_id`, and `_run_sum` /
+  `read_run_spend` / `reserve` / `run_total` / `check_atomic_budget` key per-run accounting by
+  `(run_id, workflow_id, meter)`. `workflow_id` is read tolerantly (absent → `""`, the legacy
+  namespace) and is a keyword-only param defaulting to `""`, so pre-H22 durable ledgers and existing
+  callers are unaffected; the production sites (supervisor `read_run_spend`/`check_atomic_budget`,
+  `Context._budget_reserve`, learning `make_openrouter_completion`) pass the real id. `day_total`
+  stays a global per-day cap. `run_id` generation and the run-dir layout are unchanged. Covered by
+  `tests/sdk/test_budget.py::test_run_total_isolates_two_workflows_sharing_a_run_id`,
+  `::test_read_run_spend_isolates_two_workflows_sharing_a_run_id`,
+  `::test_reconcile_preserves_workflow_id_isolation`,
+  `::test_legacy_ledger_line_without_workflow_id_totals_in_the_default_namespace`, and
+  `tests/core/test_preflight.py::test_per_run_headroom_isolates_a_sibling_workflow_sharing_the_run_id`.
+  _Source: T2b-2c review B; closed by this PR._
+- **H60 — a non-string `meter` on a spend line silently under-counted** (resolved by this PR). A
+  valid-JSON `reserved`/`actual` ledger line whose `meter` was present but not a usable string passed
+  through `_as_str` → `""` and dropped out of `_run_sum`/`_day_sum` (spend under-count). The engine
+  always writes a string meter, so a non-string/missing/empty meter is corruption; `_token_states`
+  now raises `BudgetError("budget ledger spend entry has an invalid meter")` for those lines, uniform
+  with the missing-token (H59) and bad-amount (H23) checks. (The malformed-`ts` and non-string
+  `run_id`/`workflow_id` cases stay tolerated: `ts` is the documented H19 acceptance, and
+  `workflow_id` must read tolerantly for pre-H22 ledger compatibility.) Flagged by the H23 security
+  review (attribute-corruption residual); covered by
+  `tests/sdk/test_budget.py::test_a_non_string_meter_on_a_spend_line_fails_closed`.
+  _Source: H22 security review; closed by this PR._

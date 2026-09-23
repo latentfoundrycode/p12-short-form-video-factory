@@ -21,6 +21,8 @@ def check_atomic_budget(
     safety_factor: float,
     budget: BudgetConfig,
     run_id: str,
+    *,
+    workflow_id: str = "",
 ) -> str | None:
     """Return None if the estimated run fits every metered ceiling, else a refusal message.
 
@@ -38,7 +40,7 @@ def check_atomic_budget(
     for meter, amount in estimate.per_meter.items():
         need = amount * safety_factor
         try:
-            run_used = guard.run_total(run_id, meter)
+            run_used = guard.run_total(run_id, meter, workflow_id=workflow_id)
             day_used = guard.day_total(meter)
         except BudgetError as exc:
             return f"budget ledger unreadable, refusing to start atomic run: {exc}"

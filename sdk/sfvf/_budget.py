@@ -56,6 +56,7 @@ class _TokenState:
     actual_amount: float | None = None
     meter: str = ""
     run_id: str = ""
+    workflow_id: str = ""
     day: date | None = None
 
     def effective_amount(self) -> float:
@@ -140,21 +141,26 @@ def _token_states(entries: list[dict[str, Any]]) -> dict[str, _TokenState]:
                 raise BudgetError("budget ledger spend entry is missing its token")
             continue
         state = states.setdefault(token, _TokenState())
-        if kind == "reserved":
-            state.reserved_amount = _require_amount(entry.get("amount"))
-            meter = _as_str(entry.get("meter"))
-            if meter:
-                state.meter = meter
+        if kind in ("reserved", "actual"):
+            meter = entry.get("meter")
+            if not isinstance(meter, str) or not meter:
+                raise BudgetError("budget ledger spend entry has an invalid meter")
             run_id = _as_str(entry.get("run_id"))
-            if run_id:
+            workflow_id = _as_str(entry.get("workflow_id"))
+            if kind == "reserved":
+                state.reserved_amount = _require_amount(entry.get("amount"))
+                state.meter = meter
                 state.run_id = run_id
-            state.day = _ts_date(entry.get("ts"))
-        elif kind == "actual":
-            state.actual_amount = _require_amount(entry.get("amount"))
-            if not state.meter:
-                state.meter = _as_str(entry.get("meter"))
-            if not state.run_id:
-                state.run_id = _as_str(entry.get("run_id"))
+                state.workflow_id = workflow_id
+                state.day = _ts_date(entry.get("ts"))
+            else:
+                state.actual_amount = _require_amount(entry.get("amount"))
+                if not state.meter:
+                    state.meter = meter
+                if not state.run_id:
+                    state.run_id = run_id
+                if not state.workflow_id:
+                    state.workflow_id = workflow_id
     return states
 
 
@@ -169,25 +175,27 @@ def _day_sum(states: Mapping[str, _TokenState], meter: str, today: date) -> floa
     )
 
 
-def _run_sum(states: Mapping[str, _TokenState], run_id: str, meter: str) -> float:
+def _run_sum(
+    states: Mapping[str, _TokenState], run_id: str, meter: str, workflow_id: str = ""
+) -> float:
     return sum(
         (
             state.effective_amount()
             for state in states.values()
-            if state.run_id == run_id and state.meter == meter
+            if state.run_id == run_id and state.meter == meter and state.workflow_id == workflow_id
         ),
         start=0.0,
     )
 
 
-def read_run_spend(ledger_path: Path, run_id: str) -> dict[str, float]:
+def read_run_spend(ledger_path: Path, run_id: str, *, workflow_id: str = "") -> dict[str, float]:
     # Best-effort: a corrupt ledger (unreadable, unusable/overflowing amount, or OSError)
     # must not fail the finished run's record write.
     try:
         entries = _read_ledger(ledger_path)
         spend: dict[str, float] = {}
         for state in _token_states(entries).values():
-            if state.run_id == run_id and state.meter:
+            if state.run_id == run_id and state.workflow_id == workflow_id and state.meter:
                 spend[state.meter] = spend.get(state.meter, 0.0) + state.effective_amount()
         return spend
     except (BudgetError, ValueError, OSError, OverflowError):
@@ -292,6 +300,7 @@ class BudgetGuard:
         *,
         token: str,
         run_id: str,
+        workflow_id: str,
         meter: str,
         unit: str,
         amount: float,
@@ -302,6 +311,7 @@ class BudgetGuard:
             "ts": _format_ts(self._now()),
             "token": token,
             "run_id": run_id,
+            "workflow_id": workflow_id,
             "meter": meter,
             "unit": unit,
             "amount": amount,
@@ -310,7 +320,14 @@ class BudgetGuard:
         }
 
     def reserve(
-        self, *, run_id: str, meter: str, unit: str, estimate: float, note: str = ""
+        self,
+        *,
+        run_id: str,
+        meter: str,
+        unit: str,
+        estimate: float,
+        note: str = "",
+        workflow_id: str = "",
     ) -> str:
         with self._held():
             if self._kill_switch_path is not None and self._kill_switch_path.exists():
@@ -319,7 +336,7 @@ class BudgetGuard:
             states = self._snapshot()
             today = self._now().astimezone(UTC).date()
             projected_day = _day_sum(states, meter, today) + amount
-            projected_run = _run_sum(states, run_id, meter) + amount
+            projected_run = _run_sum(states, run_id, meter, workflow_id) + amount
             if meter in self._ceilings.per_day and _ceiling_breached(
                 projected_day, self._ceilings.per_day[meter]
             ):
@@ -334,6 +351,7 @@ class BudgetGuard:
                 self._record(
                     token=token,
                     run_id=run_id,
+                    workflow_id=workflow_id,
                     meter=meter,
                     unit=unit,
                     amount=amount,
@@ -348,11 +366,13 @@ class BudgetGuard:
             amount = _require_amount(actual)
             self._snapshot()  # fail closed on a corrupt ledger before appending (H23)
             run_id = ""
+            workflow_id = ""
             meter = ""
             unit = ""
             for entry in _read_ledger(self._ledger_path):
                 if entry.get("kind") == "reserved" and entry.get("token") == token:
                     run_id = _as_str(entry.get("run_id"))
+                    workflow_id = _as_str(entry.get("workflow_id"))
                     meter = _as_str(entry.get("meter"))
                     unit = _as_str(entry.get("unit"))
                     break
@@ -361,6 +381,7 @@ class BudgetGuard:
                 self._record(
                     token=token,
                     run_id=run_id,
+                    workflow_id=workflow_id,
                     meter=meter,
                     unit=unit,
                     amount=amount,
@@ -374,6 +395,6 @@ class BudgetGuard:
             today = self._now().astimezone(UTC).date()
             return _day_sum(self._snapshot(), meter, today)
 
-    def run_total(self, run_id: str, meter: str) -> float:
+    def run_total(self, run_id: str, meter: str, *, workflow_id: str = "") -> float:
         with self._held():
-            return _run_sum(self._snapshot(), run_id, meter)
+            return _run_sum(self._snapshot(), run_id, meter, workflow_id)
