@@ -101,28 +101,37 @@ def test_context_json_is_not_downloadable(tmp_path):
     assert client.get(f"{base}/note.txt").status_code == 200  # ordinary file still served
 
 
-def test_result_json_is_not_downloadable(tmp_path):
-    # H18: result.json can carry a prepare's injected secret in arbitrary bytes/encoding a workflow
-    # controls (e.g. UTF-16) that best-effort value redaction cannot fully strip. Like context.json
-    # it must not be served (closing the download exfil vector for every encoding) and is excluded
-    # from the listing. The engine reads it from disk directly, not via this endpoint.
+def test_shared_result_json_is_not_downloadable(tmp_path):
+    # H18: the prepare output at shared/result.json can carry an injected secret in arbitrary
+    # bytes/encoding a workflow controls (e.g. UTF-16) that best-effort value redaction cannot fully
+    # strip. That SPECIFIC engine-written path must not be served (closing the download exfil vector
+    # for every encoding) and is excluded from the listing. The block is PATH-scoped to
+    # shared/result.json, so a workflow artifact that only shares the basename is still served. The
+    # engine reads shared/result.json from disk directly, not via this endpoint.
     workflows_dir = tmp_path / "workflows"
     workflows_dir.mkdir()
     _install_stub(workflows_dir, "succeeds")
     client = _client(tmp_path)
-    run_dir = tmp_path / "runs" / "succeeds" / "20260101-000000" / "shared"
-    run_dir.mkdir(parents=True)
+    run_root = tmp_path / "runs" / "succeeds" / "20260101-000000"
+    shared = run_root / "shared"
+    shared.mkdir(parents=True)
     # a secret encoded as UTF-16 — value redaction that scans UTF-8 bytes would miss it
-    (run_dir / "result.json").write_bytes('{"leaked": "sk-x"}'.encode("utf-16"))
-    (run_dir / "note.txt").write_text("ordinary", "utf-8")
+    (shared / "result.json").write_bytes('{"leaked": "sk-x"}'.encode("utf-16"))
+    (shared / "note.txt").write_text("ordinary", "utf-8")
+    # a legitimate workflow artifact that merely shares the basename must NOT be blocked
+    artifacts = shared / "artifacts"
+    artifacts.mkdir()
+    (artifacts / "result.json").write_text('{"ok": true}', "utf-8")
 
-    base = "/api/workflows/succeeds/runs/20260101-000000/files/shared"
-    assert client.get(f"{base}/result.json").status_code == 404  # secret-riskable file blocked
-    assert client.get(f"{base}/note.txt").status_code == 200  # ordinary file still served
+    base = "/api/workflows/succeeds/runs/20260101-000000/files"
+    assert client.get(f"{base}/shared/result.json").status_code == 404  # the secret-riskable file
+    assert client.get(f"{base}/shared/note.txt").status_code == 200  # ordinary file still served
+    assert client.get(f"{base}/shared/artifacts/result.json").status_code == 200  # legit artifact
     listing = client.get("/api/workflows/succeeds/runs/20260101-000000/files").json()
     names = [f["path"] for f in listing["files"]]
-    assert "shared/result.json" not in names  # excluded from the listing, like context.json
+    assert "shared/result.json" not in names  # the prepare output is excluded, like context.json
     assert "shared/note.txt" in names
+    assert "shared/artifacts/result.json" in names  # the legit artifact is still listed
 
 
 def test_secrets_scrubbed_even_when_runner_spawn_fails(tmp_path):
