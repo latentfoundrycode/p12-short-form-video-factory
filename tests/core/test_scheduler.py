@@ -17,7 +17,15 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from app.core.scheduler import DEFAULT_GRACE, SchedulerState, due_entries, slot_key, tick
+from app.core.scheduler import (
+    DEFAULT_GRACE,
+    SchedulerState,
+    due_entries,
+    read_fired,
+    slot_key,
+    tick,
+    write_fired,
+)
 from app.core.schedules import ScheduleEntry, write_schedules
 
 # 2026-01-05 is a Monday (weekday 0).
@@ -127,3 +135,66 @@ def _recorder(calls: list[tuple[str, bool]]):
         return "started"
 
     return start
+
+
+# --- H39.1: fired-slot persistence so a restart in the grace window does not re-fire ---
+
+
+def test_tick_persists_the_fired_slot(tmp_path) -> None:
+    path = tmp_path / "schedules.json"
+    write_schedules(path, [_entry()])
+    fired_path = tmp_path / "scheduler_fired.json"
+    tick(
+        MON_0700,
+        schedules_path=path,
+        state=SchedulerState(),
+        start=_recorder([]),
+        fired_path=fired_path,
+    )
+    assert read_fired(fired_path) == {slot_key(_entry(), MON_0700)}
+
+
+def test_read_fired_missing_or_corrupt_is_empty(tmp_path) -> None:
+    assert read_fired(tmp_path / "absent.json") == set()
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    assert read_fired(bad) == set()
+    not_list = tmp_path / "obj.json"
+    not_list.write_text('{"a": 1}', encoding="utf-8")
+    assert read_fired(not_list) == set()
+
+
+def test_restart_within_grace_seeded_from_disk_does_not_refire(tmp_path) -> None:
+    # H39.1: a slot fires, its key is persisted; an app restart INSIDE the grace window rebuilds
+    # SchedulerState from disk and must NOT re-fire the already-fired slot (a duplicate paid run).
+    path = tmp_path / "schedules.json"
+    write_schedules(path, [_entry(allow_real_spend=True)])
+    fired_path = tmp_path / "scheduler_fired.json"
+    calls: list[tuple[str, bool]] = []
+    tick(
+        MON_0700,
+        schedules_path=path,
+        state=SchedulerState(),
+        start=_recorder(calls),
+        fired_path=fired_path,
+    )
+    assert calls == [("sch-1", False)]
+    # Simulate a restart: a fresh state seeded from the persisted fired keys.
+    restarted = SchedulerState(fired=read_fired(fired_path))
+    tick(
+        MON_0700 + timedelta(seconds=30),
+        schedules_path=path,
+        state=restarted,
+        start=_recorder(calls),
+        fired_path=fired_path,
+    )
+    assert calls == [("sch-1", False)]  # not re-fired after the restart
+
+
+def test_write_fired_prunes_keys_from_other_days(tmp_path) -> None:
+    # Persistence is bounded: only the current day's keys are kept, so the file cannot grow forever.
+    fired_path = tmp_path / "scheduler_fired.json"
+    old_key = "sch-1|2025-01-01|07:00"
+    today_key = slot_key(_entry(), MON_0700)
+    write_fired(fired_path, {old_key, today_key}, today=MON_0700.date())
+    assert read_fired(fired_path) == {today_key}
