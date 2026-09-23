@@ -133,6 +133,20 @@ def test_scrub_result_secrets_handles_non_object_result(
         assert "sk-secret-xyz" not in on_disk
 
 
+def test_scrub_result_secrets_survives_pathologically_nested_json(tmp_path: Path):
+    # A hostile workflow can write a deeply nested result.json to make json.loads / the recursive
+    # _redact_secrets raise RecursionError. That must NOT crash teardown (RecursionError is not
+    # OSError/ValueError/TypeError), and the injected secret must still be stripped from disk — a
+    # text-level fallback that does not parse JSON handles both.
+    depth = 2000
+    nested = "[" * depth + '"prefix sk-secret-xyz suffix"' + "]" * depth
+    result_path = tmp_path / "result.json"
+    result_path.write_text(nested, encoding="utf-8")
+    _scrub_result_secrets(result_path, frozenset({"sk-secret-xyz"}))  # must not raise
+    on_disk = result_path.read_text(encoding="utf-8")
+    assert "sk-secret-xyz" not in on_disk  # the leaked value is gone despite the pathological depth
+
+
 def test_scrub_result_secrets_is_best_effort_on_missing_or_bad_file(tmp_path: Path):
     # Never raises: a missing file is a no-op, and unparsable JSON is left as-is (the download
     # block / event redaction remain the backstops); scrubbing must not crash the run teardown.
