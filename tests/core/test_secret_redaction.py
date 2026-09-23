@@ -147,6 +147,30 @@ def test_scrub_result_secrets_survives_pathologically_nested_json(tmp_path: Path
     assert "sk-secret-xyz" not in on_disk  # the leaked value is gone despite the pathological depth
 
 
+def test_scrub_result_secrets_survives_invalid_utf8(tmp_path: Path):
+    # A hostile workflow can write result.json with invalid UTF-8 bytes. Decoding as UTF-8 raises
+    # UnicodeDecodeError (a ValueError subclass, NOT OSError); teardown must not crash, and the
+    # injected secret must still be stripped from disk. A byte-level fallback handles it.
+    result_path = tmp_path / "result.json"
+    result_path.write_bytes(b'{"leaked": "sk-secret-xyz"}\xff\xfe')
+    _scrub_result_secrets(result_path, frozenset({"sk-secret-xyz"}))  # must not raise
+    on_disk = result_path.read_bytes()
+    assert b"sk-secret-xyz" not in on_disk  # the leaked value is gone despite invalid UTF-8
+
+
+def test_scrub_result_secrets_fallback_strips_json_escaped_secret(tmp_path: Path):
+    # Defence-in-depth: when structured redaction cannot run (here: an unparsable file, doubled
+    # closing brace) and the secret contains a JSON meta-character, the byte-level fallback must
+    # also strip the ESCAPED on-disk form, not just the plain value a downloader could decode back.
+    secret = 'sk-"backslash\\-secret'
+    escaped_inner = json.dumps(secret)[1:-1]  # how the value appears inside a JSON string on disk
+    result_path = tmp_path / "result.json"
+    result_path.write_text('{"leaked": "' + escaped_inner + '"}}', encoding="utf-8")
+    _scrub_result_secrets(result_path, frozenset({secret}))
+    on_disk = result_path.read_text(encoding="utf-8")
+    assert escaped_inner not in on_disk  # the escaped on-disk form is stripped
+
+
 def test_scrub_result_secrets_is_best_effort_on_missing_or_bad_file(tmp_path: Path):
     # Never raises: a missing file is a no-op, and unparsable JSON is left as-is (the download
     # block / event redaction remain the backstops); scrubbing must not crash the run teardown.
