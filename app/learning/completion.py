@@ -100,10 +100,11 @@ def make_openrouter_completion(
             estimate=estimate,
         )
 
-        unbilled = False
+        unbilled = True
         try:
             with client_factory() as client:
                 for attempt in range(_MAX_ATTEMPTS):
+                    unbilled = False
                     resp = client.post(
                         "/chat/completions",
                         headers={"Authorization": f"Bearer {key}"},
@@ -112,6 +113,7 @@ def make_openrouter_completion(
                     if resp.status_code == 200:
                         break
                     if resp.status_code == 429:
+                        unbilled = True
                         if attempt < _MAX_ATTEMPTS - 1:
                             sleep(_retry_after_s(resp.headers.get("Retry-After")))
                         continue
