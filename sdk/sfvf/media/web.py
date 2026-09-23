@@ -218,6 +218,7 @@ def search(
         raise ValueError(
             f"sources must be a non-empty subset of ('commons','web'); got {sources!r}"
         )
+    sources = tuple(dict.fromkeys(sources))  # subset semantics: a repeated tier dispatches once
     disabled = [s for s in sources if not ctx.web_tier_enabled(s)]
     if disabled:
         raise WebTierDisabledError(
