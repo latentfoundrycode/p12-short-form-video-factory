@@ -21,7 +21,7 @@ from app.api.quality import router as quality_router
 from app.api.runs import router as runs_router
 from app.api.schedules import router as schedules_router
 from app.api.statistics import router as statistics_router
-from app.api.workflows import RegistryHolder
+from app.api.workflows import RegistryHolder, configured_secret_names
 from app.api.workflows import router as workflows_router
 from app.core.budget_config import load_budget_config
 from app.core.csrf import csrf_guard
@@ -103,7 +103,7 @@ def create_app(
     application.state.budget = budget if budget is not None else load_budget_config()
     application.state.registry = RegistryHolder(
         workflows_dir or WORKFLOWS_DIR,
-        configured=set(resolved),
+        configured=configured_secret_names(resolved),
         disabled_web_tiers=application.state.disabled_web_tiers,
         budget=application.state.budget,
     )

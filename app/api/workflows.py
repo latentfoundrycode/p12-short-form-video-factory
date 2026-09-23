@@ -1,4 +1,5 @@
 import mimetypes
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -13,6 +14,13 @@ from app.registry.scan import scan
 from app.registry.validate import WorkflowEntry
 
 router = APIRouter(prefix="/api")
+
+
+def configured_secret_names(secrets: Mapping[str, str]) -> set[str]:
+    """Secret names whose stored VALUE is non-blank. A blank/whitespace value is not a usable
+    credential, so its provider must not be treated as configured for capability availability
+    (otherwise the capability is offered at scan time but refused at runtime)."""
+    return {name for name, value in secrets.items() if isinstance(value, str) and value.strip()}
 
 
 def _serpapi_has_ceiling(budget: BudgetConfig | None) -> bool:
