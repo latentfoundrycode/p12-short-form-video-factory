@@ -310,6 +310,19 @@ def _scrub_context_secrets(context_path: Path) -> None:
         return
 
 
+def _scrub_result_secrets(result_path: Path, secret_values: frozenset[str]) -> None:
+    """Redact any injected secret VALUES from an on-disk result.json, best-effort. Covers the
+    prepare FAILURE path (prepare wrote result.json then exited non-zero, so the success-path
+    redaction was skipped); result.json, unlike context.json, is downloadable. Never raises."""
+    try:
+        if not result_path.is_file():
+            return
+        payload = json.loads(result_path.read_text(encoding="utf-8"))
+        write_json_atomic(result_path, _redact_secrets(payload, secret_values))
+    except (OSError, ValueError):
+        return
+
+
 def _budget_report(wiring: _ContextWiring) -> dict[str, Any] | None:
     if wiring.budget is None:
         return None
@@ -856,6 +869,7 @@ def _run_prepare(
     finally:
         state.unregister_proc("prep")
         _scrub_context_secrets(context_path)
+        _scrub_result_secrets(result_path, state.secret_values)
     payload: object = json.loads(result_path.read_text(encoding="utf-8"))
     if payload is None:
         return True, None
