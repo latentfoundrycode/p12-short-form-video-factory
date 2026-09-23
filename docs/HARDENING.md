@@ -12,6 +12,31 @@ ride the increment PR branch to origin.
 Each line: **`ID` — description — _source_ — status.** Severity is low unless stated; none of these block the
 increments that logged them.
 
+## Struck (reconciled 2026-09-23)
+
+A completeness pass reclassified the ledger by one test: an item earns its place only if the scenario it
+describes can actually occur under the deployment target (Windows, single-process, trusted-workflow) and
+intended use. Items that provably cannot occur, or are explicitly "not a defect," are struck — an
+unreachable item on a debt ledger is noise. Items tied to a provider that is no longer used are struck as
+not-applicable.
+
+- **H9 — STRUCK.** The ledger's own text: "correct as-is; a refinement, not a defect." Not debt.
+- **H19(c) — STRUCK.** POSIX `fcntl.flock` two-instance-in-one-process semantics: cannot occur on the
+  Windows deployment target. Re-open only if a Linux deployment is added (H19(a)/(b) remain open).
+- **H35 — STRUCK.** The run-files symlink walk requires an attacker-planted symlink *inside* a run dir,
+  which is "unreachable via the API" (run dirs are written only by the trusted child; unprivileged Windows
+  blocks symlink creation, WinError 1314). Defense-in-depth against an assumption change, not occurring debt.
+- **H50(a) — STRUCK (verify).** Claims a 400/402/5xx reflecting the `Authorization` *header* leaks the key,
+  but `_http.request()` now runs `_redact(response.text, auth_headers, …)` on the non-2xx branch, which
+  scrubs auth-header values (full value + post-scheme token). Appears already closed; struck pending a
+  one-line confirmation. (H50(b), 407 proxy-auth, is a distinct low item — left as-is.)
+- **Higgsfield provider dropped — H13, H14, H15, H20(a), H20(b), H25 STRUCK (not applicable).** SFVF no
+  longer uses Higgsfield for video generation (other video providers — byteplus/minimax/veo — remain).
+  All Higgsfield-specific debt (per-model request fields, 429/malformed-body robustness, unbuilt
+  frame/ref generation, estimate-cap-only budget, mid-flight kill-switch, body-field drift) is moot. The
+  now-dead Higgsfield adapter itself is queued for removal as a cleanup increment. (H20(c), the OpenRouter
+  reconcile-recheck sub-item, remains open.)
+
 ## Open
 
 - **H1 — GSAP loaded from CDN at render time.** `media.graphics.render` fetches pinned `gsap@3.14.2` from
@@ -68,7 +93,7 @@ increments that logged them.
   finishes — the deadline it then records is still correct, just a beat late. Refinement: compute the wait
   under the lock, then release it before sleeping. Correct for every intended paced/concurrent/back-off
   combination as-is (per review A analysis); this is a refinement, not a defect. _Source: B-4b review A, note
-  (PR #29)._ Open (low).
+  (PR #29)._ Open (low). **STRUCK 2026-09-23 — see Struck section.**
 
 - **H11 — `agents.llm` trusts the OpenRouter 200 body shape.** `data.get("usage", {}).get("cost")` raises
   `AttributeError` if a 200 response carries `"usage": null` (key present, value null) rather than omitting it;
@@ -91,17 +116,17 @@ increments that logged them.
   per-model field names (e.g. is it `duration`/`seconds`/`duration_ms`? aspect ratio? resolution for the credit
   estimate?) were not pinned per-model from the OpenAPI. Before the first LIVE Higgsfield call, verify the
   chosen model's request schema (per-model OpenAPI) and fix the `duration_s`/aspect/resolution mappings; `extra`
-  is the escape hatch meanwhile. _Source: B-5, dry_run/mocked (PR #33)._ Open (verify-before-live).
+  is the escape hatch meanwhile. _Source: B-5, dry_run/mocked (PR #33)._ Open (verify-before-live). **STRUCK 2026-09-23 — see Struck section.**
 - **H14 — Higgsfield response robustness (429 retry + malformed 2xx body).** Non-2xx on submit, poll, AND
   download are now handled (each raises a labeled `RuntimeError`; a failed download never saves an error body
   as the video — B-5 review B P1/P2, fixed). Still open: (a) no `Retry-After`/429 backoff-retry (it queues
   behind the §5.5 limiter but doesn't `penalize`+retry like `agents._post_chat_completion`); (b) a well-formed
   2xx with an unexpected body shape (missing `request_id`/`status`/`video.url`) raises a bare `KeyError` rather
   than a clear adapter error. Add the 429-retry and defensive body parsing before any unattended live use.
-  _Source: B-5 review A + B (PR #33)._ Open (low, pre-live).
+  _Source: B-5 review A + B (PR #33)._ Open (low, pre-live). **STRUCK 2026-09-23 — see Struck section.**
 - **H15 — Higgsfield frame/ref-conditioned generation not built.** `first_frame`/`last_frame`/`refs` raise
   `NotImplementedError`; image-to-video and first-last-frame endpoints (plus the image-upload mechanics and the
-  `media.analyze.frame` clip-chaining path, §6.3/§6.3a) are a follow-up increment. _Source: B-5 (PR #33)._ Open.
+  `media.analyze.frame` clip-chaining path, §6.3/§6.3a) are a follow-up increment. _Source: B-5 (PR #33)._ Open. **STRUCK 2026-09-23 — see Struck section.**
 - **H16 — secret-store durability (non-blocking, residual).** RESOLVED in S1: the KDF was strengthened to
   scrypt `n=2**17` and the on-disk format now carries a 1-byte version header (`_KDF_BY_VERSION`), so future
   param bumps are migratable; empty passphrases are rejected. Residual (low): the parent directory is not
@@ -223,7 +248,7 @@ increments that logged them.
   frozen contract `test_video_higgsfield.py::test_generate_real_passes_extra_and_duration` (asserts
   `duration == 8.0`) is reversed as part of that fix. Confirmed CORRECT: base URL, `Key id:secret`
   auth on submit AND poll, submit→poll→download, success status `completed`, `video.url` result path,
-  `{failed,nsfw,canceled}` terminal set. _Source: Higgsfield API verification (step-4 prep)._ Open.
+  `{failed,nsfw,canceled}` terminal set. _Source: Higgsfield API verification (step-4 prep)._ Open. **STRUCK 2026-09-23 — see Struck section.**
 - **H26 — forecast latest-per-meter is not strictly event-ordered across concurrent videos (C-2).**
   `record_event` (append) and `record_forecast` (accumulator + request.json write) take the run lock
   separately, so if two videos in one request forecast the SAME meter concurrently, the durable
@@ -343,7 +368,7 @@ increments that logged them.
   followlinks=False)`). (3) `list_run_files` gates on `run_dir.is_dir()` while `get_run` requires
   `request.json` — tightening the listing to require `request.json` makes it a true "is this a real
   run" check and aligns the two. (4) the serving endpoint could also reject dotfiles (the listing
-  already hides them). _Source: E-4a diff-reviewer + security-auditor ADVISORY/NOTED._ Open.
+  already hides them). _Source: E-4a diff-reviewer + security-auditor ADVISORY/NOTED._ Open. **STRUCK 2026-09-23 — see Struck section.**
 - **H36 — scheduler engine uses naive local `datetime`: DST + near-midnight grace edges (F-2).**
   `app/core/scheduler.py` computes a slot's fire window with `now.replace(...)` on `now.date()` (no
   timezone math, per the F-2 brief's "naive local datetime" allowance). Two edges for the follow-on
