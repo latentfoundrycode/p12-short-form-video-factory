@@ -150,6 +150,17 @@ PROVIDERS: dict[str, Provider] = {
         "openverse",
         capabilities=frozenset({"web.images.commons"}),
     ),
+    "serpapi": Provider(
+        "serpapi",
+        "SerpApi",
+        ("SERPAPI_API_KEY",),
+        "serpapi",
+        "fiat",
+        "usd",
+        "https://serpapi.com",
+        "serpapi",
+        capabilities=frozenset({"web.images.web"}),
+    ),
 }
 
 MODELS: dict[str, Model] = {

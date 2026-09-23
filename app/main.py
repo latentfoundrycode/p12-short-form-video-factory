@@ -21,7 +21,7 @@ from app.api.quality import router as quality_router
 from app.api.runs import router as runs_router
 from app.api.schedules import router as schedules_router
 from app.api.statistics import router as statistics_router
-from app.api.workflows import RegistryHolder
+from app.api.workflows import RegistryHolder, configured_secret_names
 from app.api.workflows import router as workflows_router
 from app.core.budget_config import load_budget_config
 from app.core.csrf import csrf_guard
@@ -30,6 +30,7 @@ from app.core.scheduler_runner import SchedulerDeps, SchedulerDriver, make_sched
 from app.core.schedules import SCHEDULES_PATH
 from app.core.secrets import SecretStore, _store_path
 from app.core.supervisor import EnsureEnv, PopenFn
+from app.core.web_tiers import load_disabled_web_tiers
 from app.paths import APP_ROOT, RUNS_DIR, WEB_DIR, WORKFLOWS_DIR
 
 
@@ -73,6 +74,7 @@ def create_app(
             scheduler_schedules_path: Path = scheduler_app.state.schedules_path
             scheduler_secrets: Mapping[str, str] = scheduler_app.state.secrets
             scheduler_budget: BudgetConfig | None = scheduler_app.state.budget
+            scheduler_disabled_web_tiers: list[str] = scheduler_app.state.disabled_web_tiers
             deps = SchedulerDeps(
                 resolve_workflow=resolve_workflow,
                 runs_dir=scheduler_runs_dir,
@@ -80,6 +82,7 @@ def create_app(
                 popen=scheduler_popen,
                 secrets=scheduler_secrets,
                 budget=scheduler_budget,
+                disabled_web_tiers=scheduler_disabled_web_tiers,
             )
             driver = SchedulerDriver(
                 schedules_path=scheduler_schedules_path,
@@ -96,15 +99,19 @@ def create_app(
     else:
         application = FastAPI(title="Short-Form Video Factory")
     application.add_middleware(BaseHTTPMiddleware, dispatch=csrf_guard)
+    application.state.disabled_web_tiers = load_disabled_web_tiers()
+    application.state.budget = budget if budget is not None else load_budget_config()
     application.state.registry = RegistryHolder(
-        workflows_dir or WORKFLOWS_DIR, configured=set(resolved)
+        workflows_dir or WORKFLOWS_DIR,
+        configured=configured_secret_names(resolved),
+        disabled_web_tiers=application.state.disabled_web_tiers,
+        budget=application.state.budget,
     )
     application.state.runs_dir = runs_dir or RUNS_DIR
     application.state.schedules_path = schedules_path or SCHEDULES_PATH
     application.state.ensure_env = ensure_env
     application.state.popen = popen
     application.state.secrets = dict(resolved)
-    application.state.budget = budget if budget is not None else load_budget_config()
     application.state.learning_staging_dir = learning_staging_dir or (
         APP_ROOT / "state" / "learning-staging"
     )

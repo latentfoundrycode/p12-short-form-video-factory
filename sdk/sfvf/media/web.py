@@ -202,6 +202,10 @@ class SourcedImage(TypedDict):
     relevance: Relevance
 
 
+class WebTierDisabledError(RuntimeError):
+    """A search/source targeted a web-image tier the owner disabled at runtime (DESIGN §5)."""
+
+
 def search(
     query: str,
     *,
@@ -213,6 +217,12 @@ def search(
     if not sources or any(s not in ("commons", "web") for s in sources):
         raise ValueError(
             f"sources must be a non-empty subset of ('commons','web'); got {sources!r}"
+        )
+    sources = tuple(dict.fromkeys(sources))  # subset semantics: a repeated tier dispatches once
+    disabled = [s for s in sources if not ctx.web_tier_enabled(s)]
+    if disabled:
+        raise WebTierDisabledError(
+            f"web-image tier(s) {disabled} disabled by owner policy (DESIGN §5 off-switch)"
         )
     if ctx.dry_run:
         n = max(0, min(limit, _STUB_POOL))
@@ -238,9 +248,6 @@ def search(
 
     from ..providers.registry import PROVIDERS
 
-    if "web" in sources:
-        raise NotImplementedError("media.web.search web tier is built in increment 6")
-
     out: list[ImageCandidate] = []
     for tier in sources:
         if tier == "commons":
@@ -252,8 +259,15 @@ def search(
                     query, limit=limit, licence=licence, provider=provider, secrets=secrets
                 )
             )
-        else:  # "web"
-            raise NotImplementedError("media.web.search web tier is built in increment 6")
+        else:  # "web" — PAID tier; the serpapi adapter owns the budget reserve/reconcile
+            provider = PROVIDERS["serpapi"]
+            secrets = {name: ctx.secret(name) for name in provider.secret_names}
+            adapter = importlib.import_module(f"sfvf.providers.{provider.adapter}")
+            out.extend(
+                adapter.search(
+                    query, limit=limit, licence=licence, provider=provider, secrets=secrets
+                )
+            )
     # URL-deduplicate across tiers, preserving first-seen order (design §3.1).
     seen: set[str] = set()
     deduped: list[ImageCandidate] = []
@@ -261,7 +275,7 @@ def search(
         if c["url"] not in seen:
             seen.add(c["url"])
             deduped.append(c)
-    return deduped
+    return deduped[:limit]
 
 
 def fetch(candidate: ImageCandidate) -> str:

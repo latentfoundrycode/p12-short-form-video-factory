@@ -205,6 +205,10 @@ def _budget(request: Request) -> BudgetConfig | None:
     return getattr(request.app.state, "budget", None)
 
 
+def _disabled_web_tiers(request: Request) -> list[str]:
+    return list(getattr(request.app.state, "disabled_web_tiers", None) or [])
+
+
 def _unconfigured_model_param(
     entry: WorkflowEntry, params: dict[str, Any], configured: set[str]
 ) -> str | None:
@@ -252,6 +256,7 @@ def admit_run(
     popen: PopenFn = subprocess.Popen,
     secrets: Mapping[str, str] | None = None,
     budget: BudgetConfig | None = None,
+    disabled_web_tiers: list[str] | None = None,
 ) -> AdmissionResult:
     """Launch run_request on a daemon thread; return as soon as admission resolves."""
     started = threading.Event()
@@ -279,6 +284,7 @@ def admit_run(
                     on_started=on_started,
                     secrets=secrets,
                     budget=budget,
+                    disabled_web_tiers=disabled_web_tiers or [],
                 )
             )
         except BaseException as exc:
@@ -375,6 +381,7 @@ def launch_run(workflow_id: str, body: LaunchBody, request: Request) -> JSONResp
         popen=_popen(request),
         secrets=_secrets(request),
         budget=_budget(request),
+        disabled_web_tiers=_disabled_web_tiers(request),
     )
     if isinstance(outcome, AdmissionAccepted):
         return JSONResponse(

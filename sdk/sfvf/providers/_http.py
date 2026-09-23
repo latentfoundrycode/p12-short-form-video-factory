@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from typing import Any
 
 
@@ -22,16 +23,20 @@ def _truncate(text: str) -> str:
     return text[:200]
 
 
-def _redact(text: str, auth_headers: dict[str, str]) -> str:
+def _redact(text: str, auth_headers: dict[str, str], extra: Iterable[str] = ()) -> str:
     """Remove the credentials we sent (each auth header value, and the token after a scheme
     prefix like 'Bearer'/'Basic') from an error body, so a reflected credential can't land in
-    the detail. Precise — only the exact strings we transmitted are removed."""
+    the detail. Precise — only the exact strings we transmitted are removed. Also removes each
+    value in `extra` (e.g. a query-param secret the auth object does not carry as a header)."""
     secrets: set[str] = set()
     for value in auth_headers.values():
         if value:
             secrets.add(value)
             if " " in value:
                 secrets.add(value.split(" ", 1)[1])  # token after a scheme (Bearer/Basic)
+    for value in extra:
+        if value:
+            secrets.add(value)
     for secret in secrets:
         text = text.replace(secret, "[redacted]")
     return text
@@ -50,6 +55,7 @@ def request(
     data: Any = None,
     headers: dict[str, str] | None = None,
     max_attempts: int = 4,
+    redact: Iterable[str] = (),
 ) -> Any:
     merged = dict(headers or {})
     auth_headers = auth.headers()
@@ -80,7 +86,7 @@ def request(
         elif response.status_code == 403:
             detail = "authorization failed"
         else:
-            detail = _truncate(_redact(response.text, auth_headers))
+            detail = _truncate(_redact(response.text, auth_headers, redact))
         raise AdapterError(
             provider,
             status=response.status_code,

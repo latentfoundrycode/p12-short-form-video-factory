@@ -34,6 +34,7 @@ class SchedulerDeps:
     popen: PopenFn = subprocess.Popen
     secrets: Mapping[str, str] | None = None
     budget: BudgetConfig | None = None
+    disabled_web_tiers: list[str] | None = None
     admit: Callable[..., AdmissionResult] = admit_run
 
 
@@ -54,6 +55,7 @@ def make_scheduler_start(deps: SchedulerDeps) -> StartFn:
             popen=deps.popen,
             secrets=deps.secrets,
             budget=deps.budget,
+            disabled_web_tiers=deps.disabled_web_tiers or [],
         )
 
     return start

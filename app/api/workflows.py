@@ -1,10 +1,12 @@
 import mimetypes
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from sfvf.context import BudgetConfig
 from sfvf.providers import capabilities_offered
 
 from app.paths import is_safe_path_segment, safe_join
@@ -14,12 +16,37 @@ from app.registry.validate import WorkflowEntry
 router = APIRouter(prefix="/api")
 
 
+def configured_secret_names(secrets: Mapping[str, str]) -> set[str]:
+    """Secret names whose stored VALUE is non-blank. A blank/whitespace value is not a usable
+    credential, so its provider must not be treated as configured for capability availability
+    (otherwise the capability is offered at scan time but refused at runtime)."""
+    return {name for name, value in secrets.items() if isinstance(value, str) and value.strip()}
+
+
+def _serpapi_has_ceiling(budget: BudgetConfig | None) -> bool:
+    return budget is not None and ("serpapi" in budget.per_run or "serpapi" in budget.per_day)
+
+
 class RegistryHolder:
-    def __init__(self, workflows_dir: Path, *, configured: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        workflows_dir: Path,
+        *,
+        configured: set[str] | None = None,
+        disabled_web_tiers: list[str] | None = None,
+        budget: BudgetConfig | None = None,
+    ) -> None:
         self.workflows_dir = workflows_dir
-        self._offered: frozenset[str] | None = (
-            None if configured is None else capabilities_offered(set(configured))
-        )
+        offered = None if configured is None else capabilities_offered(set(configured))
+        if offered is not None:
+            if disabled_web_tiers:
+                offered = offered - {f"web.images.{tier}" for tier in disabled_web_tiers}
+            # DESIGN §6: the paid web tier needs a configured ceiling for its meter;
+            # without one every web search is refused at runtime, so the capability
+            # must not be offered.
+            if "web.images.web" in offered and not _serpapi_has_ceiling(budget):
+                offered = offered - {"web.images.web"}
+        self._offered: frozenset[str] | None = offered
         self.snapshot: list[WorkflowEntry] = scan(workflows_dir, offered=self._offered)
 
     def rescan(self) -> list[WorkflowEntry]:
