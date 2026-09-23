@@ -518,6 +518,60 @@ def test_web_search_retains_the_charge_when_a_billed_200_body_is_malformed(
     assert not released, "a billed 200 must NOT release the reserve to $0 on a parse failure"
 
 
+# --- per-search price: the ceiling must bound REAL spend (default >= priciest standard plan) ------
+# (Cross-family Review B P1: reserving/reconciling a flat $0.02 under-charges — SerpApi's priciest
+#  standard plan, Starter, is $25/1k = $0.025/search, so a $0.09 ceiling that "should" admit 3
+#  searches would admit 4, recording $0.08 for $0.10 of real spend. The default per-search price
+#  must be >= $0.025, and an owner may override it with their plan rate via estimates["serpapi"];
+#  reserve AND recorded cost must both use that amount.)
+
+
+def test_serpapi_default_price_bounds_the_daily_ceiling_at_the_starter_rate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No configured estimate => the conservative default (>= $0.025) governs. A $0.09/day ceiling
+    # admits exactly 3 searches (3*0.025 = 0.075 <= 0.09); the 4th (0.10 > 0.09) is refused before
+    # dispatch. At the old $0.02 the 4th (0.08 <= 0.09) was wrongly admitted.
+    seen = _install_mock(monkeypatch, _ok)
+    budget = BudgetConfig(
+        ledger_path=tmp_path / "budget" / "ledger.jsonl",
+        per_day={"serpapi": 0.09},
+        estimates={},
+    )
+    ctx = _ctx(tmp_path, budget=budget)
+    for _ in range(3):
+        assert _run(ctx, lambda: media.web.search("barn", sources=("web",)))  # admitted
+    assert len(seen) == 3
+    with pytest.raises(BudgetError):
+        _run(ctx, lambda: media.web.search("barn", sources=("web",)))
+    assert len(seen) == 3, "the 4th search exceeds $0.09 at the >=$0.025 default rate"
+
+
+def test_a_configured_serpapi_rate_drives_both_the_reserve_and_the_recorded_cost(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # When the owner configures their plan's per-search rate, BOTH the reserve (ceiling math) and
+    # the recorded cost use it — not a hardcoded default. The old code reconciled a flat $0.02, so
+    # any plan priced above that under-counted spend and busted the ceiling.
+    seen = _install_mock(monkeypatch, _ok)
+    budget = BudgetConfig(
+        ledger_path=tmp_path / "budget" / "ledger.jsonl",
+        per_day={"serpapi": 0.09},
+        estimates={"serpapi": 0.04},  # the owner's plan rate
+    )
+    ctx = _ctx(tmp_path, budget=budget)
+    assert _run(ctx, lambda: media.web.search("barn", sources=("web",)))
+    events = _cost_events(capsys.readouterr().out)
+    assert events and events[-1]["amount"] == pytest.approx(0.04), (
+        "record_cost must use the configured rate, not the hardcoded default"
+    )
+    # the ceiling uses 0.04 too: a 2nd is admitted (0.08 <= 0.09), a 3rd refused (0.12 > 0.09)
+    assert _run(ctx, lambda: media.web.search("barn", sources=("web",)))
+    with pytest.raises(BudgetError):
+        _run(ctx, lambda: media.web.search("barn", sources=("web",)))
+    assert len(seen) == 2, "the reserve honours the configured $0.04 rate"
+
+
 def test_repeated_billed_but_malformed_200s_accumulate_toward_the_serpapi_ceiling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
