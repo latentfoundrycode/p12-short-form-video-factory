@@ -143,6 +143,11 @@ class ContextFile(_ContextModel):
         default=None,
         description="Budget-guard config; when set, paid calls are gated before spending.",
     )
+    disabled_web_tiers: list[str] = Field(
+        default_factory=list,
+        description="Owner governance off-switch (DESIGN §5): web-image tiers refused at runtime "
+        "even when their key is present. Owner-controlled, distinct from workflow `settings`.",
+    )
     library_facets: list[LibraryFacetDecl] = Field(
         default_factory=list,
         description="The workflow's declared library facet vocabulary (§7.4).",
@@ -488,6 +493,7 @@ class Context:
         self.workflow_dir = file.paths.workflow
         self.artifacts = file.paths.artifacts
         self.library = self._make_library()
+        self._disabled_web_tiers = frozenset(file.disabled_web_tiers)
 
     def _make_library(self) -> Library | None:
         root = self._file.paths.library
@@ -505,6 +511,10 @@ class Context:
         The value is never logged. The encrypted store is out of scope.
         """
         return str(self._file.secrets[name])
+
+    def web_tier_enabled(self, tier: str) -> bool:
+        """False when the owner has disabled this web-image tier (DESIGN §5 off-switch)."""
+        return tier not in self._disabled_web_tiers
 
     def budget_estimate(self, meter: str) -> float | None:
         """The owner-configured per-call cost estimate for `meter`, or None when unset/no budget.

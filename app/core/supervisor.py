@@ -94,6 +94,7 @@ class _ContextWiring:
     secrets: dict[str, str]
     gates_auto: bool = False
     budget: BudgetConfig | None = None
+    disabled_web_tiers: list[str] = field(default_factory=list)
     # Library namespace root + declared facets, computed once per run and written into every
     # context.json so `ctx.library` is live. Not mode-scoped: dry/real is the overlay, not the path.
     # `library_overlay_root` is a single per-run overlay shared across prepare() and every video,
@@ -290,6 +291,7 @@ def _make_context(
         previous=previous,
         shared=shared_payload,
         budget=wiring.budget,
+        disabled_web_tiers=wiring.disabled_web_tiers,
         library_facets=wiring.library_facets,
     )
 
@@ -394,6 +396,7 @@ def run_request(
     step_concurrency: int = 1,
     secrets: Mapping[str, str] | None = None,
     budget: BudgetConfig | None = None,
+    disabled_web_tiers: list[str] | None = None,
 ) -> RunRequestResult:
     workflow_dir = workflow_dir.resolve()
     manifest = parse_manifest_toml((workflow_dir / "workflow.toml").read_text(encoding="utf-8"))
@@ -445,6 +448,7 @@ def run_request(
             step_concurrency=step_concurrency,
             secrets=injected,
             budget=budget,
+            disabled_web_tiers=disabled_web_tiers or [],
             library_root=library_root,
             library_facets=library_facets,
             library_overlay_root=library_overlay_root,

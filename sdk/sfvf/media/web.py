@@ -202,6 +202,10 @@ class SourcedImage(TypedDict):
     relevance: Relevance
 
 
+class WebTierDisabledError(RuntimeError):
+    """A search/source targeted a web-image tier the owner disabled at runtime (DESIGN §5)."""
+
+
 def search(
     query: str,
     *,
@@ -213,6 +217,11 @@ def search(
     if not sources or any(s not in ("commons", "web") for s in sources):
         raise ValueError(
             f"sources must be a non-empty subset of ('commons','web'); got {sources!r}"
+        )
+    disabled = [s for s in sources if not ctx.web_tier_enabled(s)]
+    if disabled:
+        raise WebTierDisabledError(
+            f"web-image tier(s) {disabled} disabled by owner policy (DESIGN §5 off-switch)"
         )
     if ctx.dry_run:
         n = max(0, min(limit, _STUB_POOL))

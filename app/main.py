@@ -30,6 +30,7 @@ from app.core.scheduler_runner import SchedulerDeps, SchedulerDriver, make_sched
 from app.core.schedules import SCHEDULES_PATH
 from app.core.secrets import SecretStore, _store_path
 from app.core.supervisor import EnsureEnv, PopenFn
+from app.core.web_tiers import load_disabled_web_tiers
 from app.paths import APP_ROOT, RUNS_DIR, WEB_DIR, WORKFLOWS_DIR
 
 
@@ -73,6 +74,7 @@ def create_app(
             scheduler_schedules_path: Path = scheduler_app.state.schedules_path
             scheduler_secrets: Mapping[str, str] = scheduler_app.state.secrets
             scheduler_budget: BudgetConfig | None = scheduler_app.state.budget
+            scheduler_disabled_web_tiers: list[str] = scheduler_app.state.disabled_web_tiers
             deps = SchedulerDeps(
                 resolve_workflow=resolve_workflow,
                 runs_dir=scheduler_runs_dir,
@@ -80,6 +82,7 @@ def create_app(
                 popen=scheduler_popen,
                 secrets=scheduler_secrets,
                 budget=scheduler_budget,
+                disabled_web_tiers=scheduler_disabled_web_tiers,
             )
             driver = SchedulerDriver(
                 schedules_path=scheduler_schedules_path,
@@ -105,6 +108,7 @@ def create_app(
     application.state.popen = popen
     application.state.secrets = dict(resolved)
     application.state.budget = budget if budget is not None else load_budget_config()
+    application.state.disabled_web_tiers = load_disabled_web_tiers()
     application.state.learning_staging_dir = learning_staging_dir or (
         APP_ROOT / "state" / "learning-staging"
     )
