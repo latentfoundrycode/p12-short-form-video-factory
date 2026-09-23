@@ -38,6 +38,7 @@ from app.core.records import (
     create_request,
     update_request,
     write_json_atomic,
+    write_json_value_atomic,
     write_video,
 )
 from app.core.secrets import subprocess_env
@@ -313,13 +314,14 @@ def _scrub_context_secrets(context_path: Path) -> None:
 def _scrub_result_secrets(result_path: Path, secret_values: frozenset[str]) -> None:
     """Redact any injected secret VALUES from an on-disk result.json, best-effort. Covers the
     prepare FAILURE path (prepare wrote result.json then exited non-zero, so the success-path
-    redaction was skipped); result.json, unlike context.json, is downloadable. Never raises."""
+    redaction was skipped) AND the ordinary null/scalar/string/array payloads; result.json, unlike
+    context.json, is downloadable. Never raises."""
     try:
         if not result_path.is_file():
             return
         payload = json.loads(result_path.read_text(encoding="utf-8"))
-        write_json_atomic(result_path, _redact_secrets(payload, secret_values))
-    except (OSError, ValueError):
+        write_json_value_atomic(result_path, _redact_secrets(payload, secret_values))
+    except (OSError, ValueError, TypeError):
         return
 
 
