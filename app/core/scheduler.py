@@ -60,7 +60,7 @@ def read_fired(path: Path) -> set[str]:
     """Load persisted fired slot keys. Best-effort: a missing/corrupt/non-list file yields set()."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError, RecursionError):
         return set()
     if not isinstance(data, list):
         return set()
