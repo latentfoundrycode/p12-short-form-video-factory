@@ -790,18 +790,24 @@ def _cached_ok(_request: httpx2.Request, _n: int) -> httpx2.Response:
     )
 
 
-def test_a_cached_serpapi_response_is_not_charged(
+def test_a_cached_serpapi_hit_bills_zero_but_records_the_fresh_price(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    # A cached hit is FREE (no budget consumed) but must still teach cost forecasting the fresh
+    # per-search price: emit a cost event with the normal price flagged `cached=True` (which the
+    # supervisor counts toward the `uncached` forecast total but NOT toward `actual` spend), while
+    # reconciling the budget LEDGER to $0. Emitting $0 with cached=False (the bug) would teach the
+    # forecaster that fresh searches are free.
     seen = _install_mock(monkeypatch, _cached_ok)
     out = _run(_ctx(tmp_path), lambda: media.web.search("barn", sources=("web",), limit=5))
     assert len(seen) == 1
     assert [c["url"] for c in out] == [r["original"] for r in _RESULTS]  # candidates still mapped
-    events = _cost_events(capsys.readouterr().out)
-    assert all(e["amount"] == 0.0 for e in events if e["meter"] == "serpapi"), (
-        "a cached (free) SerpApi hit must be reconciled to $0, not charged the per-search price"
-    )
-    # the reserve must be reconciled to 0 in the ledger (no dangling per-search charge)
+    events = [e for e in _cost_events(capsys.readouterr().out) if e["meter"] == "serpapi"]
+    assert events, "a cost event is still emitted for forecasting"
+    ev = events[-1]
+    assert ev["amount"] > 0.0, "the FRESH per-search price is recorded for forecasting, not $0"
+    assert ev["cached"] is True, "a cached hit is flagged cached=True (excluded from actual spend)"
+    # the budget LEDGER, though, is reconciled to $0 — a free cached hit consumes no ceiling
     actual = [
         e
         for e in _ledger_entries(tmp_path)
