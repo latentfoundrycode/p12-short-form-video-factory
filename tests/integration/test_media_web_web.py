@@ -721,3 +721,59 @@ def test_web_tier_enabled_by_default_when_not_disabled(tmp_path: Path) -> None:
     ctx_off = _ctx(tmp_path, disabled_web_tiers=["web"])
     assert ctx_off.web_tier_enabled("web") is False
     assert ctx_off.web_tier_enabled("commons") is True
+
+
+# --- sources is a SUBSET: a repeated tier must not dispatch/charge the same paid search twice -----
+
+
+def test_duplicate_sources_dispatch_and_charge_each_tier_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # sources has set semantics ("a subset of (commons, web)"); sources=("web","web") must dispatch
+    # the paid SerpApi search ONCE and record ONE charge, not two, then behave like ("web",).
+    seen = _install_mock(monkeypatch, _ok)
+    out = _run(
+        _ctx(tmp_path),
+        lambda: media.web.search("barn", sources=("web", "web"), limit=5),
+    )
+    assert len(seen) == 1, "a repeated tier must dispatch only once"
+    events = _cost_events(capsys.readouterr().out)
+    assert len(events) == 1, "a repeated tier must not double-charge the paid search"
+    assert [c["url"] for c in out] == [r["original"] for r in _RESULTS]
+
+
+def test_duplicate_mixed_sources_are_canonicalized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = _install_mock(monkeypatch, _ok)
+    commons_calls = {"n": 0}
+
+    def openverse_client() -> httpx2.Client:
+        def handler(_req: httpx2.Request) -> httpx2.Response:
+            commons_calls["n"] += 1
+            return httpx2.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "url": "https://cdn.example.invalid/commons.jpg",
+                            "license": "cc0",
+                            "license_version": "1.0",
+                            "attribution": "x",
+                            "title": "c",
+                        }
+                    ]
+                },
+            )
+
+        return httpx2.Client(
+            base_url="https://api.openverse.org/v1", transport=httpx2.MockTransport(handler)
+        )
+
+    monkeypatch.setattr(openverse, "_client", openverse_client)
+    _run(
+        _ctx(tmp_path),
+        lambda: media.web.search("barn", sources=("commons", "web", "commons"), limit=5),
+    )
+    assert commons_calls["n"] == 1, "commons dispatched once despite the repeat"
+    assert len(seen) == 1, "web dispatched once despite the repeated commons"
