@@ -176,3 +176,29 @@ def test_check_atomic_budget_refuses_on_a_poisoned_ledger(tmp_path: Path) -> Non
         "r1",
     )
     assert refusal is not None, "a poisoned ledger must refuse the run, not raise"
+
+
+def test_per_run_headroom_isolates_a_sibling_workflow_sharing_the_run_id(tmp_path: Path) -> None:
+    # H22: two different workflows started in the same UTC second share a run_id. Per-run
+    # accounting must be namespaced by workflow_id so a sibling's spend does not consume this
+    # workflow's per-run headroom. per_day stays a global cap; keep it roomy so only per_run binds.
+    budget = _budget(tmp_path, per_run={"openrouter": 1.0}, per_day={"openrouter": 100.0})
+    guard = BudgetGuard(
+        budget.ledger_path,
+        ceilings=Ceilings(per_run={}, per_day={}),
+        kill_switch_path=None,
+        now=lambda: datetime.now(UTC),
+    )
+    guard.reserve(
+        run_id="run-1", workflow_id="wf-other", meter="openrouter", unit="usd", estimate=0.9
+    )
+    # wf-mine shares run-1 but owns its per-run headroom → 0.5 fits under 1.0.
+    assert (
+        check_atomic_budget(_est({"openrouter": 0.5}), 1.0, budget, "run-1", workflow_id="wf-mine")
+        is None
+    )
+    # the sibling's own namespace still carries its 0.9 → 0.5 breaches (0.9 + 0.5 > 1.0).
+    msg = check_atomic_budget(
+        _est({"openrouter": 0.5}), 1.0, budget, "run-1", workflow_id="wf-other"
+    )
+    assert msg is not None and "openrouter" in msg
