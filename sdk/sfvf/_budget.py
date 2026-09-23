@@ -346,6 +346,7 @@ class BudgetGuard:
     def reconcile(self, token: str, *, actual: float, note: str = "") -> None:
         with self._held():
             amount = _require_amount(actual)
+            self._snapshot()  # fail closed on a corrupt ledger before appending (H23)
             run_id = ""
             meter = ""
             unit = ""
