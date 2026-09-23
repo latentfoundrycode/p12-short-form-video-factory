@@ -777,3 +777,50 @@ def test_duplicate_mixed_sources_are_canonicalized(
     )
     assert commons_calls["n"] == 1, "commons dispatched once despite the repeat"
     assert len(seen) == 1, "web dispatched once despite the repeated commons"
+
+
+# --- SerpApi cache hits are FREE: a `search_metadata.status == "Cached"` 200 is not charged -------
+
+
+def _cached_ok(_request: httpx2.Request, _n: int) -> httpx2.Response:
+    # SerpApi serves a repeated query from its cache and marks it free with status "Cached".
+    return httpx2.Response(
+        200, json={"search_metadata": {"status": "Cached"}, "images_results": _RESULTS}
+    )
+
+
+def test_a_cached_serpapi_response_is_not_charged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    seen = _install_mock(monkeypatch, _cached_ok)
+    out = _run(_ctx(tmp_path), lambda: media.web.search("barn", sources=("web",), limit=5))
+    assert len(seen) == 1
+    assert [c["url"] for c in out] == [r["original"] for r in _RESULTS]  # candidates still mapped
+    events = _cost_events(capsys.readouterr().out)
+    assert all(e["amount"] == 0.0 for e in events if e["meter"] == "serpapi"), (
+        "a cached (free) SerpApi hit must be reconciled to $0, not charged the per-search price"
+    )
+    # the reserve must be reconciled to 0 in the ledger (no dangling per-search charge)
+    actual = [
+        e
+        for e in _ledger_entries(tmp_path)
+        if e.get("kind") == "actual" and e.get("meter") == "serpapi"
+    ]
+    assert actual and all(e["amount"] == 0.0 for e in actual)
+
+
+def test_repeated_cached_searches_do_not_exhaust_the_ceiling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # With free cached hits reconciled to $0, a tight $0.05/day ceiling never accrues, so repeated
+    # cached searches all proceed. (At the buggy full-charge behaviour the 3rd would be refused.)
+    seen = _install_mock(monkeypatch, _cached_ok)
+    budget = BudgetConfig(
+        ledger_path=tmp_path / "budget" / "ledger.jsonl",
+        per_day={"serpapi": 0.05},
+        estimates={},
+    )
+    ctx = _ctx(tmp_path, budget=budget)
+    for _ in range(5):
+        assert _run(ctx, lambda: media.web.search("barn", sources=("web",), limit=5))
+    assert len(seen) == 5, "free cached searches must not consume the ceiling"
