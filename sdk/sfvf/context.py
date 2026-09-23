@@ -567,7 +567,13 @@ class Context:
         else:
             reserve_amount = configured
         guard = self._budget_guard(cfg)
-        return guard.reserve(run_id=self.run_id, meter=meter, unit=unit, estimate=reserve_amount)
+        return guard.reserve(
+            run_id=self.run_id,
+            meter=meter,
+            unit=unit,
+            estimate=reserve_amount,
+            workflow_id=self.workflow_id,
+        )
 
     def _budget_reconcile(self, token: str | None, *, actual: float, note: str = "") -> None:
         """Reconcile a reservation with the real amount. No-op when token is None."""

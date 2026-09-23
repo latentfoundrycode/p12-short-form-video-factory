@@ -71,6 +71,7 @@ def make_openrouter_completion(
     budget: BudgetConfig | None,
     model: str,
     run_id: str,
+    workflow_id: str = "",
     client_factory: Callable[[], httpx2.Client] = _default_client_factory,
     sleep: Callable[[float], None] = time.sleep,
 ) -> CompleteFn:
@@ -95,6 +96,7 @@ def make_openrouter_completion(
         )
         token = guard.reserve(
             run_id=run_id,
+            workflow_id=workflow_id,
             meter=LEARNING_METER,
             unit="usd",
             estimate=estimate,

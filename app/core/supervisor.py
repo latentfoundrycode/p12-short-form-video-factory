@@ -314,7 +314,9 @@ def _budget_report(wiring: _ContextWiring) -> dict[str, Any] | None:
     if wiring.budget is None:
         return None
     try:
-        spend = read_run_spend(wiring.budget.ledger_path, wiring.run_id)
+        spend = read_run_spend(
+            wiring.budget.ledger_path, wiring.run_id, workflow_id=wiring.workflow_id
+        )
     except (BudgetError, ValueError, OSError, OverflowError):
         spend = {}
     return {
@@ -475,7 +477,9 @@ def run_request(
             affects = frozenset(p.key for p in manifest.params if p.affects_cost)
             est = estimate_cost(run_dir.parent.parent, workflow_id, params, affects)
             factor = workflow.safety_factor if workflow.safety_factor is not None else 1.0
-            refusal = check_atomic_budget(est, factor, wiring.budget, run_id)
+            refusal = check_atomic_budget(
+                est, factor, wiring.budget, run_id, workflow_id=wiring.workflow_id
+            )
             if refusal is not None:
                 state.record_event(
                     run_dir,
