@@ -614,13 +614,22 @@ not-applicable.
   review (attribute-corruption residual); covered by
   `tests/sdk/test_budget.py::test_a_non_string_meter_on_a_spend_line_fails_closed`.
   _Source: H22 security review; closed by this PR._
-- **H18 — failed-prepare `result.json` not redacted** (resolved by this PR). `_run_prepare` scrubbed
-  `context.json` in its `finally` on both paths but redacted `result.json` only on the SUCCESS path,
-  so a `prepare()` that wrote `shared/result.json` with an injected secret VALUE then exited non-zero
-  left the secret unredacted on disk — in a file that, unlike `context.json`, is downloadable via
-  `get_run_file`. A new best-effort `_scrub_result_secrets` helper (mirroring `_scrub_context_secrets`)
-  now runs in the `finally`, redacting `result.json` uniformly on both paths; never raises during
-  teardown. Covered by `tests/core/test_secret_redaction.py::test_scrub_result_secrets_redacts_an_on_disk_result`,
-  `::test_scrub_result_secrets_is_best_effort_on_missing_or_bad_file`, and (end-to-end)
-  `::test_failed_prepare_result_secret_is_redacted_on_disk_and_download` with the
-  `leaks_secret_prepare_fail` stub. _Source: S2c review B residual note (PR #37); closed by this PR._
+- **H18 — failed-prepare `result.json` secret exposure** (resolved by this PR). `_run_prepare`
+  redacted `result.json` only on the SUCCESS path, so a `prepare()` that wrote `shared/result.json`
+  with an injected secret VALUE then exited non-zero left the secret on disk — in a file that, unlike
+  `context.json`, was **downloadable** via `get_run_file`. Closed on two layers: **(1) the download
+  exfil vector** — `result.json` now mirrors `context.json`: `get_run_file` returns 404 for it and
+  `list_run_files` excludes it, so it is never served regardless of the bytes/encoding a workflow
+  wrote (byte-level value redaction alone could not cover every encoding — a UTF-16 `result.json`
+  decodes back to the secret). The engine reads `result.json` from disk directly, not via the
+  endpoint, so this does not affect it. **(2) On-disk defence-in-depth** — a best-effort
+  `_scrub_result_secrets` runs in the `_run_prepare` `finally` on every exit path, redacting
+  `result.json` for any payload (reads raw bytes; structured JSON redaction primary, byte-level
+  fallback stripping each secret's plain and JSON-escaped forms on an unparsable/undecodable/deeply
+  nested file); it never raises during teardown. Covered by
+  `tests/api/test_secret_exposure.py::test_result_json_is_not_downloadable`,
+  `tests/core/test_secret_redaction.py::test_scrub_result_secrets_*` (redaction, non-object payloads,
+  pathologically nested, invalid UTF-8, JSON-escaped fallback, missing/bad file), and
+  `::test_failed_prepare_result_secret_is_redacted_on_disk_and_download`. Residuals recorded
+  separately: H61 (`artifacts/**`, `.steps/**` served without redaction), H62 (success-path re-parse
+  crash on a pathological return). _Source: S2c review B residual note (PR #37); closed by this PR._
