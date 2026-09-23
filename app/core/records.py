@@ -126,14 +126,14 @@ def write_json_value_atomic(path: Path, value: Any) -> None:
         raise
 
 
-def write_text_atomic(path: Path, text: str) -> None:
-    """Atomically write raw text to path (temp file + fsync + os.replace)."""
+def write_bytes_atomic(path: Path, data: bytes) -> None:
+    """Atomically write raw bytes to path (temp file + fsync + os.replace)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     tmp_path = Path(tmp_name)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(text)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
         _retry_on_permission_error(lambda: os.replace(tmp_path, path))  # noqa: PTH105  # os.replace is atomic on Windows

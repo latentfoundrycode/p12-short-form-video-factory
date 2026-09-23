@@ -37,9 +37,9 @@ from app.core.records import (
     append_event,
     create_request,
     update_request,
+    write_bytes_atomic,
     write_json_atomic,
     write_json_value_atomic,
-    write_text_atomic,
     write_video,
 )
 from app.core.secrets import subprocess_env
@@ -313,29 +313,39 @@ def _scrub_context_secrets(context_path: Path) -> None:
 
 
 def _scrub_result_secrets(result_path: Path, secret_values: frozenset[str]) -> None:
-    """Redact any injected secret VALUES from an on-disk result.json, best-effort, covering the
-    prepare FAILURE path and any payload shape. Structured redaction is attempted first; if it fails
-    (unparsable, or a pathologically deep payload that would raise RecursionError), a text-level
-    replacement strips the secret VALUES without parsing JSON. Never raises."""
+    """Strip any injected secret VALUE from an on-disk result.json, best-effort, so it cannot
+    persist in a downloadable file. Reads raw bytes (no decode step can crash). Structured JSON
+    redaction is tried first (clean output, handles escaped values); on ANY failure — unparsable,
+    undecodable, or pathologically deep — a byte-level pass strips each secret's plain AND
+    JSON-escaped forms without parsing. Never raises."""
+    real = sorted((v for v in secret_values if v), key=len, reverse=True)
+    if not real:
+        return
     try:
         if not result_path.is_file():
             return
-        raw = result_path.read_text(encoding="utf-8")
+        raw = result_path.read_bytes()
     except OSError:
         return
     try:
-        payload = json.loads(raw)
+        payload = json.loads(raw.decode("utf-8"))
         write_json_value_atomic(result_path, _redact_secrets(payload, secret_values))
         return
     except (OSError, ValueError, TypeError, RecursionError):
-        pass  # fall through to a text-level pass that cannot recurse or be defeated by structure
-    real = sorted((v for v in secret_values if v), key=len, reverse=True)
-    redacted = raw
+        pass  # undecodable / unparsable / pathologically deep -> byte-level fallback below
+    targets: list[bytes] = []
     for value in real:
-        redacted = redacted.replace(value, "[REDACTED]")
+        targets.append(value.encode("utf-8"))
+        # the escaped inner form as it appears inside a JSON string
+        escaped = json.dumps(value)[1:-1]
+        if escaped != value:
+            targets.append(escaped.encode("utf-8"))
+    redacted = raw
+    for target in sorted(targets, key=len, reverse=True):
+        redacted = redacted.replace(target, b"[REDACTED]")
     if redacted != raw:
         try:
-            write_text_atomic(result_path, redacted)
+            write_bytes_atomic(result_path, redacted)
         except OSError:
             return
 
