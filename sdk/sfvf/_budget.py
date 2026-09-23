@@ -106,7 +106,7 @@ def _read_ledger(path: Path) -> list[dict[str, Any]]:
         return []
     try:
         text = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError as exc:
+    except (UnicodeDecodeError, OSError) as exc:
         raise BudgetError("budget ledger is unreadable") from exc
     if not text:
         return []
@@ -269,7 +269,10 @@ class BudgetGuard:
             yield
 
     def _snapshot(self) -> dict[str, _TokenState]:
-        return _token_states(_read_ledger(self._ledger_path))
+        try:
+            return _token_states(_read_ledger(self._ledger_path))
+        except (ValueError, OverflowError) as exc:
+            raise BudgetError("budget ledger is unreadable") from exc
 
     def _record(
         self,

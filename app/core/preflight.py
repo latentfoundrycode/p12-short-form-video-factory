@@ -10,7 +10,7 @@ needs the Stage-F scheduler).
 
 from __future__ import annotations
 
-from sfvf._budget import BudgetGuard, Ceilings
+from sfvf._budget import BudgetError, BudgetGuard, Ceilings
 from sfvf.context import BudgetConfig
 
 from app.core.estimate import Estimate
@@ -37,10 +37,13 @@ def check_atomic_budget(
     )
     for meter, amount in estimate.per_meter.items():
         need = amount * safety_factor
-        if meter in budget.per_run and need > budget.per_run[meter] - guard.run_total(
-            run_id, meter
-        ):
+        try:
+            run_used = guard.run_total(run_id, meter)
+            day_used = guard.day_total(meter)
+        except BudgetError as exc:
+            return f"budget ledger unreadable, refusing to start atomic run: {exc}"
+        if meter in budget.per_run and need > budget.per_run[meter] - run_used:
             return f"estimated {meter} cost {need:g} exceeds per-run budget"
-        if meter in budget.per_day and need > budget.per_day[meter] - guard.day_total(meter):
+        if meter in budget.per_day and need > budget.per_day[meter] - day_used:
             return f"estimated {meter} cost {need:g} exceeds per-day budget"
     return None
