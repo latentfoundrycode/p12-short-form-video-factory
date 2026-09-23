@@ -21,6 +21,7 @@ call (BudgetError) before any request reaches the network — an un-budgeted pai
 The keyless commons/Openverse tier stays free and un-metered; only the `web` tier reserves.
 """
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -824,3 +825,41 @@ def test_repeated_cached_searches_do_not_exhaust_the_ceiling(
     for _ in range(5):
         assert _run(ctx, lambda: media.web.search("barn", sources=("web",), limit=5))
     assert len(seen) == 5, "free cached searches must not consume the ceiling"
+
+
+def _cached_malformed(_request: httpx2.Request, _n: int) -> httpx2.Response:
+    # A cached (free) 200 whose result has a non-numeric dimension: the mapping's int() will raise.
+    return httpx2.Response(
+        200,
+        json={
+            "search_metadata": {"status": "Cached"},
+            "images_results": [
+                {
+                    "original": "https://cdn.example.invalid/x.jpg",
+                    "original_width": "not-a-number",
+                    "original_height": 10,
+                    "title": "x",
+                    "thumbnail": "",
+                }
+            ],
+        },
+    )
+
+
+def test_a_cached_response_is_free_even_if_result_mapping_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A cached response is KNOWN free once parsed; reconciliation to $0 must happen BEFORE the
+    # fallible mapping loop, so a malformed field can't leave the full reservation charged (which
+    # would let repeated free-but-malformed cache hits exhaust the ceiling). Review B P1.
+    _install_mock(monkeypatch, _cached_malformed)
+    # the malformed dimension may raise; the billing must still be correct regardless
+    with contextlib.suppress(Exception):
+        _run(_ctx(tmp_path), lambda: media.web.search("barn", sources=("web",)))
+    entries = _ledger_entries(tmp_path)
+    reserved = [e for e in entries if e.get("kind") == "reserved" and e.get("meter") == "serpapi"]
+    actual = [e for e in entries if e.get("kind") == "actual" and e.get("meter") == "serpapi"]
+    assert reserved, "a reservation was taken for the paid search"
+    assert actual and all(e["amount"] == 0.0 for e in actual), (
+        "a cached hit is free and must reconcile to $0 even when result mapping fails"
+    )
