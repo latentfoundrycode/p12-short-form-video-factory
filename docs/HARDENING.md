@@ -553,3 +553,11 @@ increments that logged them.
   headroom messages and the empty-estimate → None contract are unchanged. Covered by
   `tests/core/test_preflight.py::test_check_atomic_budget_refuses_on_a_poisoned_ledger`.
   _Source: C-4 review B (P2); closed by this PR (with H23)._
+- **H59 — `_token_states` silently skips a reserved/actual line missing its token** (resolved by this
+  PR). A `reserved`/`actual` ledger line without a token is corruption (the engine always writes one);
+  skipping it under-counts spend and lets a later reserve overshoot. `_token_states` now raises
+  `BudgetError("budget ledger spend entry is missing its token")` for those lines. A non-spend
+  token-less line is still skipped. `_snapshot` does not catch `BudgetError`, so the refusal
+  propagates; `read_run_spend` stays best-effort. Covered by
+  `tests/sdk/test_budget.py::test_a_spend_record_missing_its_token_fails_closed`.
+  _Source: H23 completeness review; closed by this PR._

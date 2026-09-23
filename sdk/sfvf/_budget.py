@@ -102,9 +102,9 @@ def _format_ts(moment: datetime) -> str:
 
 
 def _read_ledger(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
-        return []
     try:
+        if not path.is_file():
+            return []
         text = path.read_text(encoding="utf-8")
     except (UnicodeDecodeError, OSError) as exc:
         raise BudgetError("budget ledger is unreadable") from exc
@@ -134,10 +134,12 @@ def _token_states(entries: list[dict[str, Any]]) -> dict[str, _TokenState]:
     states: dict[str, _TokenState] = {}
     for entry in entries:
         token = entry.get("token")
+        kind = entry.get("kind")
         if not isinstance(token, str) or not token:
+            if kind in ("reserved", "actual"):
+                raise BudgetError("budget ledger spend entry is missing its token")
             continue
         state = states.setdefault(token, _TokenState())
-        kind = entry.get("kind")
         if kind == "reserved":
             state.reserved_amount = _require_amount(entry.get("amount"))
             meter = _as_str(entry.get("meter"))
@@ -193,25 +195,29 @@ def read_run_spend(ledger_path: Path, run_id: str) -> dict[str, float]:
 
 
 def _append_line(path: Path, record: dict[str, str | float]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = (json.dumps(record, allow_nan=False) + "\n").encode("utf-8")
-    if not path.is_file():
-        path.touch()
-    # r+b: Windows append mode cannot seek-and-read the last byte.
-    with path.open("r+b") as handle:
-        handle.seek(0, os.SEEK_END)
-        if handle.tell() > 0:
-            handle.seek(-1, os.SEEK_END)
-            if handle.read(1) != b"\n":
-                # Crash mid-append: that write never completed or returned a token. Drop the tail
-                # so the new record is not glued onto it (which would hide both lines).
-                handle.seek(0)
-                data = handle.read()
-                handle.seek(data.rfind(b"\n") + 1)
-                handle.truncate()
-        handle.write(payload)
-        handle.flush()
-        os.fsync(handle.fileno())
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.is_file():
+            path.touch()
+        # r+b: Windows append mode cannot seek-and-read the last byte.
+        with path.open("r+b") as handle:
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() > 0:
+                handle.seek(-1, os.SEEK_END)
+                if handle.read(1) != b"\n":
+                    # Crash mid-append: that write never completed or returned a
+                    # token. Drop the tail so the new record is not glued onto it
+                    # (which would hide both lines).
+                    handle.seek(0)
+                    data = handle.read()
+                    handle.seek(data.rfind(b"\n") + 1)
+                    handle.truncate()
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError as exc:
+        raise BudgetError("budget ledger is unwritable") from exc
 
 
 def _lock_exclusive(handle: BinaryIO) -> None:
@@ -236,9 +242,16 @@ def _unlock_exclusive(handle: BinaryIO) -> None:
 
 @contextmanager
 def _interprocess_lock(lock_path: Path) -> Iterator[None]:
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+b") as handle:
-        _lock_exclusive(handle)
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = lock_path.open("a+b")
+    except OSError as exc:
+        raise BudgetError("budget ledger lock is unavailable") from exc
+    with handle:
+        try:
+            _lock_exclusive(handle)
+        except OSError as exc:
+            raise BudgetError("budget ledger lock is unavailable") from exc
         try:
             yield
         finally:
