@@ -308,7 +308,7 @@ def _scrub_context_secrets(context_path: Path) -> None:
         if isinstance(data, dict) and data.get("secrets"):
             data["secrets"] = {}
             write_json_atomic(context_path, data)
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError, RecursionError):
         return
 
 
