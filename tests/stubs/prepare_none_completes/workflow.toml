@@ -1,0 +1,7 @@
+[workflow]
+id = "prepare_none_completes"
+name = "Prepare none, completes"
+version = "1.0.0"
+entrypoint = "main:run"
+prepare = "main:prepare"
+sdk = "1"

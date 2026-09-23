@@ -702,6 +702,8 @@ def list_run_files(workflow_id: str, run_id: str, request: Request) -> RunFilesO
         if (
             relative.name == "context.json"
             or resolved.name == "context.json"
+            or relative.as_posix() == "shared/result.json"
+            or resolved.relative_to(run_root).as_posix() == "shared/result.json"
             or any(part.startswith(".") for part in relative.parts)
         ):
             continue
@@ -726,7 +728,10 @@ def get_run_file(workflow_id: str, run_id: str, path: str, request: Request) -> 
         raise HTTPException(status_code=404)
     if not resolved.is_file():
         raise HTTPException(status_code=404)
-    if resolved.name == "context.json":
+    if (
+        resolved.name == "context.json"
+        or resolved.relative_to(run_dir.resolve()).as_posix() == "shared/result.json"
+    ):
         raise HTTPException(status_code=404)
     media_type, _encoding = mimetypes.guess_type(resolved.name)
     return FileResponse(resolved, media_type=media_type or "application/octet-stream")

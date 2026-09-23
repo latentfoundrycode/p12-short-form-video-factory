@@ -108,13 +108,15 @@ def _dump_owned(model: _RecordModel, optional: tuple[str, ...]) -> dict[str, Any
     return data
 
 
-def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
+def write_json_value_atomic(path: Path, value: Any) -> None:
+    """Atomically write any JSON-serialisable VALUE (object, array, string, number, null)
+    to path."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(dict(payload), handle, ensure_ascii=False, indent=2)
+            json.dump(value, handle, ensure_ascii=False, indent=2)
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
@@ -122,6 +124,26 @@ def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
+
+
+def write_bytes_atomic(path: Path, data: bytes) -> None:
+    """Atomically write raw bytes to path (temp file + fsync + os.replace)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _retry_on_permission_error(lambda: os.replace(tmp_path, path))  # noqa: PTH105  # os.replace is atomic on Windows
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
+    write_json_value_atomic(path, dict(payload))
 
 
 def read_json(path: Path) -> dict[str, Any]:

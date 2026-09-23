@@ -141,15 +141,6 @@ not-applicable.
   full inherited env — NOT a real vector (taskkill is a fixed trusted OS binary executing no workflow code),
   but routing it through `subprocess_env()` too would make "no spawn inherits the passphrase" universal.
   _Source: S1 review B (fixed S2a); S2a review A note (PR #35)._ Open (low, residual).
-- **H18 — failed-prepare `result.json` not redacted (residual).** S2c redacts the `prepare()` return payload and
-  rewrites `shared/result.json` on the SUCCESS path, and redacts the per-video `result`→`video.json` path, so no
-  injected secret VALUE persists into any consumed record. Residual (low): if a `prepare()` writes `result.json`
-  and then exits non-zero, `_run_prepare` returns `False, None` before the redact/rewrite, leaving that
-  failed-run `result.json` unredacted on disk — and (unlike `context.json`) it is downloadable via
-  `get_run_file`. Same defect class as the closed success-path leak; narrow trigger (prepare must both leak its
-  key into `result.json` AND fail after writing it). Fix: redact `result.json` best-effort in the `_run_prepare`
-  `finally` (covering both paths uniformly), or block `result.json` download alongside `context.json`.
-  _Source: S2c review B residual note (PR #37)._ Open (low, residual).
 - **H19 — budget-breaker model residuals (T2a).** The T2a `BudgetGuard` (`sfvf._budget`) is a hard
   pre-call gate; these are limits inherent to its minimal reserve-then-reconcile / calendar-day model,
   to close as the engine grows (T2b wiring + Stage C metering):
@@ -400,6 +391,26 @@ not-applicable.
   accumulate as background processes over many crashed runs. Low impact (no UI, no spend); a future
   hardening could kill the whole child process tree on `_run` exit (Windows: taskkill /T, or a job
   object). _Source: chrome-console fix follow-up._ Open.
+- **H61 — downloadable run files other than `result.json`/`context.json` get no value-level secret
+  redaction.** `get_run_file` (`app/api/runs.py`) blocks `context.json` by name and now serves a
+  scrubbed `result.json` (H18), and `events.jsonl` is redacted at write. But two served surfaces have
+  NO redaction pass: (a) `shared/artifacts/**` is listed and downloadable verbatim; (b) `.steps/**` is
+  hidden from the file *listing* (dot-prefixed) yet still directly downloadable by path via
+  `get_run_file` (no dot-part guard there). A workflow that writes an injected secret VALUE into an
+  artifact or a step-cache file would leak it on download, regardless of the H18 fix. Pre-existing;
+  narrow trigger (a workflow must write its own key into one of those files). Fix options: run a
+  best-effort value-redaction pass on served run files, and/or add a dot-part guard to `get_run_file`
+  so `.steps` is not fetchable by path. _Source: H18 security-auditor advisory (PR #152)._ Open (low).
+- **H62 — `_run_prepare` success-path re-parse crashes on a pathological `result.json`.** After the
+  `finally` scrub, the success path re-reads `result.json` with
+  `json.loads(result_path.read_text(encoding="utf-8"))`. A `prepare()` that RETURNS a pathologically
+  deep payload (≈2000 nested levels) makes that `json.loads` raise `RecursionError`, and an invalid
+  byte would make `read_text` raise `UnicodeDecodeError` — either crashes `_run_prepare` on the
+  success path (the failure path returns earlier and is unaffected). Pre-existing and NOT a secret
+  leak (the `finally` scrub already redacted the file by then); a robustness gap only, triggered by a
+  hostile/buggy prepare return. Fix: bound/relax the re-parse (guard `RecursionError`/decode there,
+  or reuse the already-parsed payload). _Source: H18 review A (diff-reviewer NOTED + security-auditor
+  advisory, PR #152)._ Open (low).
 
 ## Resolved
 
@@ -603,3 +614,24 @@ not-applicable.
   review (attribute-corruption residual); covered by
   `tests/sdk/test_budget.py::test_a_non_string_meter_on_a_spend_line_fails_closed`.
   _Source: H22 security review; closed by this PR._
+- **H18 — failed-prepare `result.json` secret exposure** (resolved by this PR). `_run_prepare`
+  redacted `result.json` only on the SUCCESS path, so a `prepare()` that wrote `shared/result.json`
+  with an injected secret VALUE then exited non-zero left the secret on disk — in a file that, unlike
+  `context.json`, was **downloadable** via `get_run_file`. Closed on two layers: **(1) the download
+  exfil vector** — the engine's prepare output at `shared/result.json` is never served: `get_run_file`
+  returns 404 for that exact (canonicalised, symlink-safe) path and `list_run_files` excludes it, so
+  it cannot be downloaded regardless of the bytes/encoding a workflow wrote (byte-level value
+  redaction alone could not cover every encoding — a UTF-16 `result.json` decodes back to the secret).
+  The block is PATH-scoped to `shared/result.json` (not the basename), so a workflow's own artifact
+  that merely shares the name stays served. The engine reads `shared/result.json` from disk directly,
+  not via the endpoint, so this does not affect it. **(2) On-disk defence-in-depth** — a best-effort
+  `_scrub_result_secrets` runs in the `_run_prepare` `finally` on every exit path, redacting
+  `result.json` for any payload (reads raw bytes; structured JSON redaction primary, byte-level
+  fallback stripping each secret's plain and JSON-escaped forms on an unparsable/undecodable/deeply
+  nested file); it never raises during teardown. Covered by
+  `tests/api/test_secret_exposure.py::test_shared_result_json_is_not_downloadable`,
+  `tests/core/test_secret_redaction.py::test_scrub_result_secrets_*` (redaction, non-object payloads,
+  pathologically nested, invalid UTF-8, JSON-escaped fallback, missing/bad file), and
+  `::test_failed_prepare_result_secret_is_redacted_on_disk_and_download`. Residuals recorded
+  separately: H61 (`artifacts/**`, `.steps/**` served without redaction), H62 (success-path re-parse
+  crash on a pathological return). _Source: S2c review B residual note (PR #37); closed by this PR._
