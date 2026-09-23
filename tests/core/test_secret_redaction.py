@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 import app.core.supervisor as supervisor_mod
 from app.core.env import EnvReady
-from app.core.supervisor import _redact_secrets, _RunState
+from app.core.supervisor import _redact_secrets, _RunState, _scrub_result_secrets
 from app.main import create_app
 
 _STUBS = Path(__file__).resolve().parent.parent / "stubs"
@@ -89,6 +89,36 @@ def test_redact_secrets_handles_overlapping_values():
     assert "sk-ab" not in dumped  # no prefix left
     assert "cdefghij" not in dumped  # no suffix of the longer value left
     assert "[REDACTED]" in dumped
+
+
+# --- H18: an on-disk result.json is scrubbed of secret values best-effort (failure path too) ---
+
+
+def test_scrub_result_secrets_redacts_an_on_disk_result(tmp_path: Path):
+    # H18: on the prepare FAILURE path (prepare wrote result.json then exited non-zero) the
+    # inline success-path redaction is skipped. The finally must scrub the file best-effort so a
+    # leaked secret VALUE never persists on disk (result.json, unlike context.json, is served).
+    result_path = tmp_path / "result.json"
+    result_path.write_text(
+        json.dumps({"script": "hello", "leaked": "sk-secret-xyz"}), encoding="utf-8"
+    )
+    _scrub_result_secrets(result_path, frozenset({"sk-secret-xyz"}))
+    dumped = result_path.read_text(encoding="utf-8")
+    assert "sk-secret-xyz" not in dumped  # the injected value is gone from disk
+    assert "[REDACTED]" in dumped
+    assert "hello" in dumped  # non-secret content preserved
+
+
+def test_scrub_result_secrets_is_best_effort_on_missing_or_bad_file(tmp_path: Path):
+    # Never raises: a missing file is a no-op, and unparsable JSON is left as-is (the download
+    # block / event redaction remain the backstops); scrubbing must not crash the run teardown.
+    missing = tmp_path / "absent.json"
+    _scrub_result_secrets(missing, frozenset({"sk-secret-xyz"}))  # no file → no-op, no raise
+    assert not missing.exists()
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not valid json", encoding="utf-8")
+    _scrub_result_secrets(bad, frozenset({"sk-secret-xyz"}))  # unparsable → no raise
+    assert bad.read_text(encoding="utf-8") == "{not valid json"
 
 
 # --- integration: a secret in a workflow's structured result must not persist in video.json ---
@@ -187,3 +217,49 @@ def test_prepare_result_secret_is_redacted(tmp_path: Path):
         assert "sk-leaked-value" not in jf.read_text(encoding="utf-8"), f"secret leaked into {jf}"
     for ev in (tmp_path / "runs").rglob("events.jsonl"):
         assert "sk-leaked-value" not in ev.read_text(encoding="utf-8")
+
+
+def test_failed_prepare_result_secret_is_redacted_on_disk_and_download(tmp_path: Path):
+    # H18: a prepare that writes shared/result.json with its secret then exits non-zero skips the
+    # runner's success-path redaction. The failed-run result.json must still be scrubbed on disk
+    # (the _run_prepare finally), and the download endpoint (which serves result.json, unlike the
+    # blocked context.json) must never return the injected value.
+    workflows_dir = tmp_path / "workflows"
+    workflows_dir.mkdir()
+    shutil.copytree(
+        _STUBS / "leaks_secret_prepare_fail", workflows_dir / "leaks_secret_prepare_fail"
+    )
+    (workflows_dir / "leaks_secret_prepare_fail" / "requirements.txt").write_text(
+        "", encoding="utf-8"
+    )
+    client = TestClient(
+        create_app(
+            workflows_dir=workflows_dir,
+            runs_dir=tmp_path / "runs",
+            ensure_env=_ready,  # type: ignore[arg-type]
+            secrets={"OPENROUTER_API_KEY": "sk-leaked-value"},  # type: ignore[arg-type]
+        )
+    )
+    r = client.post(
+        "/api/workflows/leaks_secret_prepare_fail/runs",
+        json={"params": {}, "video_count": 1, "concurrency": 1},
+    )
+    assert r.status_code == 202
+    run_id = r.json()["run_id"]
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        d = client.get(f"/api/workflows/leaks_secret_prepare_fail/runs/{run_id}")
+        if d.status_code == 200 and d.json()["status"] in _TERMINAL:
+            break
+        time.sleep(0.05)
+
+    results = list((tmp_path / "runs").rglob("result.json"))
+    assert results, "prepare did not write result.json (trigger precondition not met)"
+    for jf in (tmp_path / "runs").rglob("*.json"):
+        assert "sk-leaked-value" not in jf.read_text(encoding="utf-8"), f"secret leaked into {jf}"
+    # result.json is downloadable (unlike context.json); the served copy must be redacted.
+    resp = client.get(
+        f"/api/workflows/leaks_secret_prepare_fail/runs/{run_id}/files/shared/result.json"
+    )
+    if resp.status_code == 200:
+        assert "sk-leaked-value" not in resp.text
