@@ -15,11 +15,18 @@ router = APIRouter(prefix="/api")
 
 
 class RegistryHolder:
-    def __init__(self, workflows_dir: Path, *, configured: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        workflows_dir: Path,
+        *,
+        configured: set[str] | None = None,
+        disabled_web_tiers: list[str] | None = None,
+    ) -> None:
         self.workflows_dir = workflows_dir
-        self._offered: frozenset[str] | None = (
-            None if configured is None else capabilities_offered(set(configured))
-        )
+        offered = None if configured is None else capabilities_offered(set(configured))
+        if offered is not None and disabled_web_tiers:
+            offered = offered - {f"web.images.{tier}" for tier in disabled_web_tiers}
+        self._offered: frozenset[str] | None = offered
         self.snapshot: list[WorkflowEntry] = scan(workflows_dir, offered=self._offered)
 
     def rescan(self) -> list[WorkflowEntry]:

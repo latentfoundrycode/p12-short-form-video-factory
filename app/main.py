@@ -99,8 +99,11 @@ def create_app(
     else:
         application = FastAPI(title="Short-Form Video Factory")
     application.add_middleware(BaseHTTPMiddleware, dispatch=csrf_guard)
+    application.state.disabled_web_tiers = load_disabled_web_tiers()
     application.state.registry = RegistryHolder(
-        workflows_dir or WORKFLOWS_DIR, configured=set(resolved)
+        workflows_dir or WORKFLOWS_DIR,
+        configured=set(resolved),
+        disabled_web_tiers=application.state.disabled_web_tiers,
     )
     application.state.runs_dir = runs_dir or RUNS_DIR
     application.state.schedules_path = schedules_path or SCHEDULES_PATH
@@ -108,7 +111,6 @@ def create_app(
     application.state.popen = popen
     application.state.secrets = dict(resolved)
     application.state.budget = budget if budget is not None else load_budget_config()
-    application.state.disabled_web_tiers = load_disabled_web_tiers()
     application.state.learning_staging_dir = learning_staging_dir or (
         APP_ROOT / "state" / "learning-staging"
     )
