@@ -85,7 +85,9 @@ def search(
         if cached:
             # a cached SerpApi response is free regardless of whether its body maps cleanly;
             # reconcile to $0 NOW so a later mapping failure cannot leave the reservation charged.
-            ctx.record_cost(provider.meter, provider.unit, 0.0, "cached", token=token)
+            ctx.record_cost(
+                provider.meter, provider.unit, price, "cached", token=token, cached=True
+            )
         results = data.get("images_results")
         if not isinstance(results, list):
             results = []

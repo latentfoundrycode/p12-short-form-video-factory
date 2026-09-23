@@ -598,6 +598,7 @@ class Context:
         source: str,
         *,
         token: str | None = None,
+        cached: bool = False,
     ) -> None:
         self.emit(
             {
@@ -606,10 +607,10 @@ class Context:
                 "unit": unit,
                 "amount": amount,
                 "source": source,
-                "cached": False,
+                "cached": cached,
             }
         )
-        self._budget_reconcile(token, actual=amount, note=source)
+        self._budget_reconcile(token, actual=(0.0 if cached else amount), note=source)
 
     def _budget_guard(self, cfg: BudgetConfig) -> BudgetGuard:
         return BudgetGuard(
