@@ -287,3 +287,35 @@ def test_failed_prepare_result_secret_is_redacted_on_disk_and_download(tmp_path:
     )
     if resp.status_code == 200:
         assert "sk-leaked-value" not in resp.text
+
+
+def test_prepare_returning_none_completes_and_does_not_crash_in_scrub(tmp_path: Path):
+    # H18 round-2 regression guard: prepare()->None writes result.json = null. The finally scrub
+    # runs on every prepare (success included); it must not crash on a null (non-object) result.
+    # A completed run proves prepare's finally did not raise a TypeError on the null result.json.
+    workflows_dir = tmp_path / "workflows"
+    workflows_dir.mkdir()
+    shutil.copytree(_STUBS / "prepare_none_completes", workflows_dir / "prepare_none_completes")
+    (workflows_dir / "prepare_none_completes" / "requirements.txt").write_text("", encoding="utf-8")
+    client = TestClient(
+        create_app(
+            workflows_dir=workflows_dir,
+            runs_dir=tmp_path / "runs",
+            ensure_env=_ready,  # type: ignore[arg-type]
+        )
+    )
+    r = client.post(
+        "/api/workflows/prepare_none_completes/runs",
+        json={"params": {}, "video_count": 1, "concurrency": 1},
+    )
+    assert r.status_code == 202
+    run_id = r.json()["run_id"]
+    status = ""
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        d = client.get(f"/api/workflows/prepare_none_completes/runs/{run_id}")
+        if d.status_code == 200 and d.json()["status"] in _TERMINAL:
+            status = d.json()["status"]
+            break
+        time.sleep(0.05)
+    assert status == "complete"  # prepare's null-result finally scrub did not crash
