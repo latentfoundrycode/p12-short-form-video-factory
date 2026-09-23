@@ -391,6 +391,16 @@ not-applicable.
   accumulate as background processes over many crashed runs. Low impact (no UI, no spend); a future
   hardening could kill the whole child process tree on `_run` exit (Windows: taskkill /T, or a job
   object). _Source: chrome-console fix follow-up._ Open.
+- **H61 — downloadable run files other than `result.json`/`context.json` get no value-level secret
+  redaction.** `get_run_file` (`app/api/runs.py`) blocks `context.json` by name and now serves a
+  scrubbed `result.json` (H18), and `events.jsonl` is redacted at write. But two served surfaces have
+  NO redaction pass: (a) `shared/artifacts/**` is listed and downloadable verbatim; (b) `.steps/**` is
+  hidden from the file *listing* (dot-prefixed) yet still directly downloadable by path via
+  `get_run_file` (no dot-part guard there). A workflow that writes an injected secret VALUE into an
+  artifact or a step-cache file would leak it on download, regardless of the H18 fix. Pre-existing;
+  narrow trigger (a workflow must write its own key into one of those files). Fix options: run a
+  best-effort value-redaction pass on served run files, and/or add a dot-part guard to `get_run_file`
+  so `.steps` is not fetchable by path. _Source: H18 security-auditor advisory (PR #152)._ Open (low).
 
 ## Resolved
 
