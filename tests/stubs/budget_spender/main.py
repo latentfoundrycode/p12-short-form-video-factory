@@ -21,6 +21,12 @@ def run(ctx) -> None:
                 Path(budget["kill_switch_path"]) if budget.get("kill_switch_path") else None
             ),
         )
-        token = guard.reserve(run_id=ctx.run_id, meter="openrouter", unit="EUR", estimate=0.05)
+        token = guard.reserve(
+            run_id=ctx.run_id,
+            workflow_id=ctx.workflow_id,
+            meter="openrouter",
+            unit="EUR",
+            estimate=0.05,
+        )
         guard.reconcile(token, actual=0.02)
     ctx.emit({"t": "result", "video": "final.mp4", "caption": "spent"})
