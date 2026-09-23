@@ -367,3 +367,15 @@ def test_a_spend_record_missing_its_token_fails_closed(tmp_path: Path) -> None:
     guard = _guard(tmp_path, per_day={"openrouter": 100.0})
     with pytest.raises(BudgetError):
         guard.day_total("openrouter")
+
+
+def test_reconcile_fails_closed_on_a_poisoned_ledger(tmp_path: Path) -> None:
+    # reconcile() reads the ledger (its own loop) to find the token's meter/unit, bypassing the
+    # validated _snapshot path. A valid-JSON reserved line with a non-numeric amount must make
+    # reconcile fail closed too — not silently append an `actual` to a corrupt ledger.
+    (tmp_path / "ledger.jsonl").write_text(
+        json.dumps(_reserved_line("not-a-number")) + "\n", encoding="utf-8"
+    )
+    guard = _guard(tmp_path, per_day={"openrouter": 100.0})
+    with pytest.raises(BudgetError):
+        guard.reconcile("t1", actual=0.25)
