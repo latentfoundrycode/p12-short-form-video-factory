@@ -314,3 +314,56 @@ def test_a_bad_amount_on_a_valid_json_line_fails_closed_as_budgeterror(
             guard.day_total("openrouter")
         else:
             guard.run_total("r1", "openrouter")
+
+
+# --- H23 completeness: every ledger filesystem/integrity fault fails closed as BudgetError ---
+
+
+def test_a_stat_oserror_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # `_read_ledger` calls `path.is_file()` outside its try; a stat PermissionError must still fail
+    # closed as BudgetError, not escape raw (which check_atomic_budget cannot catch → stranded run).
+    (tmp_path / "ledger.jsonl").write_text("", encoding="utf-8")
+    guard = _guard(tmp_path, per_day={"openrouter": 100.0})
+
+    def boom_is_file(self: Path) -> bool:
+        raise PermissionError("stat denied")
+
+    monkeypatch.setattr(Path, "is_file", boom_is_file)
+    with pytest.raises(BudgetError):
+        guard.day_total("openrouter")
+
+
+def test_a_lock_acquisition_oserror_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The interprocess lock acquired by every read/write method can leak an OSError (open / msvcrt /
+    # fcntl fault); it must be converted to BudgetError so the guard is uniformly fail-closed.
+    import sfvf._budget as budget_mod
+
+    guard = _guard(tmp_path, per_day={"openrouter": 100.0})
+
+    def boom_lock(handle: object) -> None:
+        raise OSError("lock unavailable")
+
+    monkeypatch.setattr(budget_mod, "_lock_exclusive", boom_lock)
+    with pytest.raises(BudgetError):
+        guard.day_total("openrouter")
+
+
+def test_a_spend_record_missing_its_token_fails_closed(tmp_path: Path) -> None:
+    # A reserved/actual ledger line carrying an `amount` but no token is corruption (the engine
+    # writes a token). Silently skipping it under-counts spend and lets a run overshoot, so it must
+    # fail closed rather than lower the total.
+    line = {
+        "ts": "2026-09-05T10:00:00Z",
+        "run_id": "r1",
+        "meter": "openrouter",
+        "unit": "EUR",
+        "amount": 0.5,
+        "kind": "reserved",
+        "note": "",
+    }
+    (tmp_path / "ledger.jsonl").write_text(json.dumps(line) + "\n", encoding="utf-8")
+    guard = _guard(tmp_path, per_day={"openrouter": 100.0})
+    with pytest.raises(BudgetError):
+        guard.day_total("openrouter")
