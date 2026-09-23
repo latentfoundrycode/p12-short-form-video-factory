@@ -37,6 +37,8 @@ _SAFE_ZONE_CSS = """\
 }
 """
 
+_GSAP_JS = (Path(__file__).resolve().with_name("gsap.min.js")).read_text(encoding="utf-8")
+
 
 class Violation(TypedDict):
     kind: str
@@ -220,7 +222,7 @@ def _index_html(composition_html: str, duration_s: float) -> str:
         '<html lang="en" data-resolution="portrait">\n'
         "  <head>\n"
         '    <meta charset="UTF-8" />\n'
-        '    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>\n'
+        "    <script>\n" + _GSAP_JS + "\n</script>\n"
         "    <style>\n"
         "      * { margin: 0; padding: 0; box-sizing: border-box; }\n"
         "      html, body {\n"

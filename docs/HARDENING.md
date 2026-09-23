@@ -39,9 +39,6 @@ not-applicable.
 
 ## Open
 
-- **H1 — GSAP loaded from CDN at render time.** `media.graphics.render` fetches pinned `gsap@3.14.2` from
-  jsDelivr while rendering — a live external call inside the otherwise zero-cost *local* renderer; offline
-  renders would stall. Vendor/serve GSAP locally. _Source: B-1b review (PR #25)._ Open.
 - **H2 — `ctx.map` shared-artifacts copy race.** Each render `copytree`s `ctx.paths.artifacts` into its temp
   project; this is not concurrency-safe if renders under one video ever run in parallel via `ctx.map`. Make
   the artifact staging isolation-safe before any parallel-render path uses it. _Source: B-1b review A,
@@ -416,6 +413,15 @@ not-applicable.
 
 ## Resolved
 
+- **H1 — GSAP loaded from CDN at render time** (resolved by this PR). `_index_html` (used by both
+  `render` and `check`) injected `<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js">`,
+  so the headless browser fetched GSAP over the network on every render/check — a live external call in
+  the otherwise zero-cost local renderer that stalled offline renders. The exact pinned `gsap@3.14.2`
+  (unmodified, GreenSock standard license) is now vendored at `sdk/sfvf/media/gsap.min.js` and inlined
+  into the HTML via a module `_GSAP_JS` constant read at import; the SDK is installed editable so the
+  sibling data file is available at runtime (as `dom_check.mjs` already is). Renders/checks make no CDN
+  call. Covered by `tests/sdk/test_graphics.py::test_index_html_inlines_gsap_and_makes_no_cdn_call`.
+  _Source: B-1b review (PR #25); closed by this PR._
 - **H10 — OpenRouter `usage.cost` is surfaced but not metered** (resolved by C-1). `_post_chat_completion`
   emits a `cost` event `{t:cost, meter:openrouter, unit:usd, amount:<usage.cost>, cached:false}` when
   `usage.cost` is a usable finite non-negative number, and the supervisor aggregates those events into

@@ -14,6 +14,7 @@ import pytest
 from sfvf import media
 from sfvf._runtime import reset_active, set_active
 from sfvf.context import Context, ContextFile, ContextPaths
+from sfvf.media import graphics
 
 
 def _ctx(video_dir: Path, *, dry_run: bool) -> Context:
@@ -37,6 +38,20 @@ def _rel_file(video_dir: Path, rel: str) -> Path:
     target = video_dir / rel
     assert target.is_file()
     return target
+
+
+def test_index_html_inlines_gsap_and_makes_no_cdn_call() -> None:
+    # H1: the local renderer must not fetch GSAP from jsDelivr at render time (offline renders would
+    # stall, and it is a live external call inside the zero-cost local renderer). The pinned gsap is
+    # vendored and inlined into the render/check HTML instead.
+    html = graphics._index_html("<div>x</div>", 1.0)
+    assert "cdn.jsdelivr.net" not in html  # no CDN <script src=...>
+    assert "gsap.timeline" in html  # still drives the gsap timeline
+    # the vendored runtime is embedded inline, not referenced by URL
+    gsap_src = graphics._GSAP_JS
+    assert gsap_src and gsap_src in html
+    vendored = Path(graphics.__file__).with_name("gsap.min.js")
+    assert vendored.is_file()  # the pinned gsap is vendored beside the module
 
 
 def test_graphics_require_an_active_context() -> None:
