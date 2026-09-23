@@ -347,3 +347,71 @@ def test_no_sleep_after_the_final_attempt(tmp_path: Path) -> None:
     with pytest.raises(CompletionError):
         complete(_MSGS)
     assert len(slept) == len(seen) - 1  # slept between attempts only, never after the last one
+
+
+# --- reserve/release taxonomy (mirror the merged agents.py inc0 fix) -----------------------------
+
+
+def _ledger(budget: BudgetConfig) -> list[dict]:
+    if not budget.ledger_path.is_file():
+        return []
+    return [
+        json.loads(line)
+        for line in budget.ledger_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def test_a_pre_dispatch_failure_releases_the_reserve(tmp_path: Path) -> None:
+    # A failure BEFORE any request is dispatched (here: building the HTTP client raises) is a
+    # CONFIRMED-unbilled outcome — nothing reached OpenRouter — so the reserve must be RELEASED to
+    # $0, not leaked toward the learning ceiling. (The `billed`/`unbilled` flag must default to
+    # "unbilled" until the dispatch, mirroring agents.py::_post_chat_completion.)
+    def boom_factory() -> httpx2.Client:
+        raise RuntimeError("cannot build the HTTP client")
+
+    budget = _budget(tmp_path, estimate=0.01)
+    complete = make_openrouter_completion(
+        secrets={"OPENROUTER_API_KEY": _KEY},
+        budget=budget,
+        model="m",
+        run_id="r",
+        client_factory=boom_factory,
+    )
+    with pytest.raises(RuntimeError):
+        complete(_MSGS)
+
+    lines = _ledger(budget)
+    reserved = [
+        e for e in lines if e.get("kind") == "reserved" and e.get("meter") == LEARNING_METER
+    ]
+    released = [e for e in lines if e.get("kind") == "actual" and float(e.get("amount", -1)) == 0.0]
+    assert reserved, "a reservation was taken before the failed dispatch"
+    assert released, "a pre-dispatch failure must release the reserve to $0, not leak it"
+
+
+def test_a_transport_error_after_dispatch_retains_the_reserve(tmp_path: Path) -> None:
+    # Once a request has been dispatched, a transport failure is AMBIGUOUS (OpenRouter may already
+    # have billed) — the reserve must be RETAINED at the estimate, never released to $0.
+    def dropping(_request: httpx2.Request, _n: int) -> httpx2.Response:
+        raise RuntimeError("connection dropped mid-flight")
+
+    budget = _budget(tmp_path, estimate=0.01)
+    factory, _, _ = _factory(dropping)
+    complete = make_openrouter_completion(
+        secrets={"OPENROUTER_API_KEY": _KEY},
+        budget=budget,
+        model="m",
+        run_id="r",
+        client_factory=factory,
+    )
+    with pytest.raises(RuntimeError):
+        complete(_MSGS)
+
+    lines = _ledger(budget)
+    reserved = [
+        e for e in lines if e.get("kind") == "reserved" and e.get("meter") == LEARNING_METER
+    ]
+    released = [e for e in lines if e.get("kind") == "actual" and float(e.get("amount", -1)) == 0.0]
+    assert reserved, "a reservation was taken"
+    assert not released, "an ambiguous post-dispatch transport error must RETAIN the reserve"
