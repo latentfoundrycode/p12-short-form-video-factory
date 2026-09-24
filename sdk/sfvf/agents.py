@@ -111,6 +111,17 @@ def _usage_cost(data: dict[str, Any]) -> float | None:
     return amount
 
 
+def _first_message(data: dict[str, Any]) -> dict[str, Any]:
+    """Return choices[0].message, or raise a clear RuntimeError on an unexpected 200 body shape."""
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise RuntimeError("OpenRouter: response has no choices")
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        raise RuntimeError("OpenRouter: response choice has no message")
+    return message
+
+
 def _instruction_text(ctx: Context) -> str:
     parts: list[str] = []
     for path in ctx.instructions:
@@ -254,14 +265,14 @@ def llm(
 
     data = _post_chat_completion(ctx, body)
 
-    content = data["choices"][0]["message"]["content"]
+    content = _first_message(data).get("content")
+    if not isinstance(content, str):
+        raise RuntimeError("OpenRouter: expected string message content")
     cost = _usage_cost(data)
     ctx.log(f"OpenRouter llm agent={agent} model={model} cost={cost}")
     if schema is not None:
         parsed: dict[str, Any] = json.loads(content)
         return parsed
-    if not isinstance(content, str):
-        raise RuntimeError("OpenRouter: expected string message content")
     return content
 
 
@@ -290,12 +301,13 @@ def research(query: str) -> list[Source]:
     cost = _usage_cost(data)
     ctx.log(f"OpenRouter research model={_RESEARCH_MODEL} cost={cost}")
 
-    message = data["choices"][0]["message"]
+    message = _first_message(data)
     sources: list[Source] = []
     for ann in message.get("annotations", []) or []:
-        if ann.get("type") == "url_citation":
-            c = ann["url_citation"]
-            sources.append(
-                Source(title=c.get("title", ""), url=c["url"], snippet=c.get("content", ""))
-            )
+        if not isinstance(ann, dict) or ann.get("type") != "url_citation":
+            continue
+        c = ann.get("url_citation")
+        if not isinstance(c, dict) or not isinstance(c.get("url"), str):
+            continue  # skip a malformed url_citation rather than raising mid-parse
+        sources.append(Source(title=c.get("title", ""), url=c["url"], snippet=c.get("content", "")))
     return sources
