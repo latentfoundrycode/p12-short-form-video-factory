@@ -39,6 +39,15 @@ not-applicable.
 
 ## Open
 
+- **H63 — FFmpeg ops have no hard timeout; heartbeats now mask a true hang.** With H6, `finalize`'s
+  encode and `media.edit.trim`/`cut` emit periodic heartbeats while FFmpeg runs, so the §2.8 300 s
+  silence watchdog no longer kills them. That was the point (legitimately long encodes survive), but
+  `_ffmpeg._run` (`subprocess.run`) has no `timeout=`, so a *genuinely hung/deadlocked* FFmpeg op now
+  runs forever with no backstop (it emits no `cost` events, so the budget guard never fires either).
+  Accepted for H6 (local, non-paid, non-network op on a single-user app — a resource concern, not an
+  exploit), but the watchdog backstop is gone for these ops. Fix: give the FFmpeg subprocess a bounded
+  `timeout=` in `_ffmpeg._run` (and/or honor a render-family `[[limits]]` cap) so a true hang is still
+  detected while legitimate long encodes survive. _Source: H6 security-auditor advisory (PR #155)._ Open.
 - **H2 — `ctx.map` shared-artifacts copy race.** Each render `copytree`s `ctx.paths.artifacts` into its temp
   project; this is not concurrency-safe if renders under one video ever run in parallel via `ctx.map`. Make
   the artifact staging isolation-safe before any parallel-render path uses it. _Source: B-1b review A,
@@ -54,10 +63,6 @@ not-applicable.
 - **H5 — cold-start render flake.** The first render can occasionally sample a non-red frame (Chrome
   cold-start / paint timing) while re-runs and the full suite are green. Add a warm-up or a CI retry for the
   render integration test. _Source: B-1b (PR #25)._ Open.
-- **H6 — blocking local FFmpeg ops emit no heartbeats.** `media.edit.trim`/`cut` **and** `sfvf.finalize` run
-  FFmpeg synchronously with no heartbeat, so the §2.8 300 s silence watchdog could kill a legitimately long
-  encode/concat. Add periodic `ctx.heartbeat` (and/or honor a render-family `[[limits]]` cap) as **one
-  consistent pass over both**, not a one-off in `edit`. _Source: B-2 review B (PR #26)._ Open.
 - **H7 — CI flake: `test_list_returns_runs_newest_first`.** On windows-latest this app-layer test failed once
   with a stub run reaching terminal `failed` (not a timeout), then passed on a clean re-run; in the same
   failing run the sibling test using the identical `succeeds` stub passed. A pre-existing subprocess /
@@ -422,6 +427,17 @@ not-applicable.
   sibling data file is available at runtime (as `dom_check.mjs` already is). Renders/checks make no CDN
   call. Covered by `tests/sdk/test_graphics.py::test_index_html_inlines_gsap_and_makes_no_cdn_call`.
   _Source: B-1b review (PR #25); closed by this PR._
+- **H6 — blocking local FFmpeg ops emit no heartbeats** (resolved by this PR). `sfvf.finalize`'s
+  house-format encode and `media.edit.trim`/`cut` run FFmpeg synchronously with its output captured,
+  so the workflow subprocess produced no stdout during a long encode/concat and the §2.8 300 s
+  silence watchdog could kill a legitimately long op. A new `emit.heartbeat_during(name, *,
+  waiting_on, interval=30.0)` context manager runs a daemon thread that emits a `heartbeat` event
+  every `interval` seconds (well under 300 s) while the wrapped op runs; the first heartbeat is one
+  interval in, so a fast op emits none. Applied as one consistent pass over both: `_apply_house_format`
+  wraps its encode and `edit.trim`/`cut` wrap their kinocut calls. `emit()` writes to stdout under a
+  module lock, so emitting from the helper thread is safe. Covered by `tests/sdk/test_emit.py`,
+  `tests/sdk/test_edit.py`, and `tests/sdk/test_finalize.py::test_finalize_wraps_the_ffmpeg_encode_in_a_heartbeat`.
+  _Source: B-2 review B (PR #26); closed by this PR._
 - **H10 — OpenRouter `usage.cost` is surfaced but not metered** (resolved by C-1). `_post_chat_completion`
   emits a `cost` event `{t:cost, meter:openrouter, unit:usd, amount:<usage.cost>, cached:false}` when
   `usage.cost` is a usable finite non-negative number, and the supervisor aggregates those events into

@@ -56,6 +56,41 @@ def _ctx(video_dir: Path) -> Context:
     )
 
 
+class _RecordingHeartbeat:
+    """Stands in for `heartbeat_during`: records the (name, waiting_on) it is entered with."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def __call__(self, name: str, *, waiting_on: str, **_kw: object) -> "_RecordingHeartbeat":
+        self.calls.append((name, waiting_on))
+        return self
+
+    def __enter__(self) -> "_RecordingHeartbeat":
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+
+def test_finalize_wraps_the_ffmpeg_encode_in_a_heartbeat(tmp_path: Path, monkeypatch) -> None:
+    # H6: the house-format FFmpeg encode is synchronous with output captured, so a long encode
+    # produces no workflow stdout and the 300 s silence watchdog could kill it. The encode must run
+    # inside heartbeat_during(...) so periodic heartbeats keep the watchdog fed.
+    import sys
+
+    # `sfvf/__init__.py` re-exports the `finalize` FUNCTION, shadowing the submodule attribute, so
+    # `from sfvf import finalize` / `import sfvf.finalize` both yield the function. The real module
+    # (whose globals `_apply_house_format` reads) is in sys.modules under its full name.
+    finalize_mod = sys.modules["sfvf.finalize"]
+
+    recorder = _RecordingHeartbeat()
+    monkeypatch.setattr(finalize_mod, "heartbeat_during", recorder)
+    monkeypatch.setattr(finalize_mod, "_run", lambda *_a, **_k: "")  # do not spawn ffmpeg
+    finalize_mod._apply_house_format(tmp_path / "v.mp4", None, None, tmp_path / "out.mp4")
+    assert ("finalize", "ffmpeg") in recorder.calls
+
+
 def test_finalize_is_exposed_both_ways() -> None:
     assert sfvf.finalize is media.finalize
 

@@ -7,6 +7,7 @@ from typing import Any
 from ._ffmpeg import _binary, _run, probe
 from ._review import content_review
 from ._runtime import current_context
+from .emit import heartbeat_during
 
 _HOUSE_WIDTH = 1080
 _HOUSE_HEIGHT = 1920
@@ -82,7 +83,8 @@ def _apply_house_format(
     if captions_index is not None:
         command.extend(["-c:s", "mov_text"])
     command.extend(["-map_metadata", "-1", str(dest)])
-    _run(command)
+    with heartbeat_during("finalize", waiting_on="ffmpeg"):
+        _run(command)
 
 
 def _self_review(dest: Path, *, expect_audio: bool, expect_captions: bool, dry_run: bool) -> None:
