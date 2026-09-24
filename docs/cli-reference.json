@@ -1,0 +1,48 @@
+{
+  "description": "Start the SFVF local server and open it in the browser.",
+  "options": [
+    {
+      "default": null,
+      "flags": [
+        "-h",
+        "--help"
+      ],
+      "help": "show this help message and exit",
+      "type": "str"
+    },
+    {
+      "default": false,
+      "flags": [
+        "--version"
+      ],
+      "help": "print the version and exit",
+      "type": "bool"
+    },
+    {
+      "default": "127.0.0.1",
+      "flags": [
+        "--host"
+      ],
+      "help": "bind address (default: 127.0.0.1)",
+      "type": "str"
+    },
+    {
+      "default": 8000,
+      "flags": [
+        "--port"
+      ],
+      "help": "bind port (default: 8000)",
+      "type": "int"
+    },
+    {
+      "default": false,
+      "flags": [
+        "--no-browser"
+      ],
+      "help": "start the server without opening a browser",
+      "type": "bool"
+    }
+  ],
+  "prog": "sfvf",
+  "version": "1.0.0"
+}
