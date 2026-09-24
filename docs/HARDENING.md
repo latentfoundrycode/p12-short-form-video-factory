@@ -222,7 +222,8 @@ not-applicable.
   atomic pre-flight) applies to atomic single-episode workflows where there is no intra-request
   concurrency; and "latest across independent concurrent video threads" is itself ill-defined. A
   strict fix would fold the forecast accumulator update into `record_event` under one lock hold; do
-  that only if a real multi-video-same-meter forecasting workflow appears. _Source: C-2 review B._ Open.
+  that only if a real multi-video-same-meter forecasting workflow appears. _Source: C-2 review B._
+  **RESOLVED 2026-09-24 (Stage-C) — see Resolved: H26.**
 - **H29 — the paid/cheap cache layout orphans pre-existing single-partition entries (C-6).** C-6
   moved cache storage from `<root>/{entries,blobs}` to `<root>/{paid,cheap}/{entries,blobs}`. Any
   cache written before C-6 is now unreachable (a one-time miss — recomputed on next use) and its
@@ -442,6 +443,20 @@ not-applicable.
   `::test_estimate_excludes_non_complete_videos_from_the_per_video_unit`,
   `::test_scale_estimate_multiplies_per_meter_by_the_count`. _Source: C-4 review B (P1 video_count +
   P2 partial-video cost); closed by this PR._
+- **H26 — forecast latest-per-meter is now strictly event-ordered** (resolved by this PR; Stage-C).
+  `_RunState.record_event` (append to `events.jsonl`) and `record_forecast` (accumulator +
+  `request.json` write) took the run lock separately, so two videos in one request forecasting the
+  SAME meter concurrently could leave the durable `request.forecast[meter]` reflecting the
+  earlier-appended event rather than the last. The forecast write is now folded into `record_event`
+  under its single lock hold: it redacts once, appends, and — on a valid `_parse_forecast_event`
+  triple — updates `self.forecasts[meter]` and writes `request.json`, all before releasing the lock.
+  The standalone `record_forecast` method and the second lock acquisition in `_consume_stdout` are
+  removed, so nothing can re-acquire the non-reentrant lock or re-open the race, and the durable
+  block always matches the last forecast event for a meter. Forecast shape, latest-per-meter-wins,
+  distinct-meter accumulation, malformed-skip, and secret redaction (parsed from the redacted event)
+  are unchanged. Covered by `tests/core/test_forecast_ordering.py` (incl.
+  `::test_concurrent_same_meter_forecasts_match_the_last_event`, 32 barrier-synced threads).
+  _Source: C-2 review B; closed by this PR._
 - **H10 — OpenRouter `usage.cost` is surfaced but not metered** (resolved by C-1). `_post_chat_completion`
   emits a `cost` event `{t:cost, meter:openrouter, unit:usd, amount:<usage.cost>, cached:false}` when
   `usage.cost` is a usable finite non-negative number, and the supervisor aggregates those events into
