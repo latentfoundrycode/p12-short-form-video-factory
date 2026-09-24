@@ -394,6 +394,16 @@ not-applicable.
   hostile/buggy prepare return. Fix: bound/relax the re-parse (guard `RecursionError`/decode there,
   or reuse the already-parsed payload). _Source: H18 review A (diff-reviewer NOTED + security-auditor
   advisory, PR #152)._ Open (low).
+- **H64 — prepare-phase spend is in Statistics but not yet in cost ESTIMATION.** The prepare phase's
+  aggregated cost is now persisted to `request.prepare_cost` and counted in the Statistics tab, but
+  `app/core/estimate.py` still estimates purely per-video (`_run_uncached` reads only `video.json`),
+  so a prospective run's estimate and the C-3 atomic pre-flight omit the shared prepare cost. For a
+  workflow whose prepare spends materially (e.g. web-sourcing behind a paid VLM check), the estimate
+  under-states the true run cost by that fixed per-run overhead. The fix is a follow-on because it
+  needs a model decision: the per-video `Estimate` must carry a separate per-run overhead term (from
+  the last comparable runs' `prepare_cost["uncached"]`) that `scale_estimate` adds ONCE rather than
+  multiplying by `video_count`. Deferred to the estimation increment. _Source: prepare-cost Stage-C
+  increment (statistics half); chip task_bf07b7fd._ Open.
 
 ## Resolved
 
