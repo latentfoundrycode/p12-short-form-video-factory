@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .._runtime import current_context
+from ..emit import heartbeat_during
 from .graphics import _artifact, _sha8
 
 
@@ -10,7 +11,8 @@ def trim(video: str, start: float, end: float) -> str:
     ctx = current_context()
     dest, rel = _artifact(ctx, f"edit-trim-{_sha8([video, start, end])}.mp4")
     abs_in = str((ctx.paths.video / video).resolve())
-    _client().trim(abs_in, start=start, end=end, output=str(dest))
+    with heartbeat_during("edit", waiting_on="ffmpeg"):
+        _client().trim(abs_in, start=start, end=end, output=str(dest))
     return rel
 
 
@@ -18,7 +20,8 @@ def cut(clips: list[str], *, transitions: list[str] | None = None) -> str:
     ctx = current_context()
     dest, rel = _artifact(ctx, f"edit-cut-{_sha8([clips, transitions])}.mp4")
     abs_clips = [str((ctx.paths.video / clip).resolve()) for clip in clips]
-    _client().merge(abs_clips, transitions=transitions, output=str(dest))
+    with heartbeat_during("edit", waiting_on="ffmpeg"):
+        _client().merge(abs_clips, transitions=transitions, output=str(dest))
     return rel
 
 
