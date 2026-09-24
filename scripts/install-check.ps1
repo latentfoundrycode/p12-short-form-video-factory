@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    PKG-4 lifecycle verification for the SFVF installer (Delivery-Conventions §3).
+    PKG-4 lifecycle verification for the SFVF installer (Delivery-Conventions section 3).
 
     Proves install.ps1 silently and reversibly, per-user (no admin), following the six steps:
     precondition (not installed) -> install -> verify (files, launcher on the user PATH, `sfvf
@@ -35,7 +35,7 @@ function Test-Installed {
 
 # --- 1. Precondition: a clean machine (refuse to run over an existing install so the check is honest)
 Step 'precondition: SFVF is not installed'
-if (Test-Installed) { Fail "SFVF already installed at $InstallDir / $RegKey — run uninstall first" }
+if (Test-Installed) { Fail "SFVF already installed at $InstallDir / $RegKey - run uninstall first" }
 if (Test-Path $Marker) { Remove-Item $Marker -Force }
 
 try {
