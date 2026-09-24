@@ -14,7 +14,7 @@ from typing import Any, Literal, TypeVar, cast, overload
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ._budget import BudgetError, BudgetGuard, Ceilings
+from ._budget import BudgetBreach, BudgetError, BudgetGuard, Ceilings
 from .cache import CHEAP, PAID, StepCache, step_key
 from .emit import decision, emit, forecast, heartbeat, log, stage
 from .gate import gate_attempts, run_gate
@@ -575,12 +575,14 @@ class Context:
             workflow_id=self.workflow_id,
         )
 
-    def _budget_reconcile(self, token: str | None, *, actual: float, note: str = "") -> None:
+    def _budget_reconcile(
+        self, token: str | None, *, actual: float, note: str = ""
+    ) -> list[BudgetBreach]:
         """Reconcile a reservation with the real amount. No-op when token is None."""
         cfg = self._file.budget
         if token is None or cfg is None:
-            return
-        self._budget_guard(cfg).reconcile(token, actual=actual, note=note)
+            return []
+        return self._budget_guard(cfg).reconcile(token, actual=actual, note=note)
 
     @contextmanager
     def _budget_reserved(
@@ -616,7 +618,17 @@ class Context:
                 "cached": cached,
             }
         )
-        self._budget_reconcile(token, actual=(0.0 if cached else amount), note=source)
+        breaches = self._budget_reconcile(token, actual=(0.0 if cached else amount), note=source)
+        for b in breaches:
+            self.emit(
+                {
+                    "t": "budget_breach",
+                    "meter": b.meter,
+                    "scope": b.scope,
+                    "total": b.total,
+                    "ceiling": b.ceiling,
+                }
+            )
 
     def _budget_guard(self, cfg: BudgetConfig) -> BudgetGuard:
         return BudgetGuard(

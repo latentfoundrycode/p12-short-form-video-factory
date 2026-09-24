@@ -141,10 +141,16 @@ not-applicable.
   (a) **Midnight-in-flight (low/med):** `day_total` attributes a reservation to the UTC calendar day of
   its `reserved` ts. A reservation opened at 23:59Z is invisible to the next day's total at 00:01Z, so a
   fresh day's ceiling can be reserved while that call is still in flight — a bounded, one-ceiling
-  overshoot across a midnight boundary. (b) **Underestimate slips one call (inherent):** `reserve` is the
-  only gate; a single underestimated call whose reconciled `actual` exceeds the ceiling is allowed after
-  the fact (subsequent reserves are then correctly denied because the actual counts). Mitigated later by
-  Stage-C forecasts and per-provider estimators. (c) **POSIX same-process lock (low):** the cross-process
+  overshoot across a midnight boundary. **(a) ACCEPTED 2026-09-24 (inherent):** attributing a
+  reservation to the UTC calendar day of its `reserved` ts is the correct, simplest semantics; the
+  only "fix" is a rolling-window or dual-day accounting model whose complexity is not worth a bounded
+  one-ceiling overshoot for a call spanning midnight (rare, and the reconcile-time breach surfacing
+  in H19(b) records any resulting overshoot). Won't-fix. (b) **Underestimate slips one call:** `reserve`
+  is the only PRE-call gate; a single underestimated call whose reconciled `actual` exceeds the ceiling
+  is allowed after the fact (subsequent reserves are then correctly denied because the actual counts).
+  Mitigated by Stage-C forecasts and per-provider estimators (H27/H26/prepare-cost). **RESOLVED
+  2026-09-24 — see Resolved: H19b/H20c** (reconcile now RECORDS the after-the-fact breach so an atomic
+  single-call run's silent overshoot is surfaced). (c) **POSIX same-process lock (low):** the cross-process
   lock is validated on Windows (the deployment target); on POSIX, `fcntl.flock` semantics across two
   `BudgetGuard` instances in one process are not exercised — revisit if CI or deployment adds Linux.
   **T2b acceptance requirements (caller contract, not engine defects):** (i) treat **ANY** exception
@@ -165,9 +171,10 @@ not-applicable.
   as tight as the configured estimate. Set the Higgsfield estimate ≥ a realistic per-video credit cost,
   and add a real reconcile (from the status/credits response) in Stage C. (b) **Kill-switch is checked at
   reserve time, not mid-flight** — engaging the switch after a Higgsfield reserve does not abort the
-  in-flight submit/poll/download (up to the poll timeout). (c) OpenRouter reconcile does not re-check
-  ceilings (H19(b) applies): one allowed call whose real `usage.cost` exceeds headroom breaches after the
-  fact; the next reserve is then denied. Also: production spend stays **ungated until T2b-2** populates
+  in-flight submit/poll/download (up to the poll timeout). (c) **RESOLVED 2026-09-24 (see Resolved:
+  H19b/H20c):** reconcile now re-checks ceilings and records a breach — one allowed call whose real
+  `usage.cost` exceeds headroom is surfaced as a `budget_breach` event (the next reserve is still
+  denied as before). Also: production spend stays **ungated until T2b-2** populates
   `ContextFile.budget` on real runs. _Source: T2b-1 review A/B (PR #39)._ Open.
 - **H21 — a real paid run with no budget config is not refused (fail-open-when-unset).** T2b-2a makes the
   gate live *when* `SFVF_BUDGET_CONFIG` is set, but a non-dry_run run of a paid-provider workflow with the
@@ -430,7 +437,18 @@ not-applicable.
   overhead now flows into the atomic budget check with no consumer change. Runs with no prepare cost
   estimate an empty overhead (backward-compatible; `test_estimate.py` unchanged and green). Covered by
   `tests/core/test_estimate_prepare.py`. _Source: prepare-cost Stage-C follow-on; closed by this PR._
-
+- **H19b/H20c — reconcile surfaces an after-the-fact ceiling breach (record-only)** (resolved by this
+  PR; Stage-C). `reserve` is the fail-closed PRE-call gate, but a single underestimated call whose
+  reconciled `actual` exceeds the ceiling was allowed silently after the fact — for a multi-call run
+  the next `reserve` denies, but an ATOMIC single-call run had no subsequent reserve, so the overshoot
+  was invisible. `reconcile` now, after durably appending the `actual` (unchanged; still first, still
+  fail-closed on a corrupt ledger / bad amount), re-checks the reconciled per-run and per-day totals
+  and RETURNS `list[BudgetBreach]` (`meter`, `scope` run|day, `total`, `ceiling`) — record-only, never
+  raising on a breach (the spend already happened; halting has no value and would break callers).
+  `_usable_ceiling` was extracted so `reserve` still fail-closes on an unusable limit while `reconcile`
+  reports only a usable finite ceiling genuinely exceeded. `Context.record_cost` emits a `budget_breach`
+  event per breach after the `cost` event, so the overshoot is visible in the run record. Covered by
+  `tests/sdk/test_budget_breach.py`. _Source: H19(b)/H20(c) Stage-C; closed by this PR._
 - **H1 — GSAP loaded from CDN at render time** (resolved by this PR). `_index_html` (used by both
   `render` and `check`) injected `<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js">`,
   so the headless browser fetched GSAP over the network on every render/check — a live external call in
