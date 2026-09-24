@@ -22,7 +22,7 @@ from sfvf.runner import EXIT_BUDGET_DENIED
 from app.core.cache_config import cache_max_bytes
 from app.core.env import EnvBlocked, EnvReady, EnvResult
 from app.core.env import ensure_env as default_ensure_env
-from app.core.estimate import estimate_cost
+from app.core.estimate import estimate_cost, scale_estimate
 from app.core.events import to_event
 from app.core.ids import allocate_run, format_utc_z, utc_now
 from app.core.layout import create_run_skeleton, format_video_dir
@@ -518,7 +518,11 @@ def run_request(
             est = estimate_cost(run_dir.parent.parent, workflow_id, params, affects)
             factor = workflow.safety_factor if workflow.safety_factor is not None else 1.0
             refusal = check_atomic_budget(
-                est, factor, wiring.budget, run_id, workflow_id=wiring.workflow_id
+                scale_estimate(est, video_count),
+                factor,
+                wiring.budget,
+                run_id,
+                workflow_id=wiring.workflow_id,
             )
             if refusal is not None:
                 state.record_event(
