@@ -395,16 +395,19 @@ not-applicable.
   accumulate as background processes over many crashed runs. Low impact (no UI, no spend); a future
   hardening could kill the whole child process tree on `_run` exit (Windows: taskkill /T, or a job
   object). _Source: chrome-console fix follow-up._ Open.
-- **H61 — downloadable run files other than `result.json`/`context.json` get no value-level secret
-  redaction.** `get_run_file` (`app/api/runs.py`) blocks `context.json` by name and now serves a
-  scrubbed `result.json` (H18), and `events.jsonl` is redacted at write. But two served surfaces have
-  NO redaction pass: (a) `shared/artifacts/**` is listed and downloadable verbatim; (b) `.steps/**` is
-  hidden from the file *listing* (dot-prefixed) yet still directly downloadable by path via
-  `get_run_file` (no dot-part guard there). A workflow that writes an injected secret VALUE into an
-  artifact or a step-cache file would leak it on download, regardless of the H18 fix. Pre-existing;
-  narrow trigger (a workflow must write its own key into one of those files). Fix options: run a
-  best-effort value-redaction pass on served run files, and/or add a dot-part guard to `get_run_file`
-  so `.steps` is not fetchable by path. _Source: H18 security-auditor advisory (PR #152)._ Open (low).
+- **H61 — served run files get no value-level secret redaction.** `get_run_file` (`app/api/runs.py`)
+  blocks `context.json` by name and now serves a scrubbed/blocked `result.json` (H18); `events.jsonl`
+  is redacted at write. **(b) `.steps/**` path-fetch — RESOLVED (this PR):** the dot-prefixed step
+  cache was hidden from the *listing* but still fetchable by path (`get_run_file` had no dot-part
+  guard); `get_run_file` now refuses any dot-prefixed path part, matching the listing exclusion.
+  Covered by `tests/api/test_secret_exposure.py::test_dot_prefixed_run_files_are_not_downloadable`.
+  **(a) `shared/artifacts/**` still open:** artifacts are listed and downloadable verbatim with no
+  value-level redaction — but artifacts are the workflow's INTENDED downloadable outputs, so blanket
+  blocking/redacting them would break legitimate use; a workflow that writes its own injected key into
+  an artifact leaks it on download. Pre-existing, narrow trigger (a workflow leaking its own key,
+  which it could exfil many other ways). Fix option if ever needed: a best-effort value-redaction pass
+  over served artifact files. _Source: H18 security-auditor advisory (PR #152); (b) closed by this PR._
+  Open (a, low).
 - **H62 — `_run_prepare` success-path re-parse crashes on a pathological `result.json`.** After the
   `finally` scrub, the success path re-reads `result.json` with
   `json.loads(result_path.read_text(encoding="utf-8"))`. A `prepare()` that RETURNS a pathologically
