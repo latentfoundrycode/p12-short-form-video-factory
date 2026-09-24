@@ -794,3 +794,6 @@ change.
 A MiniMax video submit that the API rejects with an HTTP 200 + a non-zero `base_resp.status_code`
 (e.g. insufficient balance) now surfaces a clear provider error instead of an internal `KeyError`, so
 a failed MiniMax run reports why. Robustness only, no user-visible feature change.
+
+## docs/LESSONS.md removed (folded into the Issues Document)
+The build-loop lessons in docs/LESSONS.md were folded into the human-facing Documents Issues file (Issues 11-12, generalizable) at project end, per the bridge one-Issues-document convention, and the in-repo LESSONS.md was deleted. Split review resolution (recorded per the merge policy): diff-reviewer APPROVED and Review B REJECTED over dangling `docs/LESSONS.md` mentions remaining in three handoff/ artifacts (a completed TASK-E3 brief and two captured REVIEW-B diffs). Resolved in favour of APPROVE, biasing to the established invariant that handoff/ is the frozen delegation record: those mentions are immutable history of finished rounds, not live references — nothing builds/runs/navigates from them, and editing a completed brief or a captured diff to fix a cosmetic link would rewrite that history. The refs are left untouched by design. Documentation only, no user-visible change.
