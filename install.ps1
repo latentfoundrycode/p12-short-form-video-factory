@@ -32,13 +32,24 @@ function Find-PythonExe {
     )
     foreach ($candidate in $candidates) {
         if (-not (Get-Command $candidate.Cmd -ErrorAction SilentlyContinue)) { continue }
-        $versionArgs = $candidate.Prefix + @('--version')
-        $text = & $candidate.Cmd @versionArgs 2>&1 | Out-String
-        $ver = Get-PythonVersionFromText $text
-        if (-not $ver -or $ver -lt $MinPython) { continue }
-        $probeArgs = $candidate.Prefix + @('-c', 'import sys; print(sys.executable)')
-        $exe = (& $candidate.Cmd @probeArgs 2>&1 | Out-String).Trim()
-        if ($exe -and (Test-Path -LiteralPath $exe)) { return $exe }
+        # PS 5.1: 2>&1 + EAP Stop turns native stderr into a terminating NativeCommandError.
+        $savedEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $versionArgs = $candidate.Prefix + @('--version')
+            $text = & $candidate.Cmd @versionArgs 2>&1 | Out-String
+            $ver = Get-PythonVersionFromText $text
+            if (-not $ver -or $ver -lt $MinPython) { continue }
+            $probeArgs = $candidate.Prefix + @('-c', 'import sys; print(sys.executable)')
+            $exe = (& $candidate.Cmd @probeArgs 2>&1 | Out-String).Trim()
+            if ($exe -and (Test-Path -LiteralPath $exe)) { return $exe }
+        }
+        catch {
+            continue
+        }
+        finally {
+            $ErrorActionPreference = $savedEap
+        }
     }
     return $null
 }
@@ -112,7 +123,13 @@ function Copy-RuntimeDirectory {
 
 function Add-UserPath([string]$Entry) {
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    if ($userPath -like "*$Entry*") { return }
+    if (-not [string]::IsNullOrEmpty($userPath)) {
+        $normalized = $Entry.TrimEnd('\')
+        foreach ($part in ($userPath -split ';')) {
+            if ([string]::IsNullOrWhiteSpace($part)) { continue }
+            if ($part.TrimEnd('\') -ieq $normalized) { return }
+        }
+    }
     if ([string]::IsNullOrEmpty($userPath)) {
         $newPath = $Entry
     }
