@@ -19,6 +19,7 @@ from app.core.supervisor import EnsureEnv, PopenFn
 type WorkflowResolver = Callable[[str], Path | None]
 
 _log = logging.getLogger(__name__)
+_STOP_TIMEOUT_S: float = 5.0
 
 
 @dataclass(frozen=True)
@@ -116,13 +117,12 @@ class SchedulerDriver:
             )
             self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, *, timeout: float = _STOP_TIMEOUT_S) -> None:
         with self._lifecycle_lock:
             self._stop.set()
             if self._thread is None:
                 return
-            self._thread.join()
-            self._thread = None
+            self._thread.join(timeout)
 
     def _loop(self) -> None:
         self._guarded_tick()
