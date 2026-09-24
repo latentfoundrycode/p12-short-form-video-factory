@@ -39,6 +39,15 @@ not-applicable.
 
 ## Open
 
+- **H63 — FFmpeg ops have no hard timeout; heartbeats now mask a true hang.** With H6, `finalize`'s
+  encode and `media.edit.trim`/`cut` emit periodic heartbeats while FFmpeg runs, so the §2.8 300 s
+  silence watchdog no longer kills them. That was the point (legitimately long encodes survive), but
+  `_ffmpeg._run` (`subprocess.run`) has no `timeout=`, so a *genuinely hung/deadlocked* FFmpeg op now
+  runs forever with no backstop (it emits no `cost` events, so the budget guard never fires either).
+  Accepted for H6 (local, non-paid, non-network op on a single-user app — a resource concern, not an
+  exploit), but the watchdog backstop is gone for these ops. Fix: give the FFmpeg subprocess a bounded
+  `timeout=` in `_ffmpeg._run` (and/or honor a render-family `[[limits]]` cap) so a true hang is still
+  detected while legitimate long encodes survive. _Source: H6 security-auditor advisory (PR #155)._ Open.
 - **H2 — `ctx.map` shared-artifacts copy race.** Each render `copytree`s `ctx.paths.artifacts` into its temp
   project; this is not concurrency-safe if renders under one video ever run in parallel via `ctx.map`. Make
   the artifact staging isolation-safe before any parallel-render path uses it. _Source: B-1b review A,
