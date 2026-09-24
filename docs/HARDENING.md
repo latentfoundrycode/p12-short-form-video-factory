@@ -52,7 +52,10 @@ not-applicable.
 - **H2 — `ctx.map` shared-artifacts copy race.** Each render `copytree`s `ctx.paths.artifacts` into its temp
   project; this is not concurrency-safe if renders under one video ever run in parallel via `ctx.map`. Make
   the artifact staging isolation-safe before any parallel-render path uses it. _Source: B-1b review A,
-  non-blocking (PR #25)._ Open.
+  non-blocking (PR #25)._ **ACCEPTED 2026-09-24 (not reachable yet):** no code path runs renders under
+  one video in parallel (`ctx.map` has no parallel-render implementation), so the race cannot occur
+  today. Revisit as a prerequisite of any future parallel-render feature, not before. Won't-fix until
+  then.
 - **H3 — `_kill_process` does not reap descendants when Node has already exited.** It early-returns on
   `proc.poll() is not None`, so in the reader-hang path it no-ops on still-alive Chrome/FFmpeg descendants
   (the reader unblocks via stdout close, but the descendants leak); on POSIX it also kills only Node, not the
@@ -359,9 +362,14 @@ not-applicable.
   in anticipation; wire `gates_auto → start → admit_run → run_request` when the gate runtime exists.
   (3) **Shutdown join under lock.** `SchedulerDriver.stop()` holds `_lifecycle_lock` across
   `thread.join()`; if a tick is mid-`admit_run`/`ensure_env` (e.g. a first-time venv build) shutdown
-  blocks for that duration — availability at shutdown only; consider a bounded join. _Source: F-5
-  security-auditor ADVISORY; (1) resolved by this PR, (2) blocked on the approval-gate runtime
-  (Phase 5), (3) Open._ Open (2)/(3).
+  blocks for that duration — availability at shutdown only; consider a bounded join. **(2) RESOLVED
+  (Stage H + scheduler wiring):** the approval-gate runtime landed (`ctx.gate`, H-1..H-4), and
+  `gates_auto` is now wired end-to-end — `scheduler_runner` forwards `entry.gates_auto` → `admit` →
+  `run_request` → `context.json` (`supervisor`) → honored at `gate.py` (a scheduled run resolves via
+  `on_bypass`), covered by `test_start_passes_gates_auto_through` and
+  `test_run_request_injects_gates_auto_into_context`. **(3) RESOLVED 2026-09-24 (see Resolved:
+  H39.3):** `stop()` now bounds its join. _Source: F-5 security-auditor ADVISORY; (1) resolved at F-5,
+  (2) delivered by Stage H, (3) by this PR._
 - **H40 — headless-Chrome/FFmpeg can still orphan (invisibly) on an abnormal node exit (test-infra).**
   The composition-check / render path spawns `node` via `sfvf.media.graphics._run`, which now sets
   `CREATE_NO_WINDOW` on Windows so no console window appears (fixing the visible pile-up of
@@ -371,7 +379,11 @@ not-applicable.
   descendant running — now INVISIBLE (no window), so it no longer clutters the terminal but could
   accumulate as background processes over many crashed runs. Low impact (no UI, no spend); a future
   hardening could kill the whole child process tree on `_run` exit (Windows: taskkill /T, or a job
-  object). _Source: chrome-console fix follow-up._ Open.
+  object). _Source: chrome-console fix follow-up._ **ACCEPTED 2026-09-24 (low, test-infra):** the
+  trigger is a hard crash of the Python/node process (not a normal or timeout exit, both of which are
+  reaped); on a single-user local app an orphaned headless-Chrome/FFmpeg after a rare crash is a
+  bounded resource nuisance, not a correctness or security issue, and dies at the next reboot. A job
+  object / `taskkill /T` sweep is the fix if it ever becomes a real problem. Won't-fix for now.
 - **H61 — served run files get no value-level secret redaction.** `get_run_file` (`app/api/runs.py`)
   blocks `context.json` by name and now serves a scrubbed/blocked `result.json` (H18); `events.jsonl`
   is redacted at write. **(b) `.steps/**` path-fetch — RESOLVED (this PR):** the dot-prefixed step
@@ -384,7 +396,10 @@ not-applicable.
   an artifact leaks it on download. Pre-existing, narrow trigger (a workflow leaking its own key,
   which it could exfil many other ways). Fix option if ever needed: a best-effort value-redaction pass
   over served artifact files. _Source: H18 security-auditor advisory (PR #152); (b) closed by this PR._
-  Open (a, low).
+  **(a) ACCEPTED 2026-09-24 (low):** artifacts are the workflow's INTENDED downloadable outputs, so
+  blanket-blocking or redacting them would break legitimate use; the only leak is a workflow writing
+  its OWN injected key into an artifact — which it can exfil many other ways — on a single-user local
+  app. Not worth a value-redaction pass that would risk corrupting genuine outputs. Won't-fix.
 - **H62 — `_run_prepare` success-path re-parse crashes on a pathological `result.json`.** After the
   `finally` scrub, the success path re-reads `result.json` with
   `json.loads(result_path.read_text(encoding="utf-8"))`. A `prepare()` that RETURNS a pathologically
@@ -394,7 +409,13 @@ not-applicable.
   leak (the `finally` scrub already redacted the file by then); a robustness gap only, triggered by a
   hostile/buggy prepare return. Fix: bound/relax the re-parse (guard `RecursionError`/decode there,
   or reuse the already-parsed payload). _Source: H18 review A (diff-reviewer NOTED + security-auditor
-  advisory, PR #152)._ Open (low).
+  advisory, PR #152)._ **ACCEPTED 2026-09-24 (effectively unreachable):** on the SUCCESS path the
+  runner writes `result.json` itself via `_write_result` (atomic `json.dump` → always valid UTF-8),
+  and `_capture_return` pre-serializes the return with `json.dumps` in the CHILD, so a pathologically
+  deep or non-serializable return fails in the child (returncode ≠ 0 → the failure path, which returns
+  before the re-parse) and never produces a success-path `result.json` the parent chokes on. Reaching
+  the parent crash needs an external process to corrupt `result.json` between the child's write and the
+  parent's read — outside the single-user threat model. Robustness-only, no secret leak. Won't-fix.
 - **H64 — prepare-phase spend is in Statistics but not yet in cost ESTIMATION.** The prepare phase's
   aggregated cost is now persisted to `request.prepare_cost` and counted in the Statistics tab, but
   `app/core/estimate.py` still estimates purely per-video (`_run_uncached` reads only `video.json`),
@@ -418,6 +439,14 @@ not-applicable.
   caller inherits the backstop with no signature change; a legitimate long encode well under the cap
   still completes. Covered by `tests/sdk/test_ffmpeg_timeout.py`. _Source: H6 security-auditor
   advisory (PR #155); closed by this PR._
+- **H39.3 — SchedulerDriver.stop() join is now bounded** (resolved by this PR). `stop()` held
+  `_lifecycle_lock` across an unbounded `thread.join()`, so a stop issued while a tick was
+  mid-`admit_run`/`ensure_env` (e.g. a first-time venv build) blocked for that duration. `stop(*,
+  timeout=_STOP_TIMEOUT_S=5.0)` now bounds the join; `_stop` is set first so the loop exits at its
+  next check, and the daemon thread is reclaimed at process exit if it outlives the bound. A
+  still-blocked tick leaves the thread handle in place so `running()` stays accurate, and `start()`
+  re-checks `is_alive()` so restart is unaffected. Covered by `tests/core/test_scheduler_stop.py`.
+  _Source: F-5 security-auditor ADVISORY (3); closed by this PR._
 - **H64 — prepare-phase cost is now a per-run overhead in cost estimation** (resolved by this PR;
   Stage-C). Estimation was purely per-video (H27) and ignored the shared prepare spend now persisted
   to `request.prepare_cost`, so a multi-video run's estimate and the C-3 atomic pre-flight omitted
