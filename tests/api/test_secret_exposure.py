@@ -134,6 +134,29 @@ def test_shared_result_json_is_not_downloadable(tmp_path):
     assert "shared/artifacts/result.json" in names  # the legit artifact is still listed
 
 
+def test_dot_prefixed_run_files_are_not_downloadable(tmp_path):
+    # H61: files under a dot-prefixed dir (e.g. shared/.steps/, the step cache) are excluded from
+    # the listing but were still fetchable by path via get_run_file. A cached step result could
+    # carry a secret, so get_run_file must also refuse any dot-prefixed path part — matching the
+    # listing's exclusion so a listing-hidden file cannot be fetched by guessing its path.
+    workflows_dir = tmp_path / "workflows"
+    workflows_dir.mkdir()
+    _install_stub(workflows_dir, "succeeds")
+    client = _client(tmp_path)
+    run_root = tmp_path / "runs" / "succeeds" / "20260101-000000"
+    steps = run_root / "shared" / ".steps"
+    steps.mkdir(parents=True)
+    (steps / "cache.json").write_text('{"cached": "value"}', "utf-8")
+    (run_root / "shared" / "note.txt").write_text("ordinary", "utf-8")
+
+    base = "/api/workflows/succeeds/runs/20260101-000000/files"
+    assert client.get(f"{base}/shared/.steps/cache.json").status_code == 404  # dot-dir not served
+    assert client.get(f"{base}/shared/note.txt").status_code == 200  # ordinary file still served
+    names = [f["path"] for f in client.get(f"{base}").json()["files"]]
+    assert not any(part.startswith(".") for name in names for part in name.split("/"))
+    assert "shared/note.txt" in names
+
+
 def test_secrets_scrubbed_even_when_runner_spawn_fails(tmp_path):
     # Even if the runner subprocess fails to spawn, the injected secrets must not linger on disk
     # in context.json (the scrub runs in a finally that wraps the spawn).
