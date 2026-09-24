@@ -77,7 +77,12 @@ def test_finalize_wraps_the_ffmpeg_encode_in_a_heartbeat(tmp_path: Path, monkeyp
     # H6: the house-format FFmpeg encode is synchronous with output captured, so a long encode
     # produces no workflow stdout and the 300 s silence watchdog could kill it. The encode must run
     # inside heartbeat_during(...) so periodic heartbeats keep the watchdog fed.
-    from sfvf import finalize as finalize_mod
+    import sys
+
+    # `sfvf/__init__.py` re-exports the `finalize` FUNCTION, shadowing the submodule attribute, so
+    # `from sfvf import finalize` / `import sfvf.finalize` both yield the function. The real module
+    # (whose globals `_apply_house_format` reads) is in sys.modules under its full name.
+    finalize_mod = sys.modules["sfvf.finalize"]
 
     recorder = _RecordingHeartbeat()
     monkeypatch.setattr(finalize_mod, "heartbeat_during", recorder)
