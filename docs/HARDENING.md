@@ -403,9 +403,22 @@ not-applicable.
   needs a model decision: the per-video `Estimate` must carry a separate per-run overhead term (from
   the last comparable runs' `prepare_cost["uncached"]`) that `scale_estimate` adds ONCE rather than
   multiplying by `video_count`. Deferred to the estimation increment. _Source: prepare-cost Stage-C
-  increment (statistics half); chip task_bf07b7fd._ Open.
+  increment (statistics half); chip task_bf07b7fd._ **RESOLVED 2026-09-24 — see Resolved: H64.**
 
 ## Resolved
+
+- **H64 — prepare-phase cost is now a per-run overhead in cost estimation** (resolved by this PR;
+  Stage-C). Estimation was purely per-video (H27) and ignored the shared prepare spend now persisted
+  to `request.prepare_cost`, so a multi-video run's estimate and the C-3 atomic pre-flight omitted
+  it. `Estimate` gained `prepare_per_meter` (default `{}`), `estimate_cost` fills it via a new
+  `_mean_prepare(pool)` that averages each comparable run's `prepare_cost["uncached"]` per meter over
+  the runs that incurred it (same tolerant-amount guards and runs-with-the-meter averaging as
+  `_mean_uncached`), and `scale_estimate(est, count)` returns `per_meter[m] = per_video[m]*count +
+  prepare_per_meter[m]` over the meter union, clearing `prepare_per_meter` so a second scale never
+  double-adds. The admission path already scales the estimate before `check_atomic_budget`, so the
+  overhead now flows into the atomic budget check with no consumer change. Runs with no prepare cost
+  estimate an empty overhead (backward-compatible; `test_estimate.py` unchanged and green). Covered by
+  `tests/core/test_estimate_prepare.py`. _Source: prepare-cost Stage-C follow-on; closed by this PR._
 
 - **H1 — GSAP loaded from CDN at render time** (resolved by this PR). `_index_html` (used by both
   `render` and `check`) injected `<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js">`,

@@ -16,7 +16,7 @@ SKELETON — signatures frozen by tests/core/test_estimate.py; the builder fills
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -33,14 +33,16 @@ class Estimate:
     """A per-meter cost estimate with its confidence.
 
     `per_meter` maps a meter id (e.g. "openrouter") to the average *uncached* amount over the runs
-    the estimate is based on. `confidence` is "matched" (same affects_cost params), "crude" (a
-    workflow-wide average, no param match), or "none" (no usable history). `matches` is the count of
-    runs averaged.
+    the estimate is based on. `prepare_per_meter` is the per-run prepare overhead (not scaled by
+    video count). `confidence` is "matched" (same affects_cost params), "crude" (a workflow-wide
+    average, no param match), or "none" (no usable history). `matches` is the count of runs
+    averaged.
     """
 
     per_meter: dict[str, float]
     confidence: str
     matches: int
+    prepare_per_meter: dict[str, float] = field(default_factory=dict)
 
 
 def estimate_cost(
@@ -72,16 +74,28 @@ def estimate_cost(
         pool = candidates[:MAX_HISTORY]
         confidence = "crude"
 
-    return Estimate(per_meter=_mean_uncached(pool), confidence=confidence, matches=len(pool))
+    return Estimate(
+        per_meter=_mean_uncached(pool),
+        confidence=confidence,
+        matches=len(pool),
+        prepare_per_meter=_mean_prepare(pool),
+    )
 
 
 def scale_estimate(estimate: Estimate, count: int) -> Estimate:
-    """Scale a PER-VIDEO estimate to a whole run of `count` videos (multiply each per-meter amount).
-    Confidence and matches are preserved."""
+    """Scale a PER-VIDEO estimate to a whole run of `count` videos, then add the per-run prepare
+    overhead once. Confidence and matches are preserved; `prepare_per_meter` is folded into
+    `per_meter` so scaling twice never double-adds."""
+    meters = estimate.per_meter.keys() | estimate.prepare_per_meter.keys()
     return Estimate(
-        per_meter={meter: amount * count for meter, amount in estimate.per_meter.items()},
+        per_meter={
+            meter: estimate.per_meter.get(meter, 0.0) * count
+            + estimate.prepare_per_meter.get(meter, 0.0)
+            for meter in meters
+        },
         confidence=estimate.confidence,
         matches=estimate.matches,
+        prepare_per_meter={},
     )
 
 
@@ -112,6 +126,38 @@ def _try_read_request(run_dir: Path) -> RequestRecord | None:
         return read_request(run_dir)
     except (OSError, TypeError, ValueError):
         return None
+
+
+def _mean_prepare(pool: list[tuple[Path, RequestRecord]]) -> dict[str, float]:
+    sums: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    for _run_dir, record in pool:
+        prepare = record.prepare_cost
+        if not isinstance(prepare, dict):
+            continue
+        uncached = prepare.get("uncached")
+        if not isinstance(uncached, dict):
+            continue
+        for meter, raw in uncached.items():
+            if isinstance(raw, bool) or not isinstance(raw, int | float):
+                continue
+            try:
+                amount = float(raw)
+            except (OverflowError, ValueError):
+                continue
+            if not math.isfinite(amount) or amount < 0.0:
+                continue
+            total = sums.get(meter, 0.0) + amount
+            if not math.isfinite(total):
+                continue
+            sums[meter] = total
+            counts[meter] = counts.get(meter, 0) + 1
+    result: dict[str, float] = {}
+    for meter in sums:
+        mean = sums[meter] / counts[meter]
+        if math.isfinite(mean):
+            result[meter] = mean
+    return result
 
 
 def _mean_uncached(pool: list[tuple[Path, RequestRecord]]) -> dict[str, float]:
