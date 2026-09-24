@@ -868,6 +868,7 @@ def _run_prepare(
         params=params,
     )
     write_json_atomic(context_path, context.model_dump(mode="json"))
+    cost: dict[str, Any] | None = None
     try:
         proc = _start_runner(
             python,
@@ -880,7 +881,7 @@ def _run_prepare(
         pending = state.register_proc("prep", proc, shared_dir)
         if pending is not None:
             _apply_stop(pending, proc, shared_dir)
-        _, _, _ = _consume_stdout(
+        _, cost, _ = _consume_stdout(
             proc,
             run_dir,
             "prep",
@@ -900,11 +901,15 @@ def _run_prepare(
         _scrub_result_secrets(result_path, state.secret_values)
     payload: object = json.loads(result_path.read_text(encoding="utf-8"))
     if payload is None:
+        if cost is not None:
+            update_request(run_dir, prepare_cost=cost)
         return True, None
     if not isinstance(payload, dict):
         return False, None
     redacted = _redact_secrets(payload, state.secret_values)
     write_json_atomic(result_path, redacted)
+    if cost is not None:
+        update_request(run_dir, prepare_cost=cost)
     return True, redacted
 
 

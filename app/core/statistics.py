@@ -15,9 +15,11 @@ tests/core/test_statistics.py; the builder fills the bodies.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from app.core.meters import METERS, MeterInfo, meter_info
 from app.core.records import RequestRecord, read_request, read_video
@@ -62,7 +64,8 @@ def aggregate_statistics(
 
     The window is the `months` calendar months ending with the month of `now` (inclusive). A run is
     counted when its `started_utc` month falls in the window and it is not a dry run, regardless of
-    status. Each video's `cost["actual"]` contributes its per-meter amount. Fiat meters are summed
+    status. Each video's `cost["actual"]` and the run's `prepare_cost["actual"]` contribute their
+    per-meter amounts. Fiat meters are summed
     into a single "fiat" series; each non-fiat meter becomes its own series; a meter absent from the
     registry becomes a standalone credit series (never merged into fiat). The fiat series appears
     first (when present), then the rest sorted by label. Each series' `buckets` cover every month in
@@ -81,23 +84,12 @@ def aggregate_statistics(
         month = _month_key(record.started_utc)
         if month is None or month not in window_set:
             continue
-        for meter, amount in _run_actual(run_dir).items():
-            info = meter_info(meter, registry)
-            # Quota meters (e.g. a monthly character allowance) are read from the provider, not
-            # summed as spend (§7.1); they must never appear in this spend view even if a record
-            # carried one in cost["actual"].
-            if info.kind == "quota":
-                continue
-            series_id = "fiat" if info.kind == "fiat" else meter
-            key = (series_id, month)
-            total = totals.get(key, 0.0) + amount
-            if not math.isfinite(total):
-                continue
-            totals[key] = total
-            if info.kind == "fiat":
-                fiat_meters.add(meter)
-            else:
-                other_meters.add(meter)
+        _add_amounts(totals, fiat_meters, other_meters, _run_actual(run_dir), registry, month)
+        prepare = record.prepare_cost
+        if isinstance(prepare, dict):
+            prepare_actual = prepare.get("actual")
+            if isinstance(prepare_actual, dict):
+                _add_amounts(totals, fiat_meters, other_meters, prepare_actual, registry, month)
 
     series: list[Series] = []
     if fiat_meters:
@@ -180,6 +172,41 @@ def _iter_run_dirs(runs_dir: Path) -> list[Path]:
             if child.is_dir():
                 found.append(child)
     return found
+
+
+def _add_amounts(
+    totals: dict[tuple[str, str], float],
+    fiat_meters: set[str],
+    other_meters: set[str],
+    amounts: Mapping[str, Any],
+    registry: dict[str, MeterInfo],
+    month: str,
+) -> None:
+    for meter, raw in amounts.items():
+        if isinstance(raw, bool) or not isinstance(raw, int | float):
+            continue
+        try:
+            amount = float(raw)
+        except (OverflowError, ValueError):
+            continue
+        if not math.isfinite(amount) or amount < 0.0:
+            continue
+        info = meter_info(meter, registry)
+        # Quota meters (e.g. a monthly character allowance) are read from the provider, not
+        # summed as spend (§7.1); they must never appear in this spend view even if a record
+        # carried one in cost["actual"].
+        if info.kind == "quota":
+            continue
+        series_id = "fiat" if info.kind == "fiat" else meter
+        key = (series_id, month)
+        total = totals.get(key, 0.0) + amount
+        if not math.isfinite(total):
+            continue
+        totals[key] = total
+        if info.kind == "fiat":
+            fiat_meters.add(meter)
+        else:
+            other_meters.add(meter)
 
 
 def _run_actual(run_dir: Path) -> dict[str, float]:
