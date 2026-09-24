@@ -47,7 +47,8 @@ not-applicable.
   Accepted for H6 (local, non-paid, non-network op on a single-user app — a resource concern, not an
   exploit), but the watchdog backstop is gone for these ops. Fix: give the FFmpeg subprocess a bounded
   `timeout=` in `_ffmpeg._run` (and/or honor a render-family `[[limits]]` cap) so a true hang is still
-  detected while legitimate long encodes survive. _Source: H6 security-auditor advisory (PR #155)._ Open.
+  detected while legitimate long encodes survive. _Source: H6 security-auditor advisory (PR #155)._
+  **RESOLVED 2026-09-24 — see Resolved: H63.**
 - **H2 — `ctx.map` shared-artifacts copy race.** Each render `copytree`s `ctx.paths.artifacts` into its temp
   project; this is not concurrency-safe if renders under one video ever run in parallel via `ctx.map`. Make
   the artifact staging isolation-safe before any parallel-render path uses it. _Source: B-1b review A,
@@ -407,6 +408,16 @@ not-applicable.
 
 ## Resolved
 
+- **H63 — FFmpeg subprocess ops now have a bounded hard timeout** (resolved by this PR). H6 made
+  `finalize`'s encode and `media.edit.trim`/`cut` emit heartbeats so the 300 s silence watchdog no
+  longer kills a long encode — but `_ffmpeg._run` used `subprocess.run` with no `timeout=`, so a
+  genuinely hung/deadlocked FFmpeg op had no backstop and would run forever (it emits no cost events,
+  so the budget guard never fires either). `_run` now takes `timeout: float = _DEFAULT_TIMEOUT_S`
+  (a finite 1-hour cap) passed to `subprocess.run`, and raises a clear `RuntimeError` ("command timed
+  out after …") on `subprocess.TimeoutExpired` (which kills the child, so no orphan). Every existing
+  caller inherits the backstop with no signature change; a legitimate long encode well under the cap
+  still completes. Covered by `tests/sdk/test_ffmpeg_timeout.py`. _Source: H6 security-auditor
+  advisory (PR #155); closed by this PR._
 - **H64 — prepare-phase cost is now a per-run overhead in cost estimation** (resolved by this PR;
   Stage-C). Estimation was purely per-video (H27) and ignored the shared prepare spend now persisted
   to `request.prepare_cost`, so a multi-video run's estimate and the C-3 atomic pre-flight omitted

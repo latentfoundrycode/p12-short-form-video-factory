@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+_DEFAULT_TIMEOUT_S: float = 3600.0
+
 
 @dataclass
 class MediaProbe:
@@ -130,7 +132,9 @@ def _binary(name: str) -> str:
     return found
 
 
-def _run(command: list[str], *, capture_stderr: bool = False) -> str:
+def _run(
+    command: list[str], *, capture_stderr: bool = False, timeout: float = _DEFAULT_TIMEOUT_S
+) -> str:
     try:
         completed = subprocess.run(  # noqa: S603
             command,
@@ -139,10 +143,13 @@ def _run(command: list[str], *, capture_stderr: bool = False) -> str:
             text=True,
             encoding="utf-8",
             errors="replace",
+            timeout=timeout,
         )
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr or ""
         raise RuntimeError(f"command failed: {command}\n{stderr}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"command timed out after {timeout}s: {command}") from exc
     except OSError as exc:
         raise RuntimeError(f"command failed: {command}\n{exc}") from exc
     if capture_stderr:
