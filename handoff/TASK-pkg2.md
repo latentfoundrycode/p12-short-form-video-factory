@@ -46,6 +46,7 @@ If any of these modules no longer references `APP_ROOT` after the change, drop `
 
 - Backward-compatible: with `SFVF_DATA_DIR` unset, `DATA_ROOT == APP_ROOT`, so every path is byte-for-byte what it is today. No behaviour change in development or the existing test suite.
 - `DATA_ROOT` is a module constant read once at import (correct: the installer sets `SFVF_DATA_DIR` before launching the server). Do not turn the dir constants into functions.
+- **Change ONLY the four files' path expressions — nothing else.** In particular do NOT add any class-identity / `globals().get(...)` / reload-stabilization shims to `secrets.py` or `schedules.py`. The frozen contract exercises `SFVF_DATA_DIR` in a **subprocess** (a fresh interpreter), not `importlib.reload`, so no such production workaround is needed or wanted — if you feel one is, stop and report instead.
 - No new dependency. One paragraph is one line in any Markdown you write (no hard wraps).
 
 ## Done when

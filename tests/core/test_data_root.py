@@ -8,79 +8,98 @@ variable). All runtime-generated data (runs, cache, library, venvs) and user sta
 schedules, budget ledger) hang off `DATA_ROOT`; shipped program dirs (workflows, web, sdk) stay
 under `APP_ROOT`.
 
-The relocation test reloads the path-owning modules with the env set (module constants are read once
-at import — correct, as the installer sets the variable before launch — so a reload is how a test
-exercises it), and restores them afterward. No network, no spend.
+`DATA_ROOT` is a module constant read once at import — correct, since the installer sets the
+variable before launching the server. So the contract exercises it in a **fresh interpreter** (a
+subprocess with the env set), never `importlib.reload` in-process: reloading would re-stamp the
+constants but also swap class objects (SecretsError/ScheduleEntry), breaking `pytest.raises`/model
+identity in the rest of the suite and tempting a production-side reload hack. No network, no spend.
 """
 
 from __future__ import annotations
 
-import importlib
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
-import pytest
+from app.paths import APP_ROOT
 
-import app.core.budget_config as budget_config
-import app.core.schedules as schedules
-import app.core.secrets as secrets
-import app.paths as paths
+_PROBE = """
+import json
+import app.paths as p
+import app.core.secrets as s
+import app.core.schedules as sc
+import app.core.budget_config as b
+cfg = b.load_budget_config()
+print(json.dumps({
+    "DATA_ROOT": str(p.DATA_ROOT),
+    "APP_ROOT": str(p.APP_ROOT),
+    "RUNS_DIR": str(p.RUNS_DIR),
+    "CACHE_DIR": str(p.CACHE_DIR),
+    "LIBRARY_DIR": str(p.LIBRARY_DIR),
+    "VENVS_DIR": str(p.VENVS_DIR),
+    "WORKFLOWS_DIR": str(p.WORKFLOWS_DIR),
+    "SDK_DIR": str(p.SDK_DIR),
+    "SECRETS": str(s._DEFAULT_STORE),
+    "SCHEDULES": str(sc.SCHEDULES_PATH),
+    "LEDGER": str(cfg.ledger_path),
+}))
+"""
 
 
-def test_default_data_root_is_app_root() -> None:
-    # With SFVF_DATA_DIR unset (the test env), data stays under the repo root — no dev change.
-    assert paths.DATA_ROOT == paths.APP_ROOT
+def _resolved_paths(tmp_path: Path, *, data_dir: str | None) -> dict[str, str]:
+    """Resolve SFVF's paths in a fresh interpreter with (or without) SFVF_DATA_DIR set."""
+    env = {k: v for k, v in os.environ.items() if k not in {"SFVF_DATA_DIR", "SFVF_BUDGET_STATE"}}
+    if data_dir is not None:
+        env["SFVF_DATA_DIR"] = data_dir
+    config = tmp_path / "budget.toml"
+    config.write_text("[openrouter]\nper_run = 1.0\n", encoding="utf-8")
+    env["SFVF_BUDGET_CONFIG"] = str(config)  # so load_budget_config returns a config, not None
+    result = subprocess.run(
+        [sys.executable, "-c", _PROBE],
+        cwd=APP_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(result.stdout.strip().splitlines()[-1])
 
 
-def test_data_dirs_hang_off_data_root_program_dirs_off_app_root() -> None:
-    assert paths.RUNS_DIR == paths.DATA_ROOT / "runs"
-    assert paths.CACHE_DIR == paths.DATA_ROOT / "cache"
-    assert paths.LIBRARY_DIR == paths.DATA_ROOT / "library"
-    assert paths.VENVS_DIR == paths.DATA_ROOT / "venvs"
-    # Shipped program files are NOT data — they stay under the install root, replaced on upgrade.
+def test_default_data_root_is_app_root(tmp_path: Path) -> None:
+    # With SFVF_DATA_DIR unset, data stays under the repo root — no dev/behaviour change.
+    p = _resolved_paths(tmp_path, data_dir=None)
+    assert p["DATA_ROOT"] == p["APP_ROOT"]
+    assert p["RUNS_DIR"] == str(Path(p["APP_ROOT"]) / "runs")
+    assert p["SECRETS"] == str(Path(p["APP_ROOT"]) / "secrets.enc")
+    assert p["SCHEDULES"] == str(Path(p["APP_ROOT"]) / "schedules.json")
+
+
+def test_sfvf_data_dir_relocates_all_runtime_data(tmp_path: Path) -> None:
+    data = tmp_path / "appdata" / "SFVF"
+    p = _resolved_paths(tmp_path, data_dir=str(data))
+    root = str(data.resolve())
+    assert p["DATA_ROOT"] == root
+    # Every data location moved under the new root...
+    assert p["RUNS_DIR"] == str(Path(root) / "runs")
+    assert p["CACHE_DIR"] == str(Path(root) / "cache")
+    assert p["LIBRARY_DIR"] == str(Path(root) / "library")
+    assert p["VENVS_DIR"] == str(Path(root) / "venvs")
+    assert p["SECRETS"] == str(Path(root) / "secrets.enc")
+    assert p["SCHEDULES"] == str(Path(root) / "schedules.json")
+    assert p["LEDGER"] == str((Path(root) / "state" / "budget" / "ledger.jsonl").resolve())
+    # ...while shipped program dirs did NOT move (still under the install root).
+    assert p["WORKFLOWS_DIR"] == str(Path(p["APP_ROOT"]) / "workflows")
+    assert p["SDK_DIR"] == str(Path(p["APP_ROOT"]) / "sdk")
+    assert p["APP_ROOT"] != root  # the install root and the data root are genuinely distinct here
+
+
+def test_program_dirs_are_not_under_data_root() -> None:
+    # A pure in-process check (no env, no reload): program dirs are APP_ROOT-relative.
+    from app import paths
+
     assert paths.WORKFLOWS_DIR == paths.APP_ROOT / "workflows"
     assert paths.WEB_DIR == paths.APP_ROOT / "app" / "web"
     assert paths.SDK_DIR == paths.APP_ROOT / "sdk"
-
-
-def test_secrets_and_schedules_defaults_hang_off_data_root() -> None:
-    assert secrets._DEFAULT_STORE == paths.DATA_ROOT / "secrets.enc"
-    assert schedules.SCHEDULES_PATH == paths.DATA_ROOT / "schedules.json"
-
-
-def _reload_paths_modules() -> None:
-    importlib.reload(paths)
-    importlib.reload(secrets)
-    importlib.reload(schedules)
-    importlib.reload(budget_config)
-
-
-def test_sfvf_data_dir_relocates_all_runtime_data(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    data = tmp_path / "appdata" / "SFVF"
-    monkeypatch.setenv("SFVF_DATA_DIR", str(data))
-    monkeypatch.delenv("SFVF_BUDGET_STATE", raising=False)
-    config = tmp_path / "budget.toml"
-    config.write_text("[openrouter]\nper_run = 1.0\n", encoding="utf-8")
-    monkeypatch.setenv("SFVF_BUDGET_CONFIG", str(config))
-    try:
-        _reload_paths_modules()
-        resolved = data.resolve()
-        assert resolved == paths.DATA_ROOT
-        # Every data location moved under the new root...
-        assert resolved / "runs" == paths.RUNS_DIR
-        assert resolved / "cache" == paths.CACHE_DIR
-        assert resolved / "library" == paths.LIBRARY_DIR
-        assert resolved / "venvs" == paths.VENVS_DIR
-        assert resolved / "secrets.enc" == secrets._DEFAULT_STORE
-        assert resolved / "schedules.json" == schedules.SCHEDULES_PATH
-        ledger = budget_config.load_budget_config().ledger_path  # type: ignore[union-attr]
-        assert ledger == (resolved / "state" / "budget" / "ledger.jsonl").resolve()
-        # ...while shipped program dirs did NOT move.
-        assert paths.WORKFLOWS_DIR == paths.APP_ROOT / "workflows"
-        assert paths.SDK_DIR == paths.APP_ROOT / "sdk"
-    finally:
-        monkeypatch.delenv("SFVF_DATA_DIR", raising=False)
-        _reload_paths_modules()  # restore module constants for the rest of the suite
-    assert paths.DATA_ROOT == paths.APP_ROOT  # restored
-    assert paths.RUNS_DIR == paths.APP_ROOT / "runs"
+    assert paths.RUNS_DIR == paths.DATA_ROOT / "runs"  # data dir hangs off DATA_ROOT
