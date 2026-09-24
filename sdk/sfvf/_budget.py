@@ -46,6 +46,16 @@ class Ceilings:
     per_day: Mapping[str, float]
 
 
+@dataclass(frozen=True)
+class BudgetBreach:
+    """A reconciled total that exceeds a usable per-run or per-day ceiling (record-only)."""
+
+    meter: str
+    scope: str
+    total: float
+    ceiling: float
+
+
 def _default_now() -> datetime:
     return datetime.now(UTC)
 
@@ -77,12 +87,18 @@ def _require_amount(value: object) -> float:
     return amount
 
 
+def _usable_ceiling(limit: object) -> float | None:
+    """Finite numeric ceiling, or None when the configured limit is unusable."""
+    if isinstance(limit, bool) or not isinstance(limit, int | float):
+        return None
+    ceiling = float(limit)
+    return ceiling if math.isfinite(ceiling) else None
+
+
 def _ceiling_breached(projected: float, limit: object) -> bool:
     """True when the projected spend is over the ceiling, or the ceiling itself is unusable."""
-    if isinstance(limit, bool) or not isinstance(limit, int | float):
-        return True
-    ceiling = float(limit)
-    return not math.isfinite(ceiling) or not math.isfinite(projected) or projected > ceiling
+    ceiling = _usable_ceiling(limit)
+    return ceiling is None or not math.isfinite(projected) or projected > ceiling
 
 
 def _as_str(value: object) -> str:
@@ -361,7 +377,7 @@ class BudgetGuard:
             )
             return token
 
-    def reconcile(self, token: str, *, actual: float, note: str = "") -> None:
+    def reconcile(self, token: str, *, actual: float, note: str = "") -> list[BudgetBreach]:
         with self._held():
             amount = _require_amount(actual)
             self._snapshot()  # fail closed on a corrupt ledger before appending (H23)
@@ -389,6 +405,22 @@ class BudgetGuard:
                     note=note,
                 ),
             )
+            if not meter:
+                return []
+            states = self._snapshot()
+            today = self._now().astimezone(UTC).date()
+            run_total = _run_sum(states, run_id, meter, workflow_id)
+            day_total = _day_sum(states, meter, today)
+            breaches: list[BudgetBreach] = []
+            if meter in self._ceilings.per_run:
+                ceiling = _usable_ceiling(self._ceilings.per_run[meter])
+                if ceiling is not None and run_total > ceiling:
+                    breaches.append(BudgetBreach(meter, "run", run_total, float(ceiling)))
+            if meter in self._ceilings.per_day:
+                ceiling = _usable_ceiling(self._ceilings.per_day[meter])
+                if ceiling is not None and day_total > ceiling:
+                    breaches.append(BudgetBreach(meter, "day", day_total, float(ceiling)))
+            return breaches
 
     def day_total(self, meter: str) -> float:
         with self._held():
