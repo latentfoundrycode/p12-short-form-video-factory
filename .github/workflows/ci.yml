@@ -60,9 +60,16 @@ jobs:
           npm ci --prefix tools/hyperframes
           node tools/hyperframes/node_modules/hyperframes/bin/hyperframes.mjs browser ensure
 
-      # --- The seven-command gate. Each check runs even if a prior CHECK failed, so
-      # --- one CI run surfaces ALL failing checks at once; but every check is skipped
-      # --- if either install step failed, and any check failure fails the job. ---
+      # --- Reference currency, then the seven-command gate. Each check runs even if a
+      # --- prior CHECK failed, so one CI run surfaces ALL failing checks at once; but
+      # --- every check is skipped if either install step failed, and any check failure
+      # --- fails the job. ---
+      - name: cli-reference currency
+        if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' && steps.deps_ffmpeg.conclusion == 'success' }}
+        run: |
+          python scripts/dump_cli.py
+          git diff --exit-code docs/cli-reference.json
+
       - name: ruff check
         if: ${{ !cancelled() && steps.deps_py.conclusion == 'success' && steps.deps_fe.conclusion == 'success' && steps.deps_ffmpeg.conclusion == 'success' }}
         run: python -m ruff check .
