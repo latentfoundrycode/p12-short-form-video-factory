@@ -129,3 +129,67 @@ def test_research_non_dry_run_uses_the_real_adapter(tmp_path: Path) -> None:
             agents.research("x")
     finally:
         reset_active(token)
+
+
+# --- H11: defensive parsing of the OpenRouter 200 body (a malformed body -> a clear error) ---
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},  # no choices key
+        {"choices": []},  # empty choices
+        {"choices": [{}]},  # choice has no message
+        {"choices": [{"message": {}}]},  # message has no content
+        {"choices": [{"message": {"content": 123}}]},  # content is not a string
+        {"choices": "nope"},  # choices is not a list
+    ],
+)
+def test_llm_raises_a_clear_error_on_a_malformed_body(tmp_path: Path, monkeypatch, body) -> None:
+    # H11: llm assumed data["choices"][0]["message"]["content"], raising an opaque
+    # KeyError/IndexError/AttributeError on a malformed/unexpected 200. It must raise a clear
+    # RuntimeError instead. (_post_chat_completion is patched, so no HTTP/key/budget is exercised.)
+    monkeypatch.setattr(agents, "_post_chat_completion", lambda _ctx, _body: body)
+    token = set_active(_ctx(tmp_path, dry_run=False))
+    try:
+        with pytest.raises(RuntimeError):
+            agents.llm("x", agent="a", model="m")
+    finally:
+        reset_active(token)
+
+
+def test_research_raises_a_clear_error_on_a_malformed_body(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(agents, "_post_chat_completion", lambda _ctx, _body: {"choices": []})
+    token = set_active(_ctx(tmp_path, dry_run=False))
+    try:
+        with pytest.raises(RuntimeError):
+            agents.research("x")
+    finally:
+        reset_active(token)
+
+
+def test_research_skips_malformed_url_citation_annotations(tmp_path: Path, monkeypatch) -> None:
+    # H11: a url_citation annotation missing its inner object or its `url` must be SKIPPED, not
+    # raise a KeyError mid-parse; well-formed citations are still returned.
+    body = {
+        "choices": [
+            {
+                "message": {
+                    "annotations": [
+                        "not-a-dict",  # skipped
+                        {"type": "other"},  # not a url_citation -> skipped
+                        {"type": "url_citation"},  # missing inner object -> skipped
+                        {"type": "url_citation", "url_citation": {"title": "t"}},  # no url -> skip
+                        {"type": "url_citation", "url_citation": {"url": "https://ok.example/x"}},
+                    ]
+                }
+            }
+        ]
+    }
+    monkeypatch.setattr(agents, "_post_chat_completion", lambda _ctx, _body: body)
+    token = set_active(_ctx(tmp_path, dry_run=False))
+    try:
+        sources = agents.research("x")
+    finally:
+        reset_active(token)
+    assert [s["url"] for s in sources] == ["https://ok.example/x"]
