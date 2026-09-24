@@ -1,12 +1,16 @@
+import os
 from pathlib import Path
 
 APP_ROOT = Path(__file__).resolve().parent.parent
+DATA_ROOT = (
+    Path(os.environ["SFVF_DATA_DIR"]).resolve() if os.environ.get("SFVF_DATA_DIR") else APP_ROOT
+)
 WORKFLOWS_DIR = APP_ROOT / "workflows"
 WEB_DIR = APP_ROOT / "app" / "web"
-RUNS_DIR = APP_ROOT / "runs"
-CACHE_DIR = APP_ROOT / "cache"
-LIBRARY_DIR = APP_ROOT / "library"
-VENVS_DIR = APP_ROOT / "venvs"
+RUNS_DIR = DATA_ROOT / "runs"
+CACHE_DIR = DATA_ROOT / "cache"
+LIBRARY_DIR = DATA_ROOT / "library"
+VENVS_DIR = DATA_ROOT / "venvs"
 SDK_DIR = APP_ROOT / "sdk"
 
 

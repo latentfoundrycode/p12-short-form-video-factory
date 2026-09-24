@@ -12,7 +12,7 @@ from pathlib import Path
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
-from app.paths import APP_ROOT
+from app.paths import DATA_ROOT
 
 SALT_SIZE = 16
 _SCRYPT_N = 2**17
@@ -24,7 +24,7 @@ _KDF_BY_VERSION: dict[int, tuple[int, int, int]] = {
     1: (_SCRYPT_N, _SCRYPT_R, _SCRYPT_P),
 }
 _CURRENT_KDF_N = _KDF_BY_VERSION[_FORMAT_VERSION][0]
-_DEFAULT_STORE = APP_ROOT / "secrets.enc"
+_DEFAULT_STORE = DATA_ROOT / "secrets.enc"
 _DECRYPT_FAILED = "wrong passphrase or corrupt secret store"
 
 
