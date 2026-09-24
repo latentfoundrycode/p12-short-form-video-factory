@@ -145,16 +145,17 @@ class _RunState:
 
     def record_event(self, run_dir: Path, event: dict[str, Any], source: str) -> None:
         with self.lock:
-            append_event(run_dir, _redact_secrets(event, self.secret_values), source=source)
-
-    def record_forecast(self, run_dir: Path, *, meter: str, unit: str, amount: float) -> None:
-        with self.lock:
-            self.forecasts[meter] = {
-                "unit": unit,
-                "amount": amount,
-                "at_utc": format_utc_z(utc_now()),
-            }
-            update_request(run_dir, forecast=dict(self.forecasts))
+            redacted = _redact_secrets(event, self.secret_values)
+            append_event(run_dir, redacted, source=source)
+            parsed = _parse_forecast_event(redacted)
+            if parsed is not None:
+                meter, unit, amount = parsed
+                self.forecasts[meter] = {
+                    "unit": unit,
+                    "amount": amount,
+                    "at_utc": format_utc_z(utc_now()),
+                }
+                update_request(run_dir, forecast=dict(self.forecasts))
 
     def set_video(
         self,
@@ -827,10 +828,6 @@ def _consume_stdout(
                     uncached[meter] = total
                     if not cached:
                         actual[meter] = actual.get(meter, 0.0) + amount
-            parsed_forecast = _parse_forecast_event(redacted)
-            if parsed_forecast is not None:
-                meter, unit, amount = parsed_forecast
-                state.record_forecast(run_dir, meter=meter, unit=unit, amount=amount)
     finally:
         stop.set()
         watcher.join(timeout=1)
