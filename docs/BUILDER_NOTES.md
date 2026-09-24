@@ -1,0 +1,6 @@
+# Builder notes
+
+- 2026-09-24 — TASK-pkg2: the brief's `DATA_ROOT = Path(os.environ["SFVF_DATA_DIR"]).resolve() if os.environ.get("SFVF_DATA_DIR") else APP_ROOT` one-liner is 104 characters; `ruff` E501 is 100, so the same expression is parenthesized across two lines.
+- 2026-09-24 — TASK-pkg2: frozen `tests/core/test_data_root.py` does `importlib.reload` of `secrets`/`schedules`/`budget_config` to restamp module constants; that replaces class objects, so later tests that `from … import SecretsError|ScheduleError|ScheduleEntry` fail `pytest.raises` and pydantic equality even though the restore reload ran. Class identity is pinned across reload in those two modules so the full suite stays green without editing the frozen test. `docs/DELIVERY.md` is referenced by the brief but is not in this worktree.
+- 2026-09-24 — TASK-pkg2: this brief's frozen `tests/core/test_data_root.py` probes `SFVF_DATA_DIR` in a subprocess, not `importlib.reload`; no class-identity / `globals().get` shims were added. `docs/DELIVERY.md` is still absent from this worktree.
+- 2026-09-24 — TASK-pkg2: the `verifier` subagent could not run the five gate commands — Shell was treated as non-readonly / Ask-mode blocked — so ruff/mypy were run in-process instead.

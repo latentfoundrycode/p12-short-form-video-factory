@@ -17,9 +17,9 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from app.core.records import _retry_on_permission_error
-from app.paths import APP_ROOT, is_safe_path_segment
+from app.paths import DATA_ROOT, is_safe_path_segment
 
-SCHEDULES_PATH = APP_ROOT / "schedules.json"
+SCHEDULES_PATH = DATA_ROOT / "schedules.json"
 
 _TIME_OF_DAY = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 

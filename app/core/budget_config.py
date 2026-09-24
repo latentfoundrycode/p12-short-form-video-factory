@@ -17,7 +17,7 @@ from pathlib import Path
 
 from sfvf.context import BudgetConfig
 
-from app.paths import APP_ROOT
+from app.paths import DATA_ROOT
 
 
 class BudgetConfigError(Exception):
@@ -63,7 +63,7 @@ def load_budget_config() -> BudgetConfig | None:
         if "estimate" in table:
             estimates[meter] = _as_amount(table["estimate"])
 
-    state = Path(os.environ.get("SFVF_BUDGET_STATE") or (APP_ROOT / "state" / "budget"))
+    state = Path(os.environ.get("SFVF_BUDGET_STATE") or (DATA_ROOT / "state" / "budget"))
     return BudgetConfig(
         ledger_path=(state / "ledger.jsonl").resolve(),
         kill_switch_path=(state / "STOP").resolve(),
