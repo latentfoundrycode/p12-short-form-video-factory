@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from app.core.estimate import Estimate, estimate_cost
+from app.core.estimate import Estimate, estimate_cost, scale_estimate
 from app.core.records import create_request, read_request, write_json_atomic
 
 _WF = "demo"
@@ -68,8 +68,87 @@ def _run(
         )
 
 
+def _run_videos(
+    runs_dir: Path,
+    run_id: str,
+    *,
+    params: dict[str, Any],
+    videos: list[tuple[dict[str, float], str]],  # (uncached, video status) per video
+    status: str = "complete",
+) -> None:
+    """Write a multi-video run with per-video uncached cost AND per-video status (H27 needs the
+    per-video unit and the complete-only filter, which `_run` — all-complete — cannot express)."""
+    run_dir = runs_dir / _WF / run_id
+    write_json_atomic(
+        run_dir / "request.json",
+        {
+            "run_id": run_id,
+            "workflow": {"id": _WF, "version": "1", "sdk": "1"},
+            "started_utc": "2026-09-09T00:00:00Z",
+            "ended_utc": "2026-09-09T00:01:00Z",
+            "status": status,
+            "params": params,
+            "params_locked_utc": "2026-09-09T00:00:00Z",
+            "dry_run": False,
+            "videos": [{"index": i, "status": v[1]} for i, v in enumerate(videos, start=1)],
+        },
+    )
+    for i, (uncached, video_status) in enumerate(videos, start=1):
+        write_json_atomic(
+            run_dir / f"{i:02d}" / "video.json",
+            {
+                "index": i,
+                "status": video_status,
+                "started_utc": "2026-09-09T00:00:00Z",
+                "ended_utc": "2026-09-09T00:01:00Z",
+                "cost": {"uncached": uncached},
+            },
+        )
+
+
 def _keys(*names: str) -> frozenset[str]:
     return frozenset(names)
+
+
+# --- H27: the estimate is PER-VIDEO over complete videos, and scales by the requested count ---
+
+
+def test_estimate_is_per_video_average_over_complete_videos(tmp_path: Path) -> None:
+    # A run producing 2 complete videos costing 0.04 + 0.06 uncached is a per-VIDEO estimate of
+    # 0.05, not the per-run total 0.10 — so a prospective run's estimate has a per-video unit.
+    runs = tmp_path / "runs"
+    _run_videos(
+        runs,
+        "20260909-000001",
+        params={"model": "A"},
+        videos=[({"openrouter": 0.04}, "complete"), ({"openrouter": 0.06}, "complete")],
+    )
+    est = estimate_cost(runs, _WF, {"model": "A"}, _keys("model"))
+    assert est.per_meter["openrouter"] == pytest.approx(0.05)
+
+
+def test_estimate_excludes_non_complete_videos_from_the_per_video_unit(tmp_path: Path) -> None:
+    # A partial run's non-complete video cost must not leak in: one complete video at 0.04 and one
+    # failed video at 9.0 yields a per-video estimate of 0.04 (the failed video is excluded, and the
+    # divisor is the count of COMPLETE videos, here 1).
+    runs = tmp_path / "runs"
+    _run_videos(
+        runs,
+        "20260909-000001",
+        params={"model": "A"},
+        videos=[({"openrouter": 0.04}, "complete"), ({"openrouter": 9.0}, "failed")],
+        status="partial",
+    )
+    est = estimate_cost(runs, _WF, {"model": "A"}, _keys("model"))
+    assert est.per_meter["openrouter"] == pytest.approx(0.04)
+
+
+def test_scale_estimate_multiplies_per_meter_by_the_count(tmp_path: Path) -> None:
+    est = Estimate(per_meter={"openrouter": 0.05, "veo": 2.0}, confidence="matched", matches=2)
+    scaled = scale_estimate(est, 3)
+    assert scaled.per_meter == pytest.approx({"openrouter": 0.15, "veo": 6.0})
+    assert scaled.confidence == "matched" and scaled.matches == 2  # metadata preserved
+    assert scale_estimate(est, 1).per_meter == pytest.approx(est.per_meter)  # count 1 is identity
 
 
 def test_no_history_is_confidence_none(tmp_path: Path) -> None:

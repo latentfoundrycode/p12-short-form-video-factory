@@ -75,6 +75,16 @@ def estimate_cost(
     return Estimate(per_meter=_mean_uncached(pool), confidence=confidence, matches=len(pool))
 
 
+def scale_estimate(estimate: Estimate, count: int) -> Estimate:
+    """Scale a PER-VIDEO estimate to a whole run of `count` videos (multiply each per-meter amount).
+    Confidence and matches are preserved."""
+    return Estimate(
+        per_meter={meter: amount * count for meter, amount in estimate.per_meter.items()},
+        confidence=estimate.confidence,
+        matches=estimate.matches,
+    )
+
+
 def _candidates(runs_dir: Path, workflow_id: str) -> list[tuple[Path, RequestRecord]]:
     root = runs_dir / workflow_id
     if not root.is_dir():
@@ -121,6 +131,7 @@ def _mean_uncached(pool: list[tuple[Path, RequestRecord]]) -> dict[str, float]:
 
 def _run_uncached(run_dir: Path) -> dict[str, float]:
     totals: dict[str, float] = {}
+    complete = 0
     try:
         children = list(run_dir.iterdir())
     except OSError:
@@ -132,6 +143,9 @@ def _run_uncached(run_dir: Path) -> dict[str, float]:
             video = read_video(child)
         except (OSError, TypeError, ValueError):
             continue
+        if video.status != "complete":
+            continue  # H27(b): non-complete videos' cost must not leak into the per-video unit
+        complete += 1
         cost = video.cost
         if not isinstance(cost, dict):
             continue
@@ -151,4 +165,6 @@ def _run_uncached(run_dir: Path) -> dict[str, float]:
             if not math.isfinite(total):
                 continue
             totals[meter] = total
-    return totals
+    if complete == 0:
+        return {}
+    return {meter: total / complete for meter, total in totals.items()}
