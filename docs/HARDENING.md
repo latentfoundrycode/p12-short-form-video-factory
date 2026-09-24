@@ -223,22 +223,6 @@ not-applicable.
   concurrency; and "latest across independent concurrent video threads" is itself ill-defined. A
   strict fix would fold the forecast accumulator update into `record_event` under one lock hold; do
   that only if a real multi-video-same-meter forecasting workflow appears. _Source: C-2 review B._ Open.
-- **H27 — cost estimate is a per-run total, not per-video scaled by the requested count (C-4).**
-  `estimate_cost` averages each historical run's **summed-over-videos** uncached cost, and the atomic
-  pre-flight compares that to the budget without scaling by the run's requested `video_count`. Two
-  consequences: (a) a run requesting more videos than history typically produced is under-estimated
-  (and could be admitted over the per-run ceiling), and fewer is over-estimated; (b) including
-  `partial` runs (mandated by the C-4 contract) sums every video record in that run — `_run_uncached`
-  does not filter to `video.status == "complete"` — so cost from videos that did not finish leaks into
-  the average. Both are the same root: the estimator has no per-video unit. Backstopped by the live
-  BudgetGuard reservation, which still refuses each actual paid call past a ceiling mid-run, so this
-  cannot cause overspend beyond the ceilings — it only weakens the pre-flight's "don't even start"
-  guarantee for multi-video atomic runs (of which there are none in production today). Fix as a
-  deliberate estimator-semantics increment (also feeds the C-5 Statistics tab): estimate per-video
-  uncached cost over `complete` videos only, expose the per-video figure, and multiply by the
-  requested `video_count` in the pre-flight (scale `estimate.per_meter` before `check_atomic_budget`,
-  keeping its frozen signature). The frozen C-3/C-4 tests use one-video runs, so per-run == per-video
-  there and they remain valid. _Source: C-4 review B (P1 video_count + P2 partial-video cost)._ Open.
 - **H29 — the paid/cheap cache layout orphans pre-existing single-partition entries (C-6).** C-6
   moved cache storage from `<root>/{entries,blobs}` to `<root>/{paid,cheap}/{entries,blobs}`. Any
   cache written before C-6 is now unreachable (a one-time miss — recomputed on next use) and its
@@ -444,6 +428,20 @@ not-applicable.
   (parametrized), `::test_research_raises_a_clear_error_on_a_malformed_body`,
   `::test_research_skips_malformed_url_citation_annotations`. _Source: B-4c/B-4d review A (PR #30/#31);
   closed by this PR._
+- **H27 — cost estimate is now per-video over complete videos, scaled by the count** (resolved by
+  this PR; Stage-C). `estimate_cost` summed each run's uncached cost over ALL videos (per-run,
+  including non-`complete` videos of a `partial` run) and the atomic pre-flight compared it to the
+  budget without scaling by the requested `video_count` — so a multi-video run was under-estimated
+  (could be admitted over the per-run ceiling) and non-complete-video cost leaked into the average.
+  `_run_uncached` now counts only `video.status == "complete"` videos and returns a PER-VIDEO figure
+  (per-meter sum / complete count); a new `scale_estimate(est, count)` multiplies `per_meter` by the
+  requested count; the supervisor scales by `video_count` before `check_atomic_budget` (frozen
+  signature unchanged). 1-video/all-complete runs are behaviour-neutral (per-run == per-video). Also
+  feeds the C-5 Statistics tab (a per-video unit). Covered by `tests/core/test_estimate.py::`
+  `test_estimate_is_per_video_average_over_complete_videos`,
+  `::test_estimate_excludes_non_complete_videos_from_the_per_video_unit`,
+  `::test_scale_estimate_multiplies_per_meter_by_the_count`. _Source: C-4 review B (P1 video_count +
+  P2 partial-video cost); closed by this PR._
 - **H10 — OpenRouter `usage.cost` is surfaced but not metered** (resolved by C-1). `_post_chat_completion`
   emits a `cost` event `{t:cost, meter:openrouter, unit:usd, amount:<usage.cost>, cached:false}` when
   `usage.cost` is a usable finite non-negative number, and the supervisor aggregates those events into
