@@ -728,9 +728,11 @@ def get_run_file(workflow_id: str, run_id: str, path: str, request: Request) -> 
         raise HTTPException(status_code=404)
     if not resolved.is_file():
         raise HTTPException(status_code=404)
+    relative = resolved.relative_to(run_dir.resolve())
     if (
         resolved.name == "context.json"
-        or resolved.relative_to(run_dir.resolve()).as_posix() == "shared/result.json"
+        or relative.as_posix() == "shared/result.json"
+        or any(part.startswith(".") for part in relative.parts)
     ):
         raise HTTPException(status_code=404)
     media_type, _encoding = mimetypes.guess_type(resolved.name)
