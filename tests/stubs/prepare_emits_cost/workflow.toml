@@ -1,0 +1,7 @@
+[workflow]
+id = "prepare-emits-cost"
+name = "Prepare Emits Cost"
+version = "1.0.0"
+entrypoint = "main:run"
+prepare = "main:prepare"
+sdk = "1"

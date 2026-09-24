@@ -37,7 +37,7 @@ type RequestStatus = Literal[
 ]
 type VideoStatus = Literal["pending", "running", "complete", "failed", "stopped"]
 
-REQUEST_OPTIONAL_FIELDS = ("budget", "forecast")
+REQUEST_OPTIONAL_FIELDS = ("budget", "forecast", "prepare_cost")
 VIDEO_OPTIONAL_FIELDS = (
     "cost",
     "steps",
@@ -80,6 +80,7 @@ class RequestRecord(_RecordModel):
     dry_run: bool = False
     budget: dict[str, Any] | None = None
     forecast: dict[str, Any] | None = None
+    prepare_cost: dict[str, Any] | None = None
 
 
 class VideoRecord(_RecordModel):
@@ -200,6 +201,7 @@ def update_request(
     videos: Sequence[VideoRef | Mapping[str, Any]] | None = None,
     budget: dict[str, Any] | None = None,
     forecast: dict[str, Any] | None = None,
+    prepare_cost: dict[str, Any] | None = None,
 ) -> RequestRecord:
     current = read_request(run_dir)
     new_status = current.status if status is None else status
@@ -215,6 +217,7 @@ def update_request(
             ),
             "budget": current.budget if budget is None else budget,
             "forecast": current.forecast if forecast is None else forecast,
+            "prepare_cost": current.prepare_cost if prepare_cost is None else prepare_cost,
         }
     )
     write_json_atomic(run_dir / "request.json", _dump_owned(updated, REQUEST_OPTIONAL_FIELDS))
