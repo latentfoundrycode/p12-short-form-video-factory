@@ -7,6 +7,7 @@ named by the sha256 of its contents, with an authoritative descriptor sidecar be
 sheet is current while a recorded id still resolves forever.
 
 This module is the content-addressed STORE: `put`/`put_value`/`get`/`value`/`resolve`/`annotate`,
+`deactivate`/`reactivate`,
 facet declaration + normalisation, atomic blob→sidecar writes, supersession status-flips, and the
 derived `catalog.json` index (`find()`, novelty, crash-recovery rescan). The `ctx.library` runtime
 API, describe(), and the dry-run overlay are D-3b.
@@ -395,6 +396,40 @@ class LibraryStore:
         # first-seen facet value marks it novel; a caveat-only annotate never disturbs any marker),
         # avoiding the incremental-vs-rebuild divergence a per-entry reindex would cause here.
         self.rebuild_catalog()
+        return updated
+
+    def deactivate(self, asset_id: str) -> Asset:
+        """Hide an asset from the default listing by flipping its status to ``inactive``.
+
+        Metadata-only and id-targeted (never alias-resolved): the id, blob, and content are
+        unchanged. Idempotent when already inactive. Raises ``LibraryError`` when unknown.
+        """
+        return self._set_asset_status(asset_id, "inactive")
+
+    def reactivate(self, asset_id: str) -> Asset:
+        """Restore a deactivated asset to ``active`` status.
+
+        Metadata-only and id-targeted (never alias-resolved): the id, blob, and content are
+        unchanged. Idempotent when already active. Raises ``LibraryError`` if the asset is unknown.
+        """
+        return self._set_asset_status(asset_id, "active")
+
+    def _set_asset_status(self, asset_id: str, status: str) -> Asset:
+        existing = self._read_sidecar(asset_id)  # id-targeted: never alias-resolved
+        if existing is None:
+            raise LibraryError("unknown asset")
+        if existing.status == status:
+            return existing
+        updated = replace(existing, status=status)
+        self._write_sidecar(updated)
+        catalog = self._try_read_catalog()
+        if catalog is None or updated.id not in catalog["assets"]:
+            self.rebuild_catalog()
+            return updated
+        catalog["assets"][updated.id] = _entry_from_asset(
+            updated, catalog["assets"][updated.id]["novel_facets"]
+        )
+        _write_json_atomic(self._catalog, catalog)
         return updated
 
     def _store_asset(
