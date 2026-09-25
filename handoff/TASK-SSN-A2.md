@@ -35,6 +35,17 @@ Touch nothing else. Do NOT modify any test, `sdk/sfvf/library.py`, anything unde
 - Workspace boundary: read/write only inside this `Workspace/` checkout.
 - Record any tooling friction or a defect in `docs/BUILDER_NOTES.md`.
 
+## Revision r2 — fail-closed hardening (Review A + security-auditor)
+
+Four more frozen tests were added to `tests/sdk/test_grants.py`; make them green too, in `sdk/sfvf/grants.py` only:
+
+1. **`get_grant` must return a FRESH default-deny object each call** — do NOT return an alias of a shared module-level constant. A caller that mutates the returned `{"workflows": []}` list must not affect any later `get_grant`. (Return a new `{"workflows": []}` literal, not `dict(_DEFAULT_DENY)` where the list is shared.)
+2. **`get_grant` fails CLOSED on a corrupt grants.json** — if the file is unparseable or not a JSON object, `get_grant` returns default-deny `{"workflows": []}` (it must NOT raise, and must NOT allow). Catch the parse/type error inside `get_grant`.
+3. **`get_grant` validates each stored entry on read** — run the stored grant for the requested id back through the same shape validation; if the stored entry is invalid (e.g. a hand-edited `{"all": true, "workflows": [...]}`), treat it as default-deny for that id (do not return the invalid shape). This is defense-in-depth so the write-path is not the only guarantee.
+4. **`set_grant` must FAIL LOUD on a corrupt grants.json** — writing must raise `GrantError` (not silently overwrite and lose existing grants) and must leave the corrupt file untouched. (So the load path used by `set_grant` raises `GrantError` on a corrupt file, while `get_grant` catches that and denies.)
+
+Keep the semantics coherent: reads deny on corruption/invalidity; writes raise on corruption. Suggest a shared internal loader that raises `GrantError` on a corrupt/non-object file, with `get_grant` wrapping it (plus per-entry validation) to return default-deny, and `set_grant` letting it propagate.
+
 ## Done when
 
 - `./.venv/Scripts/python.exe -m pytest tests/sdk/test_grants.py -q` passes.
