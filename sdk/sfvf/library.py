@@ -444,14 +444,7 @@ class LibraryStore:
             return existing
         updated = replace(existing, status=status)
         self._write_sidecar(updated)
-        catalog = self._try_read_catalog()
-        if catalog is None or updated.id not in catalog["assets"]:
-            self.rebuild_catalog()
-            return updated
-        catalog["assets"][updated.id] = _entry_from_asset(
-            updated, catalog["assets"][updated.id]["novel_facets"]
-        )
-        _write_json_atomic(self._catalog, catalog)
+        self._refresh_catalog_entry(updated)
         return updated
 
     def _store_asset(
@@ -522,12 +515,15 @@ class LibraryStore:
             return
         flipped = replace(old, status="superseded")
         self._write_sidecar(flipped)
+        self._refresh_catalog_entry(flipped)
+
+    def _refresh_catalog_entry(self, asset: Asset) -> None:
         catalog = self._try_read_catalog()
-        if catalog is None or flipped.id not in catalog["assets"]:
+        if catalog is None or asset.id not in catalog["assets"]:
             self.rebuild_catalog()
             return
-        catalog["assets"][flipped.id] = _entry_from_asset(
-            flipped, catalog["assets"][flipped.id]["novel_facets"]
+        catalog["assets"][asset.id] = _entry_from_asset(
+            asset, catalog["assets"][asset.id]["novel_facets"]
         )
         _write_json_atomic(self._catalog, catalog)
 

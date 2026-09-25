@@ -384,11 +384,7 @@ class Library:
             return self._overlay.get(name_or_id) or self._real.get(name_or_id)
         return self._real.get(name_or_id)
 
-    def get(self, name_or_id: str) -> Asset | None:
-        """Resolve a name or id to its asset (overlay first in a dry run), else None."""
-        asset = self._get_own(name_or_id)
-        if asset is not None:
-            return asset
+    def _granted_owner_asset(self, name_or_id: str) -> Asset | None:
         if self._owner_pool is None or self._grants is None:
             return None
         owner_asset = self._owner_pool.get(name_or_id)
@@ -397,6 +393,13 @@ class Library:
         if self._grants.grant_allows(owner_asset.id, self._ctx.workflow_id):
             return owner_asset
         return None
+
+    def get(self, name_or_id: str) -> Asset | None:
+        """Resolve a name or id to its asset (overlay first in a dry run), else None."""
+        asset = self._get_own(name_or_id)
+        if asset is not None:
+            return asset
+        return self._granted_owner_asset(name_or_id)
 
     def path(self, name_or_id: str) -> Path | None:
         """Return the on-disk blob path for a resolvable asset, else None."""
@@ -407,14 +410,13 @@ class Library:
         real_asset = self._real.get(name_or_id)
         if real_asset is not None:
             return self._real.blob_path(real_asset.id)
-        if self._owner_pool is None or self._grants is None:
-            return None
-        owner_asset = self._owner_pool.get(name_or_id)
+        owner_asset = self._granted_owner_asset(name_or_id)
         if owner_asset is None:
             return None
-        if not self._grants.grant_allows(owner_asset.id, self._ctx.workflow_id):
+        owner_pool = self._owner_pool
+        if owner_pool is None:
             return None
-        return self._owner_pool.blob_path(owner_asset.id)
+        return owner_pool.blob_path(owner_asset.id)
 
     def value(self, name_or_id: str) -> Any | None:
         """Return a value asset's JSON (overlay first in a dry run), else None (§7.6)."""
