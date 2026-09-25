@@ -224,6 +224,23 @@ class LibraryStore:
             return name_or_id
         return None
 
+    def name_for(self, asset_id: str) -> str | None:
+        """Return a deterministic alias pointing at ``asset_id``, or None when unaliased."""
+        aliases = self._load_aliases()
+        matches = sorted(name for name, target in aliases.items() if target == asset_id)
+        return matches[0] if matches else None
+
+    def rename(self, asset_id: str, name: str) -> None:
+        """Point ``name`` at ``asset_id``, removing any prior alias for that id (atomic write)."""
+        if self._read_sidecar(asset_id) is None:
+            raise LibraryError("unknown asset")
+        aliases = self._load_aliases()
+        for alias, target in list(aliases.items()):
+            if target == asset_id:
+                del aliases[alias]
+        aliases[name] = asset_id
+        _write_json_atomic(self._aliases, aliases)
+
     def blob_path(self, asset_id: str) -> Path:
         """The path of an asset's stored blob (`items/<id>`); may not exist for an unknown id."""
         return self._items / asset_id
@@ -370,6 +387,8 @@ class LibraryStore:
         *,
         caveats: str | None = None,
         facets: Mapping[str, str] | None = None,
+        kind: str | None = None,
+        tags: Sequence[str] | None = None,
     ) -> Asset:
         """Update an asset's caveats and/or facets in place and return the new descriptor (§7.5).
 
@@ -378,6 +397,7 @@ class LibraryStore:
         `caveats`,
         when given, replaces the caveats (the field you can only write after using the asset); any
         `facets` are validated + normalised and MERGED into the existing set (declared keys only).
+        `kind`, when given, replaces the asset kind. `tags`, when given, replaces the full tag set.
         The catalogue entry is refreshed. Raises `LibraryError` if the asset is unknown.
         """
         existing = self._read_sidecar(asset_id)  # id-targeted: never alias-resolved
@@ -388,6 +408,8 @@ class LibraryStore:
             merged.update(self._normalise_facets(facets))
         updated = replace(
             existing,
+            kind=existing.kind if kind is None else kind,
+            tags=existing.tags if tags is None else tuple(tags),
             caveats=existing.caveats if caveats is None else caveats,
             facets=merged,
         )

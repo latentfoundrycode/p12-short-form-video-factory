@@ -122,4 +122,34 @@ describe("LibraryView", () => {
     await waitFor(() => expect(screen.queryByText("wonder")).toBeNull());
     expect(errorSpy).not.toHaveBeenCalled();
   });
+
+  it("accessibility: entering edit mode moves focus into the edit input (keyboard-operable edit)", async () => {
+    mockAssets.mockResolvedValue([
+      {
+        id: "a".repeat(64),
+        name: "Cosmic Drift",
+        kind: "music",
+        status: "active",
+        mood: ["wonder"],
+        energy: [],
+        description: "",
+        grant: { all: true },
+      },
+    ]);
+    const user = userEvent.setup();
+    render(<LibraryView />);
+    await waitFor(() => expect(screen.getByText("Cosmic Drift")).toBeTruthy());
+    await user.click(screen.getByText("Cosmic Drift")); // open the detail editor
+    // Focus the chip and start editing via the keyboard (F2). Focus MUST land in the edit
+    // input so a keyboard/AT user can type immediately — not fall to document.body.
+    const chip = (await screen.findByText("wonder")).closest(".chip") as HTMLElement;
+    chip.focus();
+    await user.keyboard("{F2}");
+    await waitFor(() => {
+      const active = document.activeElement as HTMLElement | null;
+      expect(active).toBeInstanceOf(HTMLInputElement);
+      expect((active as HTMLInputElement).value).toBe("wonder");
+    });
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
 });

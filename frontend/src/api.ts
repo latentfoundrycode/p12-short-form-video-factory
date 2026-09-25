@@ -4,6 +4,9 @@ import type {
   InstructionsList,
   LearningList,
   LearningRow,
+  LibraryAsset,
+  LibraryGrant,
+  LibraryWorkflow,
   LaunchBody,
   PendingGate,
   ProviderOption,
@@ -379,6 +382,91 @@ export async function submitQuality(
     throw new Error("The server rejected these answers.");
   }
   throw new Error(`Could not save judgement (${response.status})`);
+}
+
+export async function fetchLibraryAssets(): Promise<LibraryAsset[]> {
+  const response = await fetch("/api/library/assets");
+  if (!response.ok) {
+    throw new Error(`Could not load library assets (${response.status})`);
+  }
+  const data = (await response.json()) as { assets: LibraryAsset[] };
+  if (!Array.isArray(data.assets)) {
+    throw new Error("Unexpected response while trying to load library assets");
+  }
+  return data.assets;
+}
+
+export async function fetchLibraryWorkflows(): Promise<LibraryWorkflow[]> {
+  const response = await fetch("/api/library/workflows");
+  if (!response.ok) {
+    throw new Error(`Could not load library workflows (${response.status})`);
+  }
+  const data = (await response.json()) as { workflows: LibraryWorkflow[] };
+  if (!Array.isArray(data.workflows)) {
+    throw new Error("Unexpected response while trying to load library workflows");
+  }
+  return data.workflows;
+}
+
+export async function uploadLibraryAsset(form: FormData): Promise<LibraryAsset> {
+  const response = await fetch("/api/library/assets", { method: "POST", body: form });
+  if (!response.ok) {
+    throw new Error(`Could not upload library asset (${response.status})`);
+  }
+  return (await response.json()) as LibraryAsset;
+}
+
+export async function setLibraryGrant(id: string, grant: LibraryGrant): Promise<LibraryAsset> {
+  const response = await fetch(`/api/library/assets/${encodeURIComponent(id)}/grant`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(grant),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not update library grant (${response.status})`);
+  }
+  return (await response.json()) as LibraryAsset;
+}
+
+export async function updateLibraryAsset(
+  id: string,
+  body: {
+    name?: string;
+    kind?: string;
+    mood?: string[];
+    energy?: string[];
+    caveats?: string;
+  },
+): Promise<LibraryAsset> {
+  const response = await fetch(`/api/library/assets/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not update library asset (${response.status})`);
+  }
+  return (await response.json()) as LibraryAsset;
+}
+
+export async function deactivateLibraryAsset(id: string): Promise<LibraryAsset> {
+  const response = await fetch(`/api/library/assets/${encodeURIComponent(id)}/deactivate`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(`Could not hide library asset (${response.status})`);
+  }
+  return (await response.json()) as LibraryAsset;
+}
+
+export async function reactivateLibraryAsset(id: string): Promise<LibraryAsset> {
+  const response = await fetch(`/api/library/assets/${encodeURIComponent(id)}/reactivate`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(`Could not restore library asset (${response.status})`);
+  }
+  return (await response.json()) as LibraryAsset;
 }
 
 export async function fetchStatistics(months?: number): Promise<Statistics> {

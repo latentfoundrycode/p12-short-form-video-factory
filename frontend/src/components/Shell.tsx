@@ -53,6 +53,20 @@ function TabIcon({ tab }: { tab: TabId }) {
           <path d="M1.5 6.2h13M5 1.5v2.6M11 1.5v2.6" />
         </svg>
       );
+    case "library":
+      return (
+        <svg
+          width="13"
+          height="13"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+        >
+          <path d="M2.5 3.2h4.2v9.6H2.5V3.2ZM9.3 3.2h4.2v9.6H9.3V3.2Z" />
+          <path d="M6.7 3.2v9.6" />
+        </svg>
+      );
     case "learning":
       return (
         <svg
