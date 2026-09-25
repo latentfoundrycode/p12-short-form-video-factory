@@ -7,6 +7,7 @@ named by the sha256 of its contents, with an authoritative descriptor sidecar be
 sheet is current while a recorded id still resolves forever.
 
 This module is the content-addressed STORE: `put`/`put_value`/`get`/`value`/`resolve`/`annotate`,
+`deactivate`/`reactivate`,
 facet declaration + normalisation, atomic blob→sidecar writes, supersession status-flips, and the
 derived `catalog.json` index (`find()`, novelty, crash-recovery rescan). The `ctx.library` runtime
 API, describe(), and the dry-run overlay are D-3b.
@@ -223,6 +224,23 @@ class LibraryStore:
             return name_or_id
         return None
 
+    def name_for(self, asset_id: str) -> str | None:
+        """Return a deterministic alias pointing at ``asset_id``, or None when unaliased."""
+        aliases = self._load_aliases()
+        matches = sorted(name for name, target in aliases.items() if target == asset_id)
+        return matches[0] if matches else None
+
+    def rename(self, asset_id: str, name: str) -> None:
+        """Point ``name`` at ``asset_id``, removing any prior alias for that id (atomic write)."""
+        if self._read_sidecar(asset_id) is None:
+            raise LibraryError("unknown asset")
+        aliases = self._load_aliases()
+        for alias, target in list(aliases.items()):
+            if target == asset_id:
+                del aliases[alias]
+        aliases[name] = asset_id
+        _write_json_atomic(self._aliases, aliases)
+
     def blob_path(self, asset_id: str) -> Path:
         """The path of an asset's stored blob (`items/<id>`); may not exist for an unknown id."""
         return self._items / asset_id
@@ -369,6 +387,8 @@ class LibraryStore:
         *,
         caveats: str | None = None,
         facets: Mapping[str, str] | None = None,
+        kind: str | None = None,
+        tags: Sequence[str] | None = None,
     ) -> Asset:
         """Update an asset's caveats and/or facets in place and return the new descriptor (§7.5).
 
@@ -377,6 +397,7 @@ class LibraryStore:
         `caveats`,
         when given, replaces the caveats (the field you can only write after using the asset); any
         `facets` are validated + normalised and MERGED into the existing set (declared keys only).
+        `kind`, when given, replaces the asset kind. `tags`, when given, replaces the full tag set.
         The catalogue entry is refreshed. Raises `LibraryError` if the asset is unknown.
         """
         existing = self._read_sidecar(asset_id)  # id-targeted: never alias-resolved
@@ -387,6 +408,8 @@ class LibraryStore:
             merged.update(self._normalise_facets(facets))
         updated = replace(
             existing,
+            kind=existing.kind if kind is None else kind,
+            tags=existing.tags if tags is None else tuple(tags),
             caveats=existing.caveats if caveats is None else caveats,
             facets=merged,
         )
@@ -395,6 +418,33 @@ class LibraryStore:
         # first-seen facet value marks it novel; a caveat-only annotate never disturbs any marker),
         # avoiding the incremental-vs-rebuild divergence a per-entry reindex would cause here.
         self.rebuild_catalog()
+        return updated
+
+    def deactivate(self, asset_id: str) -> Asset:
+        """Hide an asset from the default listing by flipping its status to ``inactive``.
+
+        Metadata-only and id-targeted (never alias-resolved): the id, blob, and content are
+        unchanged. Idempotent when already inactive. Raises ``LibraryError`` when unknown.
+        """
+        return self._set_asset_status(asset_id, "inactive")
+
+    def reactivate(self, asset_id: str) -> Asset:
+        """Restore a deactivated asset to ``active`` status.
+
+        Metadata-only and id-targeted (never alias-resolved): the id, blob, and content are
+        unchanged. Idempotent when already active. Raises ``LibraryError`` if the asset is unknown.
+        """
+        return self._set_asset_status(asset_id, "active")
+
+    def _set_asset_status(self, asset_id: str, status: str) -> Asset:
+        existing = self._read_sidecar(asset_id)  # id-targeted: never alias-resolved
+        if existing is None:
+            raise LibraryError("unknown asset")
+        if existing.status == status:
+            return existing
+        updated = replace(existing, status=status)
+        self._write_sidecar(updated)
+        self._refresh_catalog_entry(updated)
         return updated
 
     def _store_asset(
@@ -465,12 +515,15 @@ class LibraryStore:
             return
         flipped = replace(old, status="superseded")
         self._write_sidecar(flipped)
+        self._refresh_catalog_entry(flipped)
+
+    def _refresh_catalog_entry(self, asset: Asset) -> None:
         catalog = self._try_read_catalog()
-        if catalog is None or flipped.id not in catalog["assets"]:
+        if catalog is None or asset.id not in catalog["assets"]:
             self.rebuild_catalog()
             return
-        catalog["assets"][flipped.id] = _entry_from_asset(
-            flipped, catalog["assets"][flipped.id]["novel_facets"]
+        catalog["assets"][asset.id] = _entry_from_asset(
+            asset, catalog["assets"][asset.id]["novel_facets"]
         )
         _write_json_atomic(self._catalog, catalog)
 

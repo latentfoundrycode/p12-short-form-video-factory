@@ -1,6 +1,7 @@
 export const TABS = [
   { id: "workflows", label: "Workflows" },
   { id: "schedule", label: "Schedule" },
+  { id: "library", label: "Library" },
   { id: "learning", label: "Learning" },
   { id: "statistics", label: "Statistics" },
   { id: "settings", label: "Settings" },

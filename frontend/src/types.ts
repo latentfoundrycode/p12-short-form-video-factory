@@ -57,6 +57,24 @@ export type WorkflowList = {
   workflows: Workflow[];
 };
 
+export type LibraryGrant = { all: true } | { workflows: string[] };
+
+export type LibraryAsset = {
+  id: string;
+  name: string | null;
+  kind: string;
+  status: string;
+  mood: string[];
+  energy: string[];
+  description: string;
+  grant: LibraryGrant;
+};
+
+export type LibraryWorkflow = {
+  id: string;
+  label: string;
+};
+
 export type LearningRow = {
   workflow_id: string;
   name: string | null;

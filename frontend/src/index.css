@@ -1446,3 +1446,267 @@ textarea {
   border-top: 1px solid var(--line-soft);
   padding-top: 13px;
 }
+
+/* Library tab */
+.library-two {
+  grid-template-columns: 1.1fr 1fr;
+}
+
+.library-list .li {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: inherit;
+}
+
+.library-list .li.sel {
+  background: var(--surface-2);
+  border-left: 2px solid var(--amber);
+}
+
+.library-list .li.inactive {
+  opacity: 0.5;
+}
+
+.library-list .li-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.library-list .li-sub {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.li-access {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.pill.music {
+  color: var(--amber);
+  border-color: rgb(212 162 76 / 35%);
+  background: var(--amber-bg);
+}
+
+.pill.sfx {
+  color: var(--green);
+  border-color: rgb(99 166 127 / 35%);
+  background: var(--green-bg);
+}
+
+.pill.voice {
+  color: #8ab4d8;
+  border-color: rgb(138 180 216 / 35%);
+  background: rgb(138 180 216 / 10%);
+}
+
+.panel-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.library-form .field {
+  margin-bottom: 15px;
+}
+
+.row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.radio {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface-2);
+  margin-bottom: 7px;
+  cursor: pointer;
+}
+
+.radio.on {
+  border-color: var(--amber);
+  background: var(--amber-bg);
+}
+
+.radio input {
+  margin-top: 3px;
+}
+
+.radio .r-title {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.radio .r-help {
+  display: block;
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+
+.wf-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 2px 24px;
+}
+
+.wf {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.wf .muted {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.detail-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-faint);
+}
+
+.empty .big {
+  font-size: 15px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.drop {
+  border: 1.5px dashed var(--line);
+  border-radius: var(--r);
+  padding: 22px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 12.5px;
+  background: var(--surface-2);
+}
+
+.tiny {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.taginput {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 6px 8px;
+  min-height: 34px;
+  cursor: text;
+  position: relative;
+}
+
+.taginput:focus-within {
+  border-color: var(--text-faint);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 3px 6px 3px 10px;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  color: var(--text-faint);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chip-x:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.chip-edit {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  min-width: 20px;
+}
+
+.tag-entry {
+  flex: 1 1 70px;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 13px;
+  min-width: 70px;
+  padding: 2px;
+}
+
+.ctxmenu {
+  position: fixed;
+  z-index: 50;
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 45%);
+  min-width: 118px;
+  overflow: hidden;
+}
+
+.ctxmenu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.ctxmenu button:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.library-add-panel {
+  max-width: 560px;
+}

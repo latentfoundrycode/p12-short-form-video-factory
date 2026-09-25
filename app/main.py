@@ -16,6 +16,7 @@ from app.api.learning import (
 from app.api.learning import (
     router as learning_router,
 )
+from app.api.library import router as library_router
 from app.api.providers import router as providers_router
 from app.api.quality import router as quality_router
 from app.api.runs import router as runs_router
@@ -31,7 +32,7 @@ from app.core.schedules import SCHEDULES_PATH
 from app.core.secrets import SecretStore, _store_path
 from app.core.supervisor import EnsureEnv, PopenFn
 from app.core.web_tiers import load_disabled_web_tiers
-from app.paths import APP_ROOT, RUNS_DIR, WEB_DIR, WORKFLOWS_DIR
+from app.paths import APP_ROOT, LIBRARY_DIR, RUNS_DIR, WEB_DIR, WORKFLOWS_DIR
 
 
 def create_app(
@@ -47,6 +48,7 @@ def create_app(
     learning_staging_dir: Path | None = None,
     learning_state_dir: Path | None = None,
     make_learning_optimizer: MakeLearningOptimizer | None = None,
+    library_dir: Path | None = None,
     enable_scheduler: bool = False,
 ) -> FastAPI:
     if secrets is not None:
@@ -123,10 +125,12 @@ def create_app(
         make_learning_optimizer
         or make_default_learning_optimizer(resolved, application.state.budget)
     )
+    application.state.library_dir = library_dir or LIBRARY_DIR
     application.include_router(workflows_router)
     application.include_router(runs_router)
     application.include_router(quality_router)
     application.include_router(learning_router)
+    application.include_router(library_router)
     application.include_router(statistics_router)
     application.include_router(schedules_router)
     application.include_router(providers_router)

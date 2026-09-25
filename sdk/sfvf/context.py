@@ -18,6 +18,7 @@ from ._budget import BudgetBreach, BudgetError, BudgetGuard, Ceilings
 from .cache import CHEAP, PAID, StepCache, step_key
 from .emit import decision, emit, forecast, heartbeat, log, stage
 from .gate import gate_attempts, run_gate
+from .grants import GrantStore
 from .library import Asset, FacetSpec, LibraryStore
 
 _T = TypeVar("_T")
@@ -87,6 +88,12 @@ class ContextPaths(_ContextModel):
     library_overlay: Path | None = Field(
         default=None,
         description="Dry-run overlay root: writes land here and are discarded at run end (§7.9).",
+    )
+    library_owner_pool: Path | None = Field(
+        default=None,
+        description=(
+            "The shared owner-uploaded asset pool (library/_owner); read-only to a workflow."
+        ),
     )
 
 
@@ -299,6 +306,7 @@ class Library:
         real_root: Path,
         overlay_root: Path | None,
         facets: Sequence[FacetSpec],
+        owner_pool_root: Path | None = None,
     ) -> None:
         self._ctx = ctx
         self._facets = tuple(facets)
@@ -311,6 +319,13 @@ class Library:
             if self._overlay_root is not None
             else None
         )
+        self._owner_pool_root = owner_pool_root
+        self._owner_pool = (
+            LibraryStore(owner_pool_root, facets=self._facets)
+            if owner_pool_root is not None
+            else None
+        )
+        self._grants = GrantStore(owner_pool_root) if owner_pool_root is not None else None
 
     def _write_store(self) -> LibraryStore:
         # The load-bearing dry-run invariant (§7.9): a dry run must NEVER mutate the real library.
@@ -323,14 +338,13 @@ class Library:
             return self._overlay
         return self._real
 
-    def find(
+    def _find_own(
         self,
         *,
         tags: Sequence[str] = (),
         facets: Mapping[str, str] | None = None,
         status: str | None = "active",
     ) -> list[Asset]:
-        """Return matching assets — overlay layered over the real library in a dry run (§7.5)."""
         if self._overlay is None:
             return self._real.find(tags=tags, facets=facets, status=status)
         # The overlay is authoritative for any id it holds (a dry-run write shadows the real one),
@@ -346,11 +360,71 @@ class Library:
             by_id[asset.id] = asset
         return sorted(by_id.values(), key=lambda asset: (asset.created_utc, asset.id))
 
-    def get(self, name_or_id: str) -> Asset | None:
-        """Resolve a name or id to its asset (overlay first in a dry run), else None."""
+    def find(
+        self,
+        *,
+        tags: Sequence[str] = (),
+        facets: Mapping[str, str] | None = None,
+        status: str | None = "active",
+    ) -> list[Asset]:
+        """Return matching assets — overlay layered over the real library in a dry run (§7.5)."""
+        own = self._find_own(tags=tags, facets=facets, status=status)
+        owner_pool = self._owner_pool
+        grants = self._grants
+        root = self._owner_pool_root
+        if owner_pool is None or grants is None or root is None or not root.exists():
+            return own
+        own_ids = {asset.id for asset in own}
+        granted = [
+            asset
+            for asset in owner_pool.find(tags=tags, facets=facets, status=status)
+            if asset.id not in own_ids and grants.grant_allows(asset.id, self._ctx.workflow_id)
+        ]
+        return sorted(own + granted, key=lambda asset: (asset.created_utc, asset.id))
+
+    def _get_own(self, name_or_id: str) -> Asset | None:
         if self._overlay is not None:
             return self._overlay.get(name_or_id) or self._real.get(name_or_id)
         return self._real.get(name_or_id)
+
+    def _granted_owner_asset(self, name_or_id: str) -> Asset | None:
+        owner_pool = self._owner_pool
+        grants = self._grants
+        root = self._owner_pool_root
+        if owner_pool is None or grants is None or root is None or not root.exists():
+            return None
+        owner_asset = owner_pool.get(name_or_id)
+        if owner_asset is None:
+            return None
+        if owner_asset.status == "inactive":
+            return None
+        if grants.grant_allows(owner_asset.id, self._ctx.workflow_id):
+            return owner_asset
+        return None
+
+    def get(self, name_or_id: str) -> Asset | None:
+        """Resolve a name or id to its asset (overlay first in a dry run), else None."""
+        asset = self._get_own(name_or_id)
+        if asset is not None:
+            return asset
+        return self._granted_owner_asset(name_or_id)
+
+    def path(self, name_or_id: str) -> Path | None:
+        """Return the on-disk blob path for a resolvable asset, else None."""
+        if self._overlay is not None:
+            overlay_asset = self._overlay.get(name_or_id)
+            if overlay_asset is not None:
+                return self._overlay.blob_path(overlay_asset.id)
+        real_asset = self._real.get(name_or_id)
+        if real_asset is not None:
+            return self._real.blob_path(real_asset.id)
+        owner_asset = self._granted_owner_asset(name_or_id)
+        if owner_asset is None:
+            return None
+        owner_pool = self._owner_pool
+        if owner_pool is None:
+            return None
+        return owner_pool.blob_path(owner_asset.id)
 
     def value(self, name_or_id: str) -> Any | None:
         """Return a value asset's JSON (overlay first in a dry run), else None (§7.6)."""
@@ -503,7 +577,13 @@ class Context:
             FacetSpec(decl.key, tuple(decl.values) if decl.values is not None else None)
             for decl in self._file.library_facets
         )
-        return Library(self, root, self._file.paths.library_overlay, facets)
+        return Library(
+            self,
+            root,
+            self._file.paths.library_overlay,
+            facets,
+            self._file.paths.library_owner_pool,
+        )
 
     def secret(self, name: str) -> str:
         """Return a permitted secret from the ambient context.

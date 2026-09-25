@@ -1,0 +1,11 @@
+{
+  "other_pool": "exhausted",
+  "exhausted_at": "2026-09-25T00:00 UTC",
+  "exhausted_reason": "owner-reported Cursor Other-Models spend cap hit 2026-09-25 (the cap that paused PR #169 Review B)",
+  "reset_day": 16,
+  "review_a": "claude-opus-4-8",
+  "profiles": [
+    { "name": "full",   "builder": "grok-4.7-high", "review_b": "gpt-5.6-sol-high" },
+    { "name": "native", "builder": "composer-2.5",  "review_b": "grok-4.7-high" }
+  ]
+}
