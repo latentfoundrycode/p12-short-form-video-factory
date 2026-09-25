@@ -1,0 +1,88 @@
+"""TASK-SSN-A2 contract: per-asset access grants for the owner library pool.
+
+An owner-uploaded asset (music / SFX / voice) is grantable to ALL workflows or a chosen SET of
+specific workflows. Grants are mutable metadata stored in `grants.json` in the owner-pool root
+(shape like the library's `aliases.json`): `{"all": true}` or `{"workflows": [ids]}`. The store
+validates the grant shape, persists it atomically, answers `grant_allows(asset_id, workflow_id)`,
+and defaults an ungranted asset to deny (no workflow). Grants for an unknown/deleted workflow id are
+stored and read back untouched (they are simply ignored by allow-checks for other workflows).
+
+Supervisor-authored frozen contract (RED-first): written before the implementation; the builder
+implements `sdk/sfvf/grants.py` to make it pass and touches no test file.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from sfvf.grants import GrantError, GrantStore
+
+
+def _store(tmp_path: Path) -> GrantStore:
+    return GrantStore(tmp_path / "_owner")
+
+
+def test_grant_all_allows_any_workflow(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.set_grant("asset1", {"all": True})
+    assert store.get_grant("asset1") == {"all": True}
+    assert store.grant_allows("asset1", "sensational-science-news") is True
+    assert store.grant_allows("asset1", "any-other") is True
+
+
+def test_grant_specific_allows_only_listed(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.set_grant("asset2", {"workflows": ["wf-a", "wf-b"]})
+    assert store.get_grant("asset2") == {"workflows": ["wf-a", "wf-b"]}
+    assert store.grant_allows("asset2", "wf-a") is True
+    assert store.grant_allows("asset2", "wf-b") is True
+    assert store.grant_allows("asset2", "wf-c") is False
+
+
+def test_ungranted_asset_defaults_to_deny(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    assert store.get_grant("never-set") == {"workflows": []}
+    assert store.grant_allows("never-set", "anything") is False
+
+
+def test_grant_persists_across_store_instances(tmp_path: Path) -> None:
+    _store(tmp_path).set_grant("asset3", {"workflows": ["wf-x"]})
+    reopened = _store(tmp_path)  # new instance, same root -> reads grants.json
+    assert reopened.get_grant("asset3") == {"workflows": ["wf-x"]}
+    assert reopened.grant_allows("asset3", "wf-x") is True
+
+
+def test_set_grant_overwrites(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.set_grant("asset4", {"workflows": ["wf-a"]})
+    store.set_grant("asset4", {"all": True})
+    assert store.get_grant("asset4") == {"all": True}
+
+
+def test_grant_for_unknown_workflow_id_is_stored_and_read_back(tmp_path: Path) -> None:
+    # A grant may reference a workflow id that no longer exists (e.g. a deleted workflow);
+    # it is stored untouched and simply does not allow any *other* workflow.
+    store = _store(tmp_path)
+    store.set_grant("asset5", {"workflows": ["deleted-workflow"]})
+    assert store.get_grant("asset5") == {"workflows": ["deleted-workflow"]}
+    assert store.grant_allows("asset5", "deleted-workflow") is True
+    assert store.grant_allows("asset5", "live-workflow") is False
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"bogus": 1},
+        {"all": "yes"},          # all must be a bool
+        {"workflows": "wf-a"},   # workflows must be a list
+        {"workflows": [1, 2]},   # workflow ids must be strings
+        {"all": True, "workflows": ["wf-a"]},  # exactly one form
+        "not-a-dict",
+        [],
+    ],
+)
+def test_malformed_grant_is_rejected(tmp_path: Path, bad: object) -> None:
+    store = _store(tmp_path)
+    with pytest.raises(GrantError):
+        store.set_grant("assetX", bad)  # type: ignore[arg-type]
