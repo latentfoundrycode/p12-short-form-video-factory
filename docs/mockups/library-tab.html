@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SFVF — Library tab mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet" />
+<style>
+:root{color-scheme:dark;--bg:#1a1b1d;--surface:#212326;--surface-2:#292b2f;--surface-3:#313338;--line:#3b3e44;--line-soft:#2e3136;--text:#f0f1f3;--text-dim:#aab0b7;--text-faint:#8b9299;--amber:#d4a24c;--green:#63a67f;--red:#d1746c;--amber-bg:rgb(212 162 76 / 10%);--green-bg:rgb(99 166 127 / 10%);--red-bg:rgb(209 116 108 / 10%);--font-display:"Space Grotesk",system-ui,sans-serif;--font-body:"IBM Plex Sans",system-ui,sans-serif;--font-mono:"IBM Plex Mono",ui-monospace,monospace;--r:4px;--topbar-h:52px}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--font-body);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input,select,textarea{font:inherit;color:inherit}
+.topbar{height:var(--topbar-h);display:flex;align-items:stretch;border-bottom:1px solid var(--line);background:var(--surface)}
+.brand{display:flex;align-items:center;gap:9px;padding:0 20px;border-right:1px solid var(--line)}
+.brand-name{font-family:var(--font-display);font-weight:600;letter-spacing:-.005em;font-size:13.5px}
+.brand-sub{font-family:var(--font-mono);font-size:10px;color:var(--text-faint);letter-spacing:.08em}
+.tabs{display:flex;align-items:stretch}
+.tab{padding:0 20px;display:flex;align-items:center;gap:8px;color:var(--text-dim);font-size:13px;font-weight:500;border-right:1px solid var(--line-soft);border-bottom:2px solid transparent}
+.tab.on{color:var(--text);border-bottom-color:var(--amber);background:var(--surface-2)}
+.view{padding:26px 30px 44px;max-width:1180px}
+.mock-note{margin:0 30px 20px;padding:10px 14px;border:1px dashed var(--line);border-radius:var(--r);background:var(--surface);color:var(--text-faint);font-size:12px;font-family:var(--font-mono)}
+.sec-label{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--amber);margin:34px 30px 12px;padding-top:20px;border-top:1px solid var(--line-soft)}
+.page-head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:22px;gap:20px}
+.page-title{font-family:var(--font-display);font-size:19px;font-weight:600;letter-spacing:-.01em}
+.page-note{color:var(--text-faint);font-size:12.5px;margin-top:3px;max-width:62ch}
+.eyebrow{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-faint)}
+.btn{padding:7px 15px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface-2);color:var(--text-dim);font-size:12.5px;font-weight:500;display:inline-flex;align-items:center;gap:7px}
+.btn-primary{background:#d8dade;color:#1a1b1d;border-color:#d8dade;font-weight:600}
+.btn-sm{padding:5px 11px;font-size:11.5px}
+.btn-ghost{background:transparent;border-color:transparent}
+.btn-danger{color:var(--red);background:var(--red-bg);border-color:rgb(209 116 108 / 35%)}
+.pill{font-family:var(--font-mono);font-size:10px;letter-spacing:.05em;padding:2px 7px;border-radius:2px;border:1px solid var(--line);color:var(--text-dim);background:var(--surface-2);text-transform:uppercase}
+.pill.music{color:var(--amber);border-color:rgb(212 162 76 / 35%);background:var(--amber-bg)}
+.pill.sfx{color:var(--green);border-color:rgb(99 166 127 / 35%);background:var(--green-bg)}
+.pill.voice{color:#8ab4d8;border-color:rgb(138 180 216 / 35%);background:rgb(138 180 216 / 10%)}
+.pill.done{color:var(--green);border-color:rgb(99 166 127 / 35%);background:var(--green-bg)}
+.pill.idle{color:var(--text-faint)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+.panel-head{padding:11px 15px;border-bottom:1px solid var(--line-soft);display:flex;align-items:center;justify-content:space-between;gap:12px}
+.panel-title{font-size:13px;font-weight:600}
+.panel-body{padding:15px}
+.two{display:grid;grid-template-columns:1.1fr 1fr;gap:16px;align-items:start}
+@media (width<=980px){.two{grid-template-columns:1fr}}
+.li{display:flex;align-items:center;gap:14px;padding:13px 15px;border-bottom:1px solid var(--line-soft);cursor:pointer}
+.li:last-child{border-bottom:none}
+.li.sel{background:var(--surface-2);border-left:2px solid var(--amber)}
+.li.inactive{opacity:.5}
+.li-main{flex:1 1 auto;min-width:0}
+.li-title{font-size:13.5px;font-weight:500;display:flex;align-items:center;gap:8px}
+.li-sub{font-family:var(--font-mono);font-size:11px;color:var(--text-faint);margin-top:4px;display:flex;gap:10px;flex-wrap:wrap}
+.li-access{font-size:11px;color:var(--text-dim);white-space:nowrap}
+.field{display:flex;flex-direction:column;gap:5px;margin-bottom:15px}
+.field-label{font-family:var(--font-mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-faint)}
+.field-help{font-size:11.5px;color:var(--text-faint)}
+.field-input{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r);padding:7px 10px;color:var(--text);font-size:13px;width:100%}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.radio{display:flex;gap:8px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface-2);margin-bottom:7px}
+.radio.on{border-color:var(--amber);background:var(--amber-bg)}
+.radio input{margin-top:3px}
+.radio .r-title{font-size:12.5px;font-weight:500}
+.radio .r-help{font-size:11px;color:var(--text-faint);margin-top:2px}
+.wf-list{display:flex;flex-direction:column;gap:6px;margin:6px 0 2px 24px}
+.wf{display:flex;gap:8px;align-items:center;font-size:12.5px}
+.wf .muted{color:var(--text-faint);font-family:var(--font-mono);font-size:11px}
+.detail-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:6px}
+.empty{padding:40px 20px;text-align:center;color:var(--text-faint)}
+.empty .big{font-size:15px;color:var(--text-dim);margin-bottom:6px}
+.form-error{color:var(--red);font-size:12.5px;background:var(--red-bg);border:1px solid rgb(209 116 108 / 35%);border-radius:var(--r);padding:8px 10px}
+.drop{border:1.5px dashed var(--line);border-radius:var(--r);padding:22px;text-align:center;color:var(--text-faint);font-size:12.5px;background:var(--surface-2)}
+.wave{height:22px;display:flex;align-items:center;gap:2px}
+.wave i{display:block;width:3px;background:var(--text-faint);border-radius:2px}
+.tiny{font-family:var(--font-mono);font-size:10.5px;color:var(--text-faint)}
+.taginput{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r);padding:6px 8px;min-height:34px;cursor:text}
+.taginput:focus-within{border-color:var(--text-faint)}
+.chip{display:inline-flex;align-items:center;background:var(--surface-3);border:1px solid var(--line);border-radius:12px;padding:3px 10px;font-size:12px;color:var(--text);white-space:nowrap}
+.chip-edit{background:transparent;border:none;outline:none;color:var(--text);font:inherit;min-width:20px}
+.tag-entry{flex:1 1 70px;background:transparent;border:none;outline:none;color:var(--text);font-size:13px;min-width:70px;padding:2px}
+.ctxmenu{position:fixed;z-index:50;background:var(--surface-3);border:1px solid var(--line);border-radius:var(--r);box-shadow:0 6px 20px rgb(0 0 0 / 45%);min-width:118px;overflow:hidden}
+.ctxmenu button{display:block;width:100%;text-align:left;padding:8px 12px;font-size:12.5px;color:var(--text-dim)}
+.ctxmenu button:hover{background:var(--surface-2);color:var(--text)}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand"><span class="brand-name">SFVF</span><span class="brand-sub">SHORT-FORM VIDEO FACTORY</span></div>
+  <div class="tabs">
+    <div class="tab">Workflows</div>
+    <div class="tab">Schedule</div>
+    <div class="tab on">Library</div>
+    <div class="tab">Learning</div>
+    <div class="tab">Statistics</div>
+    <div class="tab">Settings</div>
+  </div>
+</div>
+
+<div class="mock-note">MOCKUP — static design artifact for approval, not the real frontend. Matches the existing SFVF design system (tokens, panels, tabs). Shows the new Library tab and its states, plus the new run-launcher settings.</div>
+
+<!-- ============ HERO: populated + detail open ============ -->
+<div class="sec-label" style="border-top:none;padding-top:0">1 · Library tab — assets loaded, one selected</div>
+<div class="view">
+  <div class="page-head">
+    <div>
+      <div class="page-title">Library</div>
+      <div class="page-note">Reusable assets that outlive a run — background music, sound effects, and narrator voices. Choose which workflow(s) can use each one.</div>
+    </div>
+    <div><button class="btn btn-primary">+ Add asset</button></div>
+  </div>
+
+  <div class="two">
+    <!-- LEFT: asset list -->
+    <div class="panel">
+      <div class="panel-head"><span class="panel-title">Assets</span><span class="tiny">7 assets · 1 hidden</span></div>
+      <div class="list">
+        <div class="li sel">
+          <div class="li-main">
+            <div class="li-title"><span class="pill music">music</span> Cosmic Drift</div>
+            <div class="li-sub"><span>mood: wonder</span><span>energy: low</span><span>2:41</span></div>
+          </div>
+          <div class="li-access">Sensational Science News</div>
+        </div>
+        <div class="li">
+          <div class="li-main">
+            <div class="li-title"><span class="pill music">music</span> Tension Rising</div>
+            <div class="li-sub"><span>mood: ominous</span><span>energy: high</span><span>1:58</span></div>
+          </div>
+          <div class="li-access">All workflows</div>
+        </div>
+        <div class="li">
+          <div class="li-main">
+            <div class="li-title"><span class="pill sfx">sfx</span> Whoosh — reveal</div>
+            <div class="li-sub"><span>mood: —</span><span>0:01</span></div>
+          </div>
+          <div class="li-access">All workflows</div>
+        </div>
+        <div class="li">
+          <div class="li-main">
+            <div class="li-title"><span class="pill sfx">sfx</span> Deep boom</div>
+            <div class="li-sub"><span>mood: —</span><span>0:02</span></div>
+          </div>
+          <div class="li-access">2 workflows</div>
+        </div>
+        <div class="li">
+          <div class="li-main">
+            <div class="li-title"><span class="pill voice">voice</span> Narrator — warm</div>
+            <div class="li-sub"><span>reference clip</span><span>0:12</span></div>
+          </div>
+          <div class="li-access">All workflows</div>
+        </div>
+        <div class="li">
+          <div class="li-main">
+            <div class="li-title"><span class="pill voice">voice</span> Narrator — urgent</div>
+            <div class="li-sub"><span>reference clip</span><span>0:09</span></div>
+          </div>
+          <div class="li-access">Sensational Science News</div>
+        </div>
+        <div class="li inactive">
+          <div class="li-main">
+            <div class="li-title"><span class="pill music">music</span> Old bed <span class="pill idle">hidden</span></div>
+            <div class="li-sub"><span>mood: upbeat</span><span>energy: mid</span></div>
+          </div>
+          <div class="li-access">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: detail / edit -->
+    <div class="panel">
+      <div class="panel-head"><span class="panel-title">Cosmic Drift</span><span class="pill music">music</span></div>
+      <div class="panel-body">
+        <div class="wave" aria-hidden="true" style="margin-bottom:14px">
+          <i style="height:6px"></i><i style="height:14px"></i><i style="height:20px"></i><i style="height:11px"></i><i style="height:18px"></i><i style="height:8px"></i><i style="height:16px"></i><i style="height:22px"></i><i style="height:10px"></i><i style="height:15px"></i><i style="height:7px"></i><i style="height:19px"></i><i style="height:13px"></i><i style="height:9px"></i><i style="height:17px"></i>
+          <button class="btn btn-sm btn-ghost" style="margin-left:8px">► Preview</button>
+        </div>
+
+        <div class="row2">
+          <div class="field"><label class="field-label">Name</label><input class="field-input" value="Cosmic Drift" /></div>
+          <div class="field"><label class="field-label">Type</label>
+            <select class="field-input"><option>music</option><option>sfx</option><option>voice</option></select>
+          </div>
+        </div>
+        <div class="row2">
+          <div class="field"><label class="field-label">Mood</label>
+            <div class="taginput"><span class="chip"><span class="chip-text">wonder</span></span><input class="tag-entry" placeholder="type, then comma" /></div>
+            <span class="field-help">Comma makes a tag · right-click a tag to edit or delete</span>
+          </div>
+          <div class="field"><label class="field-label">Energy</label>
+            <div class="taginput"><span class="chip"><span class="chip-text">low</span></span><input class="tag-entry" placeholder="type, then comma" /></div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="field-label">Access — which workflows may use this</label>
+          <label class="radio"><input type="radio" name="acc" /><span><span class="r-title">All workflows</span><span class="r-help">Every current and future workflow can use this asset.</span></span></label>
+          <label class="radio on"><input type="radio" name="acc" checked /><span><span class="r-title">Specific workflows</span><span class="r-help">Only the ones you tick below.</span></span></label>
+          <div class="wf-list">
+            <label class="wf"><input type="checkbox" checked /> Sensational Science News <span class="muted">sensational-science-news</span></label>
+            <label class="wf"><input type="checkbox" /> Explainer <span class="muted">explainer</span></label>
+            <label class="wf" style="color:var(--text-faint)"><input type="checkbox" disabled /> (future workflows appear here)</label>
+          </div>
+        </div>
+
+        <div class="field"><label class="field-label">Notes / caveats</label><textarea class="field-input" style="font-family:var(--font-mono);font-size:12px;min-height:60px">Loops cleanly. Good under calm hypotheticals.</textarea></div>
+
+        <div class="detail-actions">
+          <button class="btn btn-danger btn-sm">Hide asset</button>
+          <button class="btn btn-sm">Cancel</button>
+          <button class="btn btn-primary btn-sm">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ STATES ============ -->
+<div class="sec-label">2 · Add asset (upload)</div>
+<div class="view" style="padding-top:0">
+  <div class="panel" style="max-width:560px">
+    <div class="panel-head"><span class="panel-title">Add asset</span></div>
+    <div class="panel-body">
+      <div class="drop" style="margin-bottom:15px">Drop an audio file here, or <span style="color:var(--text-dim);text-decoration:underline">browse</span><div class="tiny" style="margin-top:6px">mp3 / wav / m4a / ogg · up to 25 MB</div></div>
+      <div class="row2">
+        <div class="field"><label class="field-label">Name</label><input class="field-input" placeholder="e.g. Cosmic Drift" /></div>
+        <div class="field"><label class="field-label">Type</label>
+          <select class="field-input"><option>music</option><option>sfx</option><option>voice — reference clip</option></select>
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field"><label class="field-label">Mood</label>
+          <div class="taginput"><input class="tag-entry" placeholder="type, then comma" /></div>
+        </div>
+        <div class="field"><label class="field-label">Energy</label>
+          <div class="taginput"><input class="tag-entry" placeholder="type, then comma" /></div>
+        </div>
+      </div>
+      <div class="field">
+        <label class="field-label">Access</label>
+        <label class="radio on"><input type="radio" name="acc2" checked /><span class="r-title">All workflows</span></label>
+        <label class="radio"><input type="radio" name="acc2" /><span class="r-title">Specific workflows…</span></label>
+      </div>
+      <div class="field-help" style="margin-bottom:12px">A <b>voice</b> asset clones a narrator from a clip you upload: give it a <b>clean ~20–60 s voice sample</b> (one speaker, no music/noise). It becomes a voice you can pick per run; preview it on a sample line after upload.</div>
+      <div class="detail-actions"><button class="btn btn-sm">Cancel</button><button class="btn btn-primary btn-sm">Upload &amp; save</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="sec-label">3 · Empty state &amp; error state</div>
+<div class="view" style="padding-top:0">
+  <div class="two">
+    <div class="panel">
+      <div class="panel-head"><span class="panel-title">Assets</span></div>
+      <div class="empty">
+        <div class="big">No assets yet</div>
+        <div style="max-width:38ch;margin:0 auto 14px">Add background music, sound effects, or a narrator voice. Until then, videos play with narration only.</div>
+        <button class="btn btn-primary btn-sm">+ Add your first asset</button>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><span class="panel-title">Assets</span></div>
+      <div class="panel-body"><div class="form-error">Couldn't load the library. Check that SFVF is running, then retry. <button class="btn btn-sm" style="margin-left:8px">Retry</button></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ RUN LAUNCHER ADDITIONS ============ -->
+<div class="sec-label">4 · New settings on the Run launcher (existing screen)</div>
+<div class="view" style="padding-top:0">
+  <div class="panel" style="max-width:560px">
+    <div class="panel-head"><span class="panel-title">Start a run — Sensational Science News</span></div>
+    <div class="panel-body">
+      <div class="row2">
+        <div class="field"><label class="field-label">Number of videos</label><input class="field-input" value="1" /></div>
+        <div class="field"><label class="field-label">Per-video budget (USD)</label><input class="field-input" value="8" /></div>
+      </div>
+      <div class="field"><label class="field-label">Narrator voice</label>
+        <select class="field-input"><option>Narrator — warm (default)</option><option>Narrator — urgent</option><option>preset: documentary</option></select>
+      </div>
+      <div class="field">
+        <label class="field-label">Approval</label>
+        <label class="radio on"><input type="radio" name="ap" checked /><span><span class="r-title">Approve the subject &amp; script before spending</span><span class="r-help">Pauses so you can OK the plan and see the cost estimate before any paid media.</span></span></label>
+        <label class="radio"><input type="radio" name="ap" /><span><span class="r-title">Run autonomously</span><span class="r-help">No pause — needed for scheduled runs.</span></span></label>
+      </div>
+      <div class="detail-actions"><button class="btn btn-primary">Start run</button></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  function chip(text) {
+    var c = document.createElement("span"); c.className = "chip";
+    var t = document.createElement("span"); t.className = "chip-text"; t.textContent = text;
+    c.appendChild(t); return c;
+  }
+  function initTagInput(el) {
+    var entry = el.querySelector(".tag-entry");
+    (el.dataset.tags || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean)
+      .forEach(function (v) { el.insertBefore(chip(v), entry); });
+    entry.addEventListener("input", function () {
+      if (entry.value.indexOf(",") === -1) return;
+      var parts = entry.value.split(",");
+      for (var i = 0; i < parts.length - 1; i++) { var p = parts[i].trim(); if (p) el.insertBefore(chip(p), entry); }
+      entry.value = parts[parts.length - 1];
+    });
+    entry.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); var p = entry.value.trim(); if (p) { el.insertBefore(chip(p), entry); entry.value = ""; } }
+      else if (e.key === "Backspace" && !entry.value) { var chips = el.querySelectorAll(".chip"); if (chips.length) chips[chips.length - 1].remove(); }
+    });
+    el.addEventListener("mousedown", function (e) { if (e.target === el) entry.focus(); });
+  }
+  var menu;
+  function closeMenu() { if (menu) { menu.remove(); menu = null; } }
+  function startEdit(c) {
+    var t = c.querySelector(".chip-text"); var cur = t.textContent;
+    var inp = document.createElement("input"); inp.className = "chip-edit"; inp.value = cur; inp.size = Math.max(cur.length, 3);
+    c.replaceChild(inp, t); inp.focus(); inp.select();
+    function done() {
+      var v = inp.value.trim(); if (!v) { c.remove(); return; }
+      var nt = document.createElement("span"); nt.className = "chip-text"; nt.textContent = v;
+      if (inp.parentNode === c) c.replaceChild(nt, inp);
+    }
+    inp.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); done(); } });
+    inp.addEventListener("blur", done);
+  }
+  document.addEventListener("click", closeMenu);
+  document.addEventListener("contextmenu", function (e) {
+    var c = e.target.closest && e.target.closest(".chip"); if (!c) return;
+    e.preventDefault(); closeMenu();
+    menu = document.createElement("div"); menu.className = "ctxmenu";
+    var edit = document.createElement("button"); edit.textContent = "Edit";
+    var del = document.createElement("button"); del.textContent = "Delete";
+    edit.addEventListener("click", function (ev) { ev.stopPropagation(); startEdit(c); closeMenu(); });
+    del.addEventListener("click", function (ev) { ev.stopPropagation(); c.remove(); closeMenu(); });
+    menu.appendChild(edit); menu.appendChild(del); document.body.appendChild(menu);
+    menu.style.left = Math.min(e.clientX, window.innerWidth - 130) + "px";
+    menu.style.top = e.clientY + "px";
+  });
+  document.querySelectorAll(".taginput").forEach(initTagInput);
+})();
+</script>
+</body>
+</html>
