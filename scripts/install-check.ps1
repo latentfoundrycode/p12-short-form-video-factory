@@ -25,6 +25,7 @@ $Launcher = Join-Path $InstallDir 'bin\sfvf.cmd'
 $RegKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\SFVF'
 $Version = (Get-Content (Join-Path $RepoRoot 'VERSION') -Raw).Trim()
 $Marker = Join-Path $DataDir 'install-check-marker.txt'
+$Report = Join-Path $RepoRoot 'install_report.txt'
 
 function Fail([string]$msg) { Write-Host "FAIL: $msg" -ForegroundColor Red; exit 1 }
 function Step([string]$msg) { Write-Host "-- $msg" -ForegroundColor Cyan }
@@ -54,6 +55,7 @@ try {
     if (-not (Test-Path $RegKey)) { Fail "Apps & features entry missing: $RegKey" }
     $dv = (Get-ItemProperty $RegKey).DisplayVersion
     if ($dv -ne $Version) { Fail "Apps & features DisplayVersion '$dv' != VERSION '$Version'" }
+    if (-not (Test-Path $Report)) { Fail "install_report.txt was not written to $Report" }
     # Run the launcher by full path (avoids PATH-propagation flakiness in this process).
     $out = & $Launcher --version 2>&1
     if ($LASTEXITCODE -ne 0) { Fail "sfvf --version exited $LASTEXITCODE" }
@@ -88,4 +90,5 @@ finally {
     # --- Cleanup: reverse everything this check created, best-effort --------------------------------
     if (Test-Installed) { try { & $Install -Uninstall -Silent } catch { } }
     if (Test-Path $DataDir) { try { Remove-Item $DataDir -Recurse -Force } catch { } }
+    if (Test-Path $Report) { try { Remove-Item $Report -Force } catch { } }
 }
