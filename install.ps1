@@ -13,6 +13,7 @@ $Launcher = Join-Path $BinDir 'sfvf.cmd'
 $RegKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\SFVF'
 $RepoRoot = $PSScriptRoot
 $MinPython = [version]'3.12.4'
+$InstallReport = Join-Path $RepoRoot 'install_report.txt'
 
 function Write-Info([string]$Message) {
     if (-not $Silent) { Write-Host $Message }
@@ -235,10 +236,8 @@ function Install-Sfvf {
     $version = Read-RepoVersion
 
     $frontend = Join-Path $RepoRoot 'frontend'
-    if (-not (Test-Path -LiteralPath (Join-Path $frontend 'node_modules'))) {
-        Write-Info 'Installing frontend dependencies...'
-        Invoke-Native -FilePath 'npm' -ArgumentList @('--prefix', $frontend, 'ci') -FailMessage 'npm ci failed. Fix frontend dependencies and re-run the installer.'
-    }
+    Write-Info 'Installing frontend dependencies...'
+    Invoke-Native -FilePath 'npm' -ArgumentList @('--prefix', $frontend, 'ci') -FailMessage 'npm ci failed. Fix frontend dependencies and re-run the installer.'
     Write-Info 'Building the frontend...'
     Invoke-Native -FilePath 'npm' -ArgumentList @('--prefix', $frontend, 'run', 'build') -FailMessage "Frontend build failed. Fix the errors from 'npm --prefix frontend run build' and re-run the installer."
 
@@ -275,15 +274,37 @@ function Install-Sfvf {
     Write-Info "SFVF $version installed. Open a new terminal and run 'sfvf' to start the server."
 }
 
+$script:TranscriptStarted = $false
 try {
-    if ($Uninstall) {
-        Uninstall-Sfvf
+    try {
+        Start-Transcript -Path $InstallReport -Force | Out-Null
+        $script:TranscriptStarted = $true
+    }
+    catch {
+    }
+
+    try {
+        if ($Uninstall) {
+            Uninstall-Sfvf
+            Write-Host 'SFVF install: SUCCESS'
+            exit 0
+        }
+        Install-Sfvf
+        Write-Host 'SFVF install: SUCCESS'
         exit 0
     }
-    Install-Sfvf
-    exit 0
+    catch {
+        Write-Host $_
+        Write-Host "SFVF install: FAILED - $_"
+        exit 1
+    }
 }
-catch {
-    Write-Host $_
-    exit 1
+finally {
+    if ($script:TranscriptStarted) {
+        try {
+            Stop-Transcript | Out-Null
+        }
+        catch {
+        }
+    }
 }
