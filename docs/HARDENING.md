@@ -759,3 +759,9 @@ not-applicable.
   `::test_failed_prepare_result_secret_is_redacted_on_disk_and_download`. Residuals recorded
   separately: H61 (`artifacts/**`, `.steps/**` served without redaction), H62 (success-path re-parse
   crash on a pathological return). _Source: S2c review B residual note (PR #37); closed by this PR._
+
+## Sensational Science News change cycle (2026-09-26)
+
+- **H-SSN-1 — Library upload media-type is client-asserted (no magic-byte sniff).** `POST /api/library/assets` accepts an asset when `file.content_type` starts with `audio/` OR the filename extension is audio; it does not sniff the bytes, so a non-audio payload is storable. Safe as stored (content-addressed by sha256, the client filename is never a path). RESIDUAL for the FUTURE serve endpoint (not in this cycle): when owner assets are served back, force a fixed audio `Content-Type` + `Content-Disposition: attachment` so a mislabeled blob can never become stored-XSS. _Source: A5 security-auditor advisory._
+- **H-SSN-2 — No pre-handler request-body size limit on upload.** python-multipart buffers the full multipart body (spooling to disk) before the handler runs; the endpoint's incremental 25 MiB cap bounds only the copy into the library, not the framework's pre-parse spool, and there is no global body-size/Content-Length middleware. Low risk for a single-user, same-origin, loopback app; a true fix is an ASGI-layer body limit or Content-Length rejection. _Source: A5 security-auditor advisory._
+- **H-SSN-3 — Upload orphan-asset window (fail-closed).** `LibraryStore.put` writes blob+sidecar+alias before `GrantStore.set_grant`; if `set_grant` fails, the asset exists with no grant entry. `get_grant` defaults to deny, so it fails closed (the asset is simply invisible to workflows), leaving only a benign orphan. Accepted. _Source: A5 security-auditor advisory._
