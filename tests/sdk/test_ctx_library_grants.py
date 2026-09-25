@@ -89,9 +89,9 @@ def test_path_is_grant_aware_two_root(tmp_path: Path) -> None:
     own = LibraryStore(tmp_path / "lib").put("own", _file(tmp_path, "o.mp3", b"OWN"), kind="music")
     all_id = _seed_owner(tmp_path, "c.mp3", b"CCC", {"all": True})
     other_id = _seed_owner(tmp_path, "d.mp3", b"DDD", {"workflows": ["wf-other"]})
-    assert ctx.library.path(own.id).read_bytes() == b"OWN"          # own namespace
-    assert ctx.library.path(all_id).read_bytes() == b"CCC"          # granted owner-pool blob
-    assert ctx.library.path(other_id) is None                       # ungranted -> no path
+    assert ctx.library.path(own.id).read_bytes() == b"OWN"  # own namespace
+    assert ctx.library.path(all_id).read_bytes() == b"CCC"  # granted owner-pool blob
+    assert ctx.library.path(other_id) is None  # ungranted -> no path
 
 
 def test_put_writes_to_own_namespace_not_owner_pool(tmp_path: Path) -> None:
@@ -124,3 +124,44 @@ def test_ungranted_owner_asset_is_invisible_without_grant(tmp_path: Path) -> Non
     # no grant set at all -> default deny
     assert ctx.library.get(ungranted.id) is None
     assert ungranted.id not in {a.id for a in ctx.library.find()}
+
+
+def test_deactivated_granted_owner_asset_is_withheld_from_workflows(tmp_path: Path) -> None:
+    # "Remove" == deactivate/hide from selection. A deactivated (inactive) owner asset must not
+    # reach a workflow even by id/name, matching find()'s active-only default; get()/path() must
+    # apply the inactive filter, not just the grant filter.
+    ctx = _ctx(tmp_path, "wf-me")
+    aid = _seed_owner(tmp_path, "old.mp3", b"OLD", {"all": True})
+    LibraryStore(tmp_path / "_owner").deactivate(aid)
+    assert ctx.library.get(aid) is None
+    assert ctx.library.path(aid) is None
+    assert aid not in {a.id for a in ctx.library.find()}
+
+
+def test_superseded_granted_owner_asset_still_resolves_by_id(tmp_path: Path) -> None:
+    # Superseded != deactivated. A recorded owner-asset id must STILL resolve by id/path after a
+    # newer version supersedes it (SDK section 7.7 -- a recorded id still resolves), matching
+    # own-namespace get()/path(). Only `inactive` is withheld, so the status filter must not
+    # blanket-exclude every non-active status.
+    ctx = _ctx(tmp_path, "wf-me")
+    owner = tmp_path / "_owner"
+    old = LibraryStore(owner).put("v1", _file(tmp_path, "v1.mp3", b"OLD"), kind="music")
+    LibraryStore(owner).put(
+        "v2", _file(tmp_path, "v2.mp3", b"NEW"), kind="music", supersedes=old.id
+    )
+    GrantStore(owner).set_grant(old.id, {"all": True})
+    assert LibraryStore(owner).get(old.id).status == "superseded"  # precondition
+    assert ctx.library.get(old.id) is not None
+    assert ctx.library.path(old.id).read_bytes() == b"OLD"
+
+
+def test_read_does_not_create_missing_owner_pool(tmp_path: Path) -> None:
+    # A workflow read (including a dry run before the owner has uploaded anything) must NEVER create
+    # the owner pool on disk (section 7.9). find()/get() over a non-existent owner pool return
+    # own-only with no write, so `library/_owner` stays absent until the app (upload) makes it.
+    owner = tmp_path / "_owner"
+    assert not owner.exists()
+    ctx = _ctx(tmp_path, "wf-me")  # owner_pool_root points at the (missing) _owner dir
+    assert ctx.library.find() == []
+    assert ctx.library.get("anything") is None
+    assert not owner.exists()

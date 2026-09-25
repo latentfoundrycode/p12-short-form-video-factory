@@ -149,8 +149,7 @@ def list_library_assets(request: Request) -> LibraryAssetsOut:
     store = _owner_store(owner_root)
     grants = GrantStore(owner_root)
     assets = [
-        _asset_row(asset, grants.get_grant(asset.id), store)
-        for asset in store.find(status=None)
+        _asset_row(asset, grants.get_grant(asset.id), store) for asset in store.find(status=None)
     ]
     return LibraryAssetsOut(assets=assets)
 

@@ -319,6 +319,7 @@ class Library:
             if self._overlay_root is not None
             else None
         )
+        self._owner_pool_root = owner_pool_root
         self._owner_pool = (
             LibraryStore(owner_pool_root, facets=self._facets)
             if owner_pool_root is not None
@@ -368,14 +369,16 @@ class Library:
     ) -> list[Asset]:
         """Return matching assets — overlay layered over the real library in a dry run (§7.5)."""
         own = self._find_own(tags=tags, facets=facets, status=status)
-        if self._owner_pool is None or self._grants is None:
+        owner_pool = self._owner_pool
+        grants = self._grants
+        root = self._owner_pool_root
+        if owner_pool is None or grants is None or root is None or not root.exists():
             return own
         own_ids = {asset.id for asset in own}
         granted = [
             asset
-            for asset in self._owner_pool.find(tags=tags, facets=facets, status=status)
-            if asset.id not in own_ids
-            and self._grants.grant_allows(asset.id, self._ctx.workflow_id)
+            for asset in owner_pool.find(tags=tags, facets=facets, status=status)
+            if asset.id not in own_ids and grants.grant_allows(asset.id, self._ctx.workflow_id)
         ]
         return sorted(own + granted, key=lambda asset: (asset.created_utc, asset.id))
 
@@ -385,12 +388,17 @@ class Library:
         return self._real.get(name_or_id)
 
     def _granted_owner_asset(self, name_or_id: str) -> Asset | None:
-        if self._owner_pool is None or self._grants is None:
+        owner_pool = self._owner_pool
+        grants = self._grants
+        root = self._owner_pool_root
+        if owner_pool is None or grants is None or root is None or not root.exists():
             return None
-        owner_asset = self._owner_pool.get(name_or_id)
+        owner_asset = owner_pool.get(name_or_id)
         if owner_asset is None:
             return None
-        if self._grants.grant_allows(owner_asset.id, self._ctx.workflow_id):
+        if owner_asset.status == "inactive":
+            return None
+        if grants.grant_allows(owner_asset.id, self._ctx.workflow_id):
             return owner_asset
         return None
 

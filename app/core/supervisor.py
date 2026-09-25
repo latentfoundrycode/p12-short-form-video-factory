@@ -102,6 +102,7 @@ class _ContextWiring:
     # `library_overlay_root` is a single per-run overlay shared across prepare() and every video,
     # so a dry-run asset provisioned in prepare() is visible to run() (§7.5/§7.9).
     library_root: Path | None = None
+    library_owner_pool_root: Path | None = None
     library_facets: list[LibraryFacetDecl] = field(default_factory=list)
     library_overlay_root: Path | None = None
 
@@ -288,6 +289,7 @@ def _make_context(
             workflow=wiring.workflow_dir,
             library=wiring.library_root,
             library_overlay=wiring.library_overlay_root,
+            library_owner_pool=wiring.library_owner_pool_root,
         ),
         instructions=instruction_paths(wiring.workflow_dir),
         secrets=dict(wiring.secrets),
@@ -469,6 +471,7 @@ def run_request(
         # run must not create real-library state, so only provision the real root in a real run.
         namespace = manifest.library.namespace
         library_root = ((library_dir or LIBRARY_DIR) / namespace).resolve()
+        library_owner_pool_root = ((library_dir or LIBRARY_DIR) / "_owner").resolve()
         if not dry_run:
             library_root.mkdir(parents=True, exist_ok=True)
         # One overlay per run, shared by prepare() and every video, discarded at run end (§7.9).
@@ -493,6 +496,7 @@ def run_request(
             budget=budget,
             disabled_web_tiers=disabled_web_tiers or [],
             library_root=library_root,
+            library_owner_pool_root=library_owner_pool_root,
             library_facets=library_facets,
             library_overlay_root=library_overlay_root,
         )

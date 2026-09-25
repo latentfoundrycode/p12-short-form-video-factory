@@ -74,9 +74,9 @@ def test_grant_for_unknown_workflow_id_is_stored_and_read_back(tmp_path: Path) -
     "bad",
     [
         {"bogus": 1},
-        {"all": "yes"},          # all must be a bool
-        {"workflows": "wf-a"},   # workflows must be a list
-        {"workflows": [1, 2]},   # workflow ids must be strings
+        {"all": "yes"},  # all must be a bool
+        {"workflows": "wf-a"},  # workflows must be a list
+        {"workflows": [1, 2]},  # workflow ids must be strings
         {"all": True, "workflows": ["wf-a"]},  # exactly one form
         "not-a-dict",
         [],
