@@ -14,6 +14,7 @@
 // implements LibraryView.tsx + the api helpers.
 
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LibraryView } from "./LibraryView";
@@ -55,7 +56,8 @@ describe("LibraryView", () => {
         name: "Cosmic Drift",
         kind: "music",
         status: "active",
-        facets: { mood: "wonder" },
+        mood: ["wonder"],
+        energy: [],
         description: "",
         grant: { all: true },
       },
@@ -64,7 +66,8 @@ describe("LibraryView", () => {
         name: "Whoosh",
         kind: "sfx",
         status: "active",
-        facets: {},
+        mood: [],
+        energy: [],
         description: "",
         grant: { workflows: ["sensational-science-news"] },
       },
@@ -93,5 +96,30 @@ describe("LibraryView", () => {
     await waitFor(() => expect(screen.getByText(/retry/i)).toBeTruthy());
     expect(errorSpy).not.toHaveBeenCalled(); // the failure is handled in the UI, not logged
     noPlaceholders();
+  });
+
+  it("accessibility: a mood tag has a keyboard-operable delete control (not right-click-only)", async () => {
+    mockAssets.mockResolvedValue([
+      {
+        id: "a".repeat(64),
+        name: "Cosmic Drift",
+        kind: "music",
+        status: "active",
+        mood: ["wonder"],
+        energy: [],
+        description: "",
+        grant: { all: true },
+      },
+    ]);
+    const user = userEvent.setup();
+    render(<LibraryView />);
+    await waitFor(() => expect(screen.getByText("Cosmic Drift")).toBeTruthy());
+    await user.click(screen.getByText("Cosmic Drift")); // open the detail editor
+    // Each tag chip must expose an accessible, focusable delete control (a real button reachable by
+    // keyboard/AT) whose accessible name references the tag — NOT a right-click-only affordance.
+    const del = await screen.findByRole("button", { name: /wonder/i });
+    await user.click(del);
+    await waitFor(() => expect(screen.queryByText("wonder")).toBeNull());
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 });

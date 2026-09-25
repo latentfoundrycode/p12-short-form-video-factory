@@ -74,14 +74,14 @@ def test_upload_stores_mood_energy_facets(tmp_path: Path) -> None:
             "name": "Tension",
             "kind": "music",
             "grant": json.dumps({"workflows": ["news-explainer"]}),
-            "mood": "ominous",
-            "energy": "high",
+            "mood": json.dumps(["ominous", "mysterious"]),  # Full model: multi-value arrays
+            "energy": json.dumps(["building"]),
         },
     )
     assert resp.status_code in (200, 201)
-    facets = resp.json()["facets"]
-    assert facets.get("mood") == "ominous"
-    assert facets.get("energy") == "high"
+    row = resp.json()
+    assert sorted(row["mood"]) == ["mysterious", "ominous"]
+    assert row["energy"] == ["building"]
 
 
 def test_upload_rejects_non_audio_type(tmp_path: Path) -> None:

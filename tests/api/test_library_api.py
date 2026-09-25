@@ -58,7 +58,8 @@ def test_assets_endpoint_lists_owner_pool_with_grants(tmp_path: Path) -> None:
     assert row["kind"] == "music"
     assert row["status"] == "active"
     assert row["grant"] == {"all": True}
-    assert "facets" in row and "description" in row
+    # Full model (rev 7): mood/energy are multi-value arrays, not a facets dict.
+    assert row["mood"] == [] and row["energy"] == [] and "description" in row
 
 
 def test_assets_endpoint_reports_default_deny_for_ungranted(tmp_path: Path) -> None:

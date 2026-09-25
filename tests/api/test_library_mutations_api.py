@@ -46,11 +46,21 @@ def test_put_annotates_facets_and_caveats(tmp_path: Path) -> None:
     client, library_dir = _client(tmp_path)
     aid = _seed(library_dir, "a.mp3", {"all": True})
     resp = client.put(
-        f"/api/library/assets/{aid}", json={"facets": {"mood": "calm"}, "caveats": "loops cleanly"}
+        f"/api/library/assets/{aid}",
+        json={
+            "name": "Renamed",
+            "kind": "sfx",
+            "mood": ["calm", "warm"],
+            "energy": ["low"],
+            "caveats": "loops cleanly",
+        },
     )
     assert resp.status_code == 200
     row = resp.json()
-    assert row["facets"].get("mood") == "calm"
+    assert row["name"] == "Renamed"  # rename
+    assert row["kind"] == "sfx"  # re-kind
+    assert sorted(row["mood"]) == ["calm", "warm"]  # multi-value
+    assert row["energy"] == ["low"]
     assert row["id"] == aid
 
 
