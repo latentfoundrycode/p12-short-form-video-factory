@@ -663,6 +663,7 @@ class Context:
             unit=unit,
             estimate=reserve_amount,
             workflow_id=self.workflow_id,
+            video_index=self.video_index,
         )
 
     def _budget_reconcile(
@@ -725,6 +726,7 @@ class Context:
             cfg.ledger_path,
             ceilings=Ceilings(per_run=cfg.per_run, per_day=cfg.per_day),
             kill_switch_path=cfg.kill_switch_path,
+            per_video_ceiling=self.per_video_budget,
         )
 
     def emit(self, event: dict[str, Any]) -> None:

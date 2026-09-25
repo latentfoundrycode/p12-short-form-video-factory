@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, cast
 
 if sys.platform == "win32":
     import msvcrt
@@ -68,6 +68,7 @@ class _TokenState:
     run_id: str = ""
     workflow_id: str = ""
     day: date | None = None
+    video_index: int = 0
 
     def effective_amount(self) -> float:
         if self.actual_amount is not None:
@@ -103,6 +104,13 @@ def _ceiling_breached(projected: float, limit: object) -> bool:
 
 def _as_str(value: object) -> str:
     return value if isinstance(value, str) else ""
+
+
+def _int_or_zero(value: object) -> int:
+    try:
+        return cast(int, int(value))  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return 0
 
 
 def _ts_date(value: object) -> date | None:
@@ -169,6 +177,7 @@ def _token_states(entries: list[dict[str, Any]]) -> dict[str, _TokenState]:
                 state.run_id = run_id
                 state.workflow_id = workflow_id
                 state.day = _ts_date(entry.get("ts"))
+                state.video_index = _int_or_zero(entry.get("video_index", 0))
             else:
                 state.actual_amount = _require_amount(entry.get("amount"))
                 if not state.meter:
@@ -199,6 +208,17 @@ def _run_sum(
             state.effective_amount()
             for state in states.values()
             if state.run_id == run_id and state.meter == meter and state.workflow_id == workflow_id
+        ),
+        start=0.0,
+    )
+
+
+def _video_sum(states: Mapping[str, _TokenState], run_id: str, video_index: int) -> float:
+    return sum(
+        (
+            state.effective_amount()
+            for state in states.values()
+            if state.run_id == run_id and state.video_index == video_index
         ),
         start=0.0,
     )
@@ -291,12 +311,14 @@ class BudgetGuard:
         *,
         ceilings: Ceilings,
         kill_switch_path: Path | None = None,
+        per_video_ceiling: float | None = None,
         now: Callable[[], datetime] = _default_now,
     ) -> None:
         self._ledger_path = ledger_path.resolve()
         self._lock_path = Path(str(self._ledger_path) + ".lock")
         self._ceilings = ceilings
         self._kill_switch_path = None if kill_switch_path is None else kill_switch_path.resolve()
+        self._per_video_ceiling = per_video_ceiling
         self._now = now
         self._lock = threading.Lock()
 
@@ -322,7 +344,8 @@ class BudgetGuard:
         amount: float,
         kind: str,
         note: str,
-    ) -> dict[str, str | float]:
+        video_index: int,
+    ) -> dict[str, str | float | int]:
         return {
             "ts": _format_ts(self._now()),
             "token": token,
@@ -333,6 +356,7 @@ class BudgetGuard:
             "amount": amount,
             "kind": kind,
             "note": note,
+            "video_index": video_index,
         }
 
     def reserve(
@@ -344,6 +368,7 @@ class BudgetGuard:
         estimate: float,
         note: str = "",
         workflow_id: str = "",
+        video_index: int = 0,
     ) -> str:
         with self._held():
             if self._kill_switch_path is not None and self._kill_switch_path.exists():
@@ -361,6 +386,10 @@ class BudgetGuard:
                 projected_run, self._ceilings.per_run[meter]
             ):
                 raise BudgetExceededError("per-run ceiling exceeded")
+            if self._per_video_ceiling is not None:
+                projected_video = _video_sum(states, run_id, video_index) + amount
+                if _ceiling_breached(projected_video, self._per_video_ceiling):
+                    raise BudgetExceededError("per-video ceiling exceeded")
             token = uuid.uuid4().hex
             _append_line(
                 self._ledger_path,
@@ -373,6 +402,7 @@ class BudgetGuard:
                     amount=amount,
                     kind="reserved",
                     note=note,
+                    video_index=video_index,
                 ),
             )
             return token
@@ -385,12 +415,14 @@ class BudgetGuard:
             workflow_id = ""
             meter = ""
             unit = ""
+            video_index = 0
             for entry in _read_ledger(self._ledger_path):
                 if entry.get("kind") == "reserved" and entry.get("token") == token:
                     run_id = _as_str(entry.get("run_id"))
                     workflow_id = _as_str(entry.get("workflow_id"))
                     meter = _as_str(entry.get("meter"))
                     unit = _as_str(entry.get("unit"))
+                    video_index = _int_or_zero(entry.get("video_index", 0))
                     break
             _append_line(
                 self._ledger_path,
@@ -403,6 +435,7 @@ class BudgetGuard:
                     amount=amount,
                     kind="actual",
                     note=note,
+                    video_index=video_index,
                 ),
             )
             if not meter:
