@@ -9,7 +9,7 @@ from typing import Annotated, Any, cast
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 from sfvf.grants import GrantError, GrantStore, validate_grant
-from sfvf.library import Asset, FacetSpec, LibraryStore
+from sfvf.library import Asset, FacetSpec, LibraryError, LibraryStore
 
 from app.api.workflows import _holder
 
@@ -19,6 +19,7 @@ _MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 _AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg"}
 _VALID_KINDS = {"music", "sfx", "voice"}
 _CHUNK_SIZE = 64 * 1024
+_SHA256_HEX = frozenset("0123456789abcdef")
 
 
 class LibraryAssetOut(BaseModel):
@@ -43,6 +44,11 @@ class LibraryWorkflowsOut(BaseModel):
     workflows: list[LibraryWorkflowOut]
 
 
+class LibraryAssetAnnotateIn(BaseModel):
+    facets: dict[str, str] | None = None
+    caveats: str | None = None
+
+
 def _library_dir(request: Request) -> Path:
     return cast(Path, request.app.state.library_dir)
 
@@ -60,6 +66,28 @@ def _asset_row(asset: Asset, grant: dict[str, Any]) -> LibraryAssetOut:
         description=asset.description,
         grant=grant,
     )
+
+
+def _is_valid_asset_id(asset_id: str) -> bool:
+    return len(asset_id) == 64 and all(char in _SHA256_HEX for char in asset_id)
+
+
+def _facet_store(owner_root: Path) -> LibraryStore:
+    return LibraryStore(owner_root, facets=(FacetSpec("mood"), FacetSpec("energy")))
+
+
+def _require_owner_asset(request: Request, asset_id: str) -> Asset:
+    if not _is_valid_asset_id(asset_id):
+        raise HTTPException(status_code=404)
+    asset = LibraryStore(_owner_root(request)).get(asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404)
+    return asset
+
+
+def _updated_row(request: Request, asset: Asset) -> LibraryAssetOut:
+    grant = GrantStore(_owner_root(request)).get_grant(asset.id)
+    return _asset_row(asset, grant)
 
 
 def _is_audio_upload(file: UploadFile) -> bool:
@@ -139,6 +167,54 @@ async def upload_library_asset(
         if temp_path is not None:
             with suppress(OSError):
                 Path(temp_path).unlink()
+
+
+@router.put("/library/assets/{asset_id}", response_model=LibraryAssetOut)
+def update_library_asset(
+    request: Request,
+    asset_id: str,
+    body: LibraryAssetAnnotateIn,
+) -> LibraryAssetOut:
+    _require_owner_asset(request, asset_id)
+    annotate_kwargs: dict[str, Any] = {}
+    if "facets" in body.model_fields_set:
+        annotate_kwargs["facets"] = body.facets
+    if "caveats" in body.model_fields_set:
+        annotate_kwargs["caveats"] = body.caveats
+    try:
+        asset = _facet_store(_owner_root(request)).annotate(asset_id, **annotate_kwargs)
+    except LibraryError:
+        raise HTTPException(status_code=422, detail="invalid annotation") from None
+    return _updated_row(request, asset)
+
+
+@router.post("/library/assets/{asset_id}/grant", response_model=LibraryAssetOut)
+def set_library_asset_grant(
+    request: Request,
+    asset_id: str,
+    body: dict[str, Any],
+) -> LibraryAssetOut:
+    asset = _require_owner_asset(request, asset_id)
+    try:
+        validated_grant = validate_grant(body)
+    except GrantError:
+        raise HTTPException(status_code=422, detail="invalid grant") from None
+    GrantStore(_owner_root(request)).set_grant(asset_id, validated_grant)
+    return _asset_row(asset, validated_grant)
+
+
+@router.post("/library/assets/{asset_id}/deactivate", response_model=LibraryAssetOut)
+def deactivate_library_asset(request: Request, asset_id: str) -> LibraryAssetOut:
+    _require_owner_asset(request, asset_id)
+    asset = LibraryStore(_owner_root(request)).deactivate(asset_id)
+    return _updated_row(request, asset)
+
+
+@router.post("/library/assets/{asset_id}/reactivate", response_model=LibraryAssetOut)
+def reactivate_library_asset(request: Request, asset_id: str) -> LibraryAssetOut:
+    _require_owner_asset(request, asset_id)
+    asset = LibraryStore(_owner_root(request)).reactivate(asset_id)
+    return _updated_row(request, asset)
 
 
 @router.get("/library/workflows", response_model=LibraryWorkflowsOut)
