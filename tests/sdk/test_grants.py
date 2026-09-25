@@ -135,3 +135,14 @@ def test_set_grant_on_corrupt_file_raises_without_data_loss(tmp_path: Path) -> N
     with pytest.raises(GrantError):
         store.set_grant("a", {"all": True})
     assert corrupt.read_text(encoding="utf-8") == "{ not json"  # untouched
+
+
+def test_validate_grant_is_public() -> None:
+    # A public validator so callers (the upload endpoint) validate a grant before storing,
+    # without reaching for a leading-underscore private symbol.
+    from sfvf.grants import validate_grant
+
+    assert validate_grant({"all": True}) == {"all": True}
+    assert validate_grant({"workflows": ["a"]}) == {"workflows": ["a"]}
+    with pytest.raises(GrantError):
+        validate_grant({"bogus": 1})  # type: ignore[arg-type]
