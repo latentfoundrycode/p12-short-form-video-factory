@@ -41,8 +41,15 @@ Match `docs/mockups/library-tab.html`. Reuse the existing design system (tokens 
 
 ## Scope
 
-- `sdk/sfvf/library.py`, `app/api/library.py`
-- `frontend/src/tabs.ts`, `frontend/src/components/Shell.tsx`, `frontend/src/App.tsx`, `frontend/src/components/LibraryView.tsx`, `frontend/src/api.ts`, `frontend/src/types.ts`, `frontend/src/index.css`
+- sdk/sfvf/library.py
+- app/api/library.py
+- frontend/src/tabs.ts
+- frontend/src/components/Shell.tsx
+- frontend/src/App.tsx
+- frontend/src/components/LibraryView.tsx
+- frontend/src/api.ts
+- frontend/src/types.ts
+- frontend/src/index.css
 
 Do NOT build `app/web/` (no `npm run build`; frontend tests run under vitest/jsdom without a build — the single app/web build happens later at packaging). Do NOT modify tests, other files, `docs/` (read the mockup, don't edit it), `handoff/`, CI, or dependencies.
 
