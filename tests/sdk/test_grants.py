@@ -86,3 +86,52 @@ def test_malformed_grant_is_rejected(tmp_path: Path, bad: object) -> None:
     store = _store(tmp_path)
     with pytest.raises(GrantError):
         store.set_grant("assetX", bad)  # type: ignore[arg-type]
+
+
+# --- r2: fail-closed hardening (Review A + security-auditor) ---
+
+
+def _grants_file(tmp_path: Path) -> Path:
+    root = tmp_path / "_owner"
+    root.mkdir(parents=True, exist_ok=True)
+    return root / "grants.json"
+
+
+def test_get_grant_returns_independent_default_deny_objects(tmp_path: Path) -> None:
+    # The default-deny result must not alias a shared module constant: mutating one result
+    # must never turn a later ungranted read into allow.
+    store = _store(tmp_path)
+    first = store.get_grant("x")
+    first["workflows"].append("sneaky")
+    assert store.get_grant("y") == {"workflows": []}
+    assert store.grant_allows("y", "sneaky") is False
+
+
+def test_get_grant_on_corrupt_file_fails_closed(tmp_path: Path) -> None:
+    # A corrupt/unparseable grants.json must DENY on read (fail closed), not raise or allow.
+    store = _store(tmp_path)
+    _grants_file(tmp_path).write_text("{ this is not json", encoding="utf-8")
+    assert store.get_grant("anything") == {"workflows": []}
+    assert store.grant_allows("anything", "wf") is False
+
+
+def test_get_grant_on_invalid_stored_entry_fails_closed(tmp_path: Path) -> None:
+    # An entry whose stored shape set_grant would have rejected (e.g. both keys) must DENY.
+    import json
+
+    store = _store(tmp_path)
+    _grants_file(tmp_path).write_text(
+        json.dumps({"a": {"all": True, "workflows": ["wf"]}}), encoding="utf-8"
+    )
+    assert store.get_grant("a") == {"workflows": []}
+    assert store.grant_allows("a", "wf") is False
+
+
+def test_set_grant_on_corrupt_file_raises_without_data_loss(tmp_path: Path) -> None:
+    # Writing must FAIL LOUD on a corrupt file (never silently overwrite/lose grants).
+    store = _store(tmp_path)
+    corrupt = _grants_file(tmp_path)
+    corrupt.write_text("{ not json", encoding="utf-8")
+    with pytest.raises(GrantError):
+        store.set_grant("a", {"all": True})
+    assert corrupt.read_text(encoding="utf-8") == "{ not json"  # untouched
