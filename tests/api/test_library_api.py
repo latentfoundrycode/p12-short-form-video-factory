@@ -96,3 +96,12 @@ def test_workflows_endpoint_lists_registry(tmp_path: Path) -> None:
     ids = [w["id"] for w in workflows]
     assert "news-explainer" in ids
     assert all("label" in w for w in workflows)
+
+
+def test_assets_row_includes_display_name(tmp_path: Path) -> None:
+    # The tab shows the friendly name the owner gave at upload (the asset's alias), so the row
+    # must carry it. `_seed_owner_asset` puts with name == the filename.
+    client, library_dir = _client(tmp_path)
+    asset_id = _seed_owner_asset(library_dir, "cosmic.mp3", b"AUDIO", {"all": True})
+    row = next(a for a in client.get("/api/library/assets").json()["assets"] if a["id"] == asset_id)
+    assert row["name"] == "cosmic.mp3"
