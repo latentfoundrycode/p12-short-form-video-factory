@@ -75,8 +75,10 @@ input,select,textarea{font:inherit;color:inherit}
 .tiny{font-family:var(--font-mono);font-size:10.5px;color:var(--text-faint)}
 .taginput{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r);padding:6px 8px;min-height:34px;cursor:text}
 .taginput:focus-within{border-color:var(--text-faint)}
-.chip{display:inline-flex;align-items:center;background:var(--surface-3);border:1px solid var(--line);border-radius:12px;padding:3px 10px;font-size:12px;color:var(--text);white-space:nowrap}
+.chip{display:inline-flex;align-items:center;gap:6px;background:var(--surface-3);border:1px solid var(--line);border-radius:12px;padding:3px 6px 3px 10px;font-size:12px;color:var(--text);white-space:nowrap}
 .chip-edit{background:transparent;border:none;outline:none;color:var(--text);font:inherit;min-width:20px}
+.chip-x{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;color:var(--text-faint);font-size:13px;line-height:1;cursor:pointer}
+.chip-x:hover{background:var(--surface);color:var(--text)}
 .tag-entry{flex:1 1 70px;background:transparent;border:none;outline:none;color:var(--text);font-size:13px;min-width:70px;padding:2px}
 .ctxmenu{position:fixed;z-index:50;background:var(--surface-3);border:1px solid var(--line);border-radius:var(--r);box-shadow:0 6px 20px rgb(0 0 0 / 45%);min-width:118px;overflow:hidden}
 .ctxmenu button{display:block;width:100%;text-align:left;padding:8px 12px;font-size:12.5px;color:var(--text-dim)}
@@ -184,11 +186,11 @@ input,select,textarea{font:inherit;color:inherit}
         </div>
         <div class="row2">
           <div class="field"><label class="field-label">Mood</label>
-            <div class="taginput"><span class="chip"><span class="chip-text">wonder</span></span><input class="tag-entry" placeholder="type, then comma" /></div>
-            <span class="field-help">Comma makes a tag · right-click a tag to edit or delete</span>
+            <div class="taginput"><span class="chip" tabindex="0"><span class="chip-text">wonder</span><button class="chip-x" type="button" aria-label="remove wonder">&times;</button></span><input class="tag-entry" placeholder="type, then comma" /></div>
+            <span class="field-help">Comma makes a tag · click &times; or press Delete to remove · Enter/F2 or right-click to edit</span>
           </div>
           <div class="field"><label class="field-label">Energy</label>
-            <div class="taginput"><span class="chip"><span class="chip-text">low</span></span><input class="tag-entry" placeholder="type, then comma" /></div>
+            <div class="taginput"><span class="chip" tabindex="0"><span class="chip-text">low</span><button class="chip-x" type="button" aria-label="remove low">&times;</button></span><input class="tag-entry" placeholder="type, then comma" /></div>
           </div>
         </div>
 
@@ -291,9 +293,18 @@ input,select,textarea{font:inherit;color:inherit}
 <script>
 (function () {
   function chip(text) {
-    var c = document.createElement("span"); c.className = "chip";
+    var c = document.createElement("span"); c.className = "chip"; c.tabIndex = 0;
     var t = document.createElement("span"); t.className = "chip-text"; t.textContent = text;
-    c.appendChild(t); return c;
+    var x = document.createElement("button"); x.type = "button"; x.className = "chip-x";
+    x.setAttribute("aria-label", "remove " + text); x.innerHTML = "&times;";
+    x.addEventListener("click", function (e) { e.stopPropagation(); c.remove(); });
+    c.appendChild(t); c.appendChild(x);
+    // keyboard operability: Enter/F2 edit, Delete/Backspace remove, on the focused chip.
+    c.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === "F2") { e.preventDefault(); startEdit(c); }
+      else if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); c.remove(); }
+    });
+    return c;
   }
   function initTagInput(el) {
     var entry = el.querySelector(".tag-entry");
@@ -326,6 +337,7 @@ input,select,textarea{font:inherit;color:inherit}
     inp.addEventListener("blur", done);
   }
   document.addEventListener("click", closeMenu);
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeMenu(); });
   document.addEventListener("contextmenu", function (e) {
     var c = e.target.closest && e.target.closest(".chip"); if (!c) return;
     e.preventDefault(); closeMenu();
