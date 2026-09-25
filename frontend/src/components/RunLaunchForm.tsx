@@ -504,6 +504,8 @@ export function RunLaunchForm({
 }: RunLaunchFormProps) {
   const [videoCount, setVideoCount] = useState(1);
   const [concurrency, setConcurrency] = useState(1);
+  const [approvalMode, setApprovalMode] = useState<"manual" | "autonomous">("manual");
+  const [perVideoBudget, setPerVideoBudget] = useState("");
   const [values, setValues] = useState<Record<string, FieldValue>>(() => initialValues(params));
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -542,12 +544,26 @@ export function RunLaunchForm({
       return;
     }
 
+    const gates_auto = approvalMode === "autonomous";
+    const budgetText = perVideoBudget.trim();
+    if (budgetText !== "") {
+      const budget = Number(budgetText);
+      if (!Number.isFinite(budget) || budget <= 0) {
+        setFormError("Per-video budget must be greater than 0.");
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
       const result = await startRun(workflowId, {
         params: parsed.value,
         video_count: videoCount,
         concurrency,
+        gates_auto,
+        ...(budgetText !== ""
+          ? { per_video_budget: Number(budgetText) }
+          : {}),
       });
       if (isStartRunOk(result)) {
         onStarted(result.run_id);
@@ -603,6 +619,35 @@ export function RunLaunchForm({
             disabled={submitting}
             onChange={(e) => {
               setConcurrency(Number(e.target.value));
+            }}
+          />
+        </label>
+        <label className="field">
+          <span className="field-label">Approval mode</span>
+          <select
+            className="field-input"
+            value={approvalMode}
+            disabled={submitting}
+            onChange={(e) => {
+              setApprovalMode(e.target.value as "manual" | "autonomous");
+            }}
+          >
+            <option value="manual">Require approval (approve before spending)</option>
+            <option value="autonomous">Autonomous (no approval)</option>
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-label">Per-video budget (USD)</span>
+          <input
+            className="field-input"
+            type="number"
+            min={0}
+            step={0.01}
+            placeholder="e.g. 6.00"
+            value={perVideoBudget}
+            disabled={submitting}
+            onChange={(e) => {
+              setPerVideoBudget(e.target.value);
             }}
           />
         </label>

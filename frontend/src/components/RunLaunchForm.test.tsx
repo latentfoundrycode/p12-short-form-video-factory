@@ -160,3 +160,62 @@ describe("RunLaunchForm options_from model select", () => {
     expect(mockFetchOptions).not.toHaveBeenCalled();
   });
 });
+
+// TASK-SSN-B1b: the run-settings controls (approval mode + per-video budget). The launch body
+// carries gates_auto and per_video_budget (backend plumbed in B1a). The voice picker is deferred
+// until B4 ships presets and a voices list to choose from.
+describe("RunLaunchForm run settings", () => {
+  function renderPlain(onStarted = vi.fn()) {
+    render(
+      <RunLaunchForm
+        workflowId="wf"
+        workflowName="WF"
+        params={[]}
+        onStarted={onStarted}
+        onCancel={() => {}}
+      />,
+    );
+    return onStarted;
+  }
+
+  it("defaults to manual approval and sends gates_auto=false with no budget", async () => {
+    mockStartRun.mockResolvedValue({ run_id: "r1" });
+    renderPlain();
+    await userEvent.click(screen.getByRole("button", { name: /start run/i }));
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled());
+    const body = mockStartRun.mock.calls[0][1] as {
+      gates_auto?: boolean;
+      per_video_budget?: number | null;
+    };
+    expect(body.gates_auto).toBe(false);
+    // No budget entered -> the cap is omitted (or null), never 0.
+    expect(body.per_video_budget ?? null).toBeNull();
+  });
+
+  it("sends gates_auto=true when Autonomous is chosen and forwards a positive budget", async () => {
+    mockStartRun.mockResolvedValue({ run_id: "r2" });
+    renderPlain();
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: /approval/i }),
+      "autonomous",
+    );
+    await userEvent.type(screen.getByRole("spinbutton", { name: /budget/i }), "5");
+    await userEvent.click(screen.getByRole("button", { name: /start run/i }));
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled());
+    const body = mockStartRun.mock.calls[0][1] as {
+      gates_auto?: boolean;
+      per_video_budget?: number;
+    };
+    expect(body.gates_auto).toBe(true);
+    expect(body.per_video_budget).toBe(5);
+  });
+
+  it("blocks submit with an error when the per-video budget is not positive", async () => {
+    mockStartRun.mockResolvedValue({ run_id: "r3" });
+    renderPlain();
+    await userEvent.type(screen.getByRole("spinbutton", { name: /budget/i }), "0");
+    await userEvent.click(screen.getByRole("button", { name: /start run/i }));
+    expect(await screen.findByText(/greater than 0/i)).toBeInTheDocument();
+    expect(mockStartRun).not.toHaveBeenCalled();
+  });
+});

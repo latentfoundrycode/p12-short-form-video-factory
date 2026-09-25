@@ -201,6 +201,8 @@ export type LaunchBody = {
   params: Record<string, unknown>;
   video_count: number;
   concurrency: number;
+  gates_auto?: boolean;
+  per_video_budget?: number;
 };
 
 export type StartRunOk = { run_id: string };
