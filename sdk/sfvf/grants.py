@@ -21,7 +21,7 @@ class GrantError(ValueError):
     """A grant payload does not match the allowed shape."""
 
 
-def _validate_grant(grant: object) -> dict[str, Any]:
+def validate_grant(grant: object) -> dict[str, Any]:
     if not isinstance(grant, dict):
         raise GrantError("grant must be a dict")
     keys = set(grant.keys())
@@ -74,7 +74,7 @@ class GrantStore:
         self._grants_path = root / "grants.json"
 
     def set_grant(self, asset_id: str, grant: dict[str, Any]) -> None:
-        validated = _validate_grant(grant)
+        validated = validate_grant(grant)
         grants = _load_grants_file(self._grants_path)
         grants[asset_id] = validated
         _write_grants_atomic(self._grants_path, grants)
@@ -88,7 +88,7 @@ class GrantStore:
         if entry is None:
             return {"workflows": []}
         try:
-            return _validate_grant(entry)
+            return validate_grant(entry)
         except GrantError:
             return {"workflows": []}
 
