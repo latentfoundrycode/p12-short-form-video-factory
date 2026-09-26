@@ -290,6 +290,39 @@ def test_allowlist_filter_rejects_percent_encoded_traversal() -> None:
     assert kept == {on}, f"encoded traversal escaped the path prefix: {kept}"
 
 
+def test_allowlist_filter_rejects_params_and_backslash_traversal() -> None:
+    # Review B (round 2): urlparse strips a `;params` tail off the LAST path segment, so a filter on
+    # parsed.path never sees `story;%2e%2e%2f...` even though the ORIGIN gets it in the path and
+    # resolves outside the science prefix; an encoded backslash `%5c` can also act as a separator.
+    # The filter must see the full path (urlsplit, not urlparse) and treat `\` as a separator.
+    main = _load_main()
+    on = "https://www.reuters.com/science/real-story"
+    legit_param = "https://www.reuters.com/science/real;jsessionid=abc123"  # normal param -> keep
+    sources = [
+        _src(
+            main,
+            "https://www.bbc.com/news/science_and_environment/s;%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fentertainment",
+            "p1",
+        ),
+        _src(
+            main,
+            "https://www.reuters.com/science/x;%2e%2e%2f%2e%2e%2f%2e%2e%2fworld",
+            "p2",
+        ),
+        _src(
+            main,
+            "https://www.bbc.com/news/science_and_environment/%2e%2e%5c%2e%2e%5centertainment",
+            "b1",
+        ),
+        _src(main, on, "ok"),
+        _src(main, legit_param, "ok2"),
+    ]
+    kept = {s["url"] for s in main._allowlist_filter(sources)}
+    assert kept == {on, legit_param}, (
+        f"params/backslash traversal escaped or legit param dropped: {kept}"
+    )
+
+
 def test_prepare_reselects_per_request_not_from_cache(tmp_path: Path, monkeypatch) -> None:
     # Review B blocker: the choose-subjects step was keyed on video count only, so a second real
     # request cache-hit and replayed request 1's subjects (dedup never re-ran) and returned no
