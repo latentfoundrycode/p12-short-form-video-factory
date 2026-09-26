@@ -217,6 +217,25 @@ def test_prepare_caps_used_subjects_growth(tmp_path: Path, monkeypatch) -> None:
     assert set(shared["subjects"]) == {"Newest A", "Newest B"}
 
 
+def test_prepare_tolerates_non_string_picked_items(tmp_path: Path, monkeypatch) -> None:
+    # H-SSN-15(a): prepare() runs ONCE for all N videos, so a crash there aborts the whole request.
+    # A malformed picker result (non-string items) must be skipped, not raise, and grounding still
+    # returns the valid on-pool subjects.
+    main = _load_main()
+    sources = [
+        _src(main, "https://www.nature.com/a", "Real A"),
+        _src(main, "https://phys.org/b", "Real B"),
+    ]
+    _patch_agents(monkeypatch, main, sources=sources, chosen=["Real A", 123, None, "Real B"])
+    ctx = _ctx(tmp_path, video_count=2)
+    token = set_active(ctx)
+    try:
+        shared = main.prepare(ctx)
+    finally:
+        reset_active(token)
+    assert set(shared["subjects"]) == {"Real A", "Real B"}
+
+
 def test_prepare_empty_on_allowlist_pool_fails_cleanly(tmp_path: Path, monkeypatch) -> None:
     main = _load_main()
     # Real run: research returns only OFF-allowlist sources -> broaden still empty -> clean fail.
