@@ -28,7 +28,8 @@ _CLIP_MODEL = "byteplus/seedance-2.5"
 _WORDS_PER_SEC = 2.5
 _IMAGE_METER = "google"
 _CLIP_METER = "byteplus"
-_WEB_SEARCH_LIMIT = 6
+_RELEVANCE_COST_USD = 0.03
+_WEB_CONSIDER = 24
 
 _USED_SUBJECTS_CAP = 500
 _POOL_PROMPT_LIMIT = 40
@@ -268,7 +269,6 @@ def _composition_html(script: str, timings: object, css_path: str, bed: object =
     # text cannot break out of the inline <script>; do not pass ensure_ascii=False.
     groups_json = json.dumps(payload)
 
-    bed_markup = ""
     bed_gsap_lines: list[str] = []
     bed_css = ""
     bed_div = ""
@@ -441,6 +441,10 @@ def _sanitize_source_urls(urls) -> list[str]:
         parsed = urlsplit(s)
         if parsed.scheme not in ("http", "https"):
             continue
+        if not parsed.hostname:
+            continue
+        if parsed.username or parsed.password:
+            continue
         if s in seen:
             continue
         seen.add(s)
@@ -474,20 +478,29 @@ def _select_music(ctx) -> str | None:
     return f"artifacts/music{src.suffix}"
 
 
+def _beat_count(duration_s: float) -> int:
+    return max(1, round(duration_s / _BEAT_S))
+
+
+def _clip_count(n_beats: int) -> int:
+    return min(_MAX_CLIPS, 2 if n_beats >= 4 else 1)
+
+
 def _estimate_bed_cost(ctx, narration: str) -> float:
     words = len(narration.split())
-    duration = words / _WORDS_PER_SEC
-    beats = max(1, round(duration / _BEAT_S))
-    clips = min(_MAX_CLIPS, 2 if beats >= 4 else 1)
+    beats = _beat_count(words / _WORDS_PER_SEC)
+    clips = _clip_count(beats)
     statics = max(0, beats - clips)
-    still_price = ctx.budget_estimate(_IMAGE_METER) or 0.0
-    clip_price = ctx.budget_estimate(_CLIP_METER) or 0.0
-    # Conservative worst case: every static beat is priced as a paid AI still.
-    return round(statics * still_price + clips * clip_price, 2)
+    still_unit = max(media.image.price(_IMAGE_MODEL), ctx.budget_estimate(_IMAGE_METER) or 0.0)
+    clip_unit = max(
+        media.video.price(_CLIP_MODEL, _CLIP_DURATION_S),
+        ctx.budget_estimate(_CLIP_METER) or 0.0,
+    )
+    return round(clips * clip_unit + statics * (still_unit + _RELEVANCE_COST_USD), 2)
 
 
 def _beats(duration_s: float) -> list[dict]:
-    n = max(1, round(duration_s / _BEAT_S))
+    n = _beat_count(duration_s)
     beats: list[dict] = []
     step = duration_s / n
     start = 0.0
@@ -499,12 +512,25 @@ def _beats(duration_s: float) -> list[dict]:
 
 
 def _source_visual_bed(ctx: Context, *, subject: str, beats: list[dict]) -> dict:
-    del ctx  # bed sourcing uses media providers; ctx reserved for future budget-gated paid web
-    clip_indices: set[int] = {0}
-    if len(beats) >= 4:
-        clip_indices.add(len(beats) - 1)
-    clip_indices = set(sorted(clip_indices)[:_MAX_CLIPS])
-    used_urls: set[str] = set()
+    del ctx
+    n_beats = len(beats)
+    clips = _clip_count(n_beats)
+    clip_indices: set[int] = set()
+    if clips >= 1:
+        clip_indices.add(0)
+    if clips >= 2:
+        clip_indices.add(n_beats - 1)
+    static_beats = [b for b in beats if b["index"] not in clip_indices]
+    if static_beats:
+        sourced = media.web.source(
+            subject,
+            subject=subject,
+            want=len(static_beats),
+            consider=_WEB_CONSIDER,
+        )
+    else:
+        sourced = []
+    sourced_iter = iter(sourced)
     source_urls: list[str] = []
     assets: list[dict] = []
     for beat in beats:
@@ -528,30 +554,17 @@ def _source_visual_bed(ctx: Context, *, subject: str, beats: list[dict]) -> dict
                 }
             )
             continue
-        # Prefer free commons; paid web tier could be budget-gated later.
-        cands = media.web.search(subject, sources=("commons",), limit=_WEB_SEARCH_LIMIT)
-        chosen_web: dict | None = None
-        img_path: str | None = None
-        for cand in cands:
-            url = str(cand.get("url", ""))
-            if not url or url in used_urls:
-                continue
-            img = media.web.fetch(cand)
-            rel = media.web.check_relevance(img, subject=subject)
-            if rel.get("relevant"):
-                chosen_web = cand
-                img_path = img
-                used_urls.add(url)
-                source_urls.append(url)
-                break
-        if chosen_web is not None and img_path is not None:
+        s = next(sourced_iter, None)
+        if s is not None:
+            url = s["candidate"]["url"]
+            source_urls.append(url)
             assets.append(
                 {
                     "kind": "web",
-                    "path": img_path,
+                    "path": s["path"],
                     "start": start,
                     "end": end,
-                    "url": chosen_web["url"],
+                    "url": url,
                     "ken_burns": True,
                 }
             )
@@ -698,7 +711,9 @@ def run(ctx: Context) -> Result:
     speech = step.value
 
     with ctx.step(
-        "visual-bed", inputs={"subject": subject, "duration": speech["duration"]}
+        "visual-bed",
+        inputs={"subject": subject, "duration": speech["duration"]},
+        paid=True,
     ) as step:
         if not step.cached:
             step.set(_source_visual_bed(ctx, subject=subject, beats=_beats(speech["duration"])))

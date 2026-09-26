@@ -15,6 +15,12 @@ _HEIGHT = 1920
 _FPS = 30
 
 
+def price(model: str, duration_s: float | None = None) -> float:
+    provider, mdl = resolve(model)
+    adapter = importlib.import_module(f"sfvf.providers.{provider.adapter}")
+    return float(adapter.video_estimate(mdl, duration_s, None))
+
+
 def generate(
     prompt: str,
     *,
