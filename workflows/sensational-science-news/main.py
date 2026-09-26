@@ -224,7 +224,12 @@ def _caption_groups(timings: object) -> list[dict[str, object]]:
     return groups
 
 
-def _composition_html(script: str, timings: object, css_path: str) -> str:
+_KEN_BURNS_SCALE_END = 1.18
+_KEN_BURNS_X_PERCENT = 5.0
+_KEN_BURNS_Y_PERCENT = 4.0
+
+
+def _composition_html(script: str, timings: object, css_path: str, bed: object = None) -> str:
     # `script` / `css_path` stay in the signature; on-screen text is the timed words.
     del script, css_path
     groups = _caption_groups(timings)
@@ -258,13 +263,71 @@ def _composition_html(script: str, timings: object, css_path: str) -> str:
     # it escapes U+2028/U+2029 (JS line terminators) and non-ASCII so untrusted word
     # text cannot break out of the inline <script>; do not pass ensure_ascii=False.
     groups_json = json.dumps(payload)
+
+    bed_markup = ""
+    bed_gsap_lines: list[str] = []
+    bed_css = ""
+    bed_div = ""
+    if bed and isinstance(bed, dict) and bed.get("assets"):
+        assets = bed["assets"]
+        bed_items: list[str] = []
+        for i, asset in enumerate(assets):
+            kind = asset.get("kind")
+            path = escape(str(asset.get("path", "")))
+            start = float(asset.get("start", 0))
+            end = float(asset.get("end", start))
+            if kind == "clip":
+                dur = end - start
+                bed_items.append(
+                    f'<video id="bed{i}" class="bed-item" src="{path}" '
+                    f'data-start="{start}" data-duration="{dur}" '
+                    f'data-media-start="0" muted></video>'
+                )
+            elif kind in ("web", "still"):
+                bed_items.append(f'<img id="bed{i}" class="bed-item" src="{path}">')
+            else:
+                continue
+
+            bed_gsap_lines.append(f'  tl.set("#bed{i}", {{visibility:"visible"}}, {start});')
+            bed_gsap_lines.append(
+                f'  tl.fromTo("#bed{i}", {{opacity:0}}, {{opacity:1, duration:0.2}}, {start});'
+            )
+            bed_gsap_lines.append(f'  tl.to("#bed{i}", {{opacity:0, duration:0.2}}, {end - 0.2});')
+            bed_gsap_lines.append(f'  tl.set("#bed{i}", {{visibility:"hidden"}}, {end});')
+            if kind in ("web", "still") and asset.get("ken_burns"):
+                sign = 1 if i % 2 == 0 else -1
+                xp = _KEN_BURNS_X_PERCENT * sign
+                yp = _KEN_BURNS_Y_PERCENT * sign
+                span = end - start
+                bed_gsap_lines.append(
+                    f'  tl.fromTo("#bed{i}", {{scale:1.0, xPercent:0, yPercent:0}}, '
+                    f"{{scale:{_KEN_BURNS_SCALE_END}, xPercent:{xp}, yPercent:{yp}, "
+                    f'duration:{span}, ease:"none"}}, {start});'
+                )
+
+        bed_markup = "".join(bed_items)
+        bed_div = f'<div id="bed">{bed_markup}</div>\n'
+        bed_css = """
+#bed {
+  position:absolute; inset:0; z-index:0; overflow:hidden;
+}
+.bed-item {
+  position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+  opacity:0; visibility:hidden; will-change:transform,opacity;
+}
+"""
+        bed_gsap_block = "\n".join(bed_gsap_lines) + "\n" if bed_gsap_lines else ""
+    else:
+        bed_gsap_block = ""
+
     return f"""<style>
 @import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@800&display=swap");
-#captions {{
+{bed_css}#captions {{
   position:absolute; left:0; right:0; top:50%; bottom:auto;
   transform:translateY(-50%);
   display:flex; flex-wrap:wrap; justify-content:center; align-items:center;
   gap:10px; padding:0 162px;
+  z-index:2;
 }}
 .cap-word {{
   font-family:"Montserrat",sans-serif; font-weight:800; font-size:76px;
@@ -284,14 +347,15 @@ def _composition_html(script: str, timings: object, css_path: str) -> str:
   display:flex; flex-wrap:wrap; justify-content:center; align-items:center;
   gap:10px; padding:0 162px;
   opacity:0; visibility:hidden;
+  z-index:2;
 }}
 </style>
-<div id="captions">{"".join(markup)}</div>
+{bed_div}<div id="captions">{"".join(markup)}</div>
 <script>
 window.__timelines = window.__timelines || {{}};
 var GROUPS = {groups_json};
 var tl = gsap.timeline({{paused:true}});
-GROUPS.forEach(function (g) {{
+{bed_gsap_block}GROUPS.forEach(function (g) {{
   var group = "#" + g.id;
   tl.set(group, {{visibility:"visible"}}, g.start);
   tl.fromTo(group, {{opacity:0}}, {{opacity:1, duration:0.12, ease:"power2.out"}}, g.start);
@@ -581,7 +645,7 @@ def run(ctx: Context) -> Result:
     bed = step.value
     ctx.log(f"visual bed: {len(bed['assets'])} assets")
 
-    html = _composition_html(narration, speech["timings"], media.graphics.safe_zone_css())
+    html = _composition_html(narration, speech["timings"], media.graphics.safe_zone_css(), bed)
     with ctx.step("render", inputs={"html": html}) as step:
         if not step.cached:
             step.set(media.graphics.render(html, duration_s=speech["duration"]))
