@@ -254,8 +254,9 @@ def _composition_html(script: str, timings: object, css_path: str) -> str:
     return f"""<style>
 @import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@800&display=swap");
 #captions {{
-  position:absolute; left:0; right:0; bottom:22%;
-  display:flex; flex-wrap:wrap; justify-content:center; align-items:flex-end;
+  position:absolute; left:0; right:0; top:50%; bottom:auto;
+  transform:translateY(-50%);
+  display:flex; flex-wrap:wrap; justify-content:center; align-items:center;
   gap:10px; padding:0 162px;
 }}
 .cap-word {{
@@ -271,8 +272,9 @@ def _composition_html(script: str, timings: object, css_path: str) -> str:
   opacity:0; transform:scaleX(0); transform-origin:0% 50%;
 }}
 .cap-group {{
-  position:absolute; left:0; right:0; bottom:0;
-  display:flex; flex-wrap:wrap; justify-content:center; align-items:flex-end;
+  position:absolute; left:0; right:0; top:50%; bottom:auto;
+  transform:translateY(-50%);
+  display:flex; flex-wrap:wrap; justify-content:center; align-items:center;
   gap:10px; padding:0 162px;
   opacity:0; visibility:hidden;
 }}
