@@ -1,14 +1,13 @@
-"""TASK-SSN-D3c contract: the approve-plan gate shows a real estimated cost (H-SSN-17).
+"""TASK-SSN-D-fix contract: the approve-plan gate estimates the REAL reserve (Review B blocker).
 
-The approval gate runs BEFORE the paid media (it gates the spend), so it estimates the visual bed's
-cost from the script alone: estimate the narration duration from the word count, derive the beat
-count, split into AI stills + clips, and price them via `ctx.budget_estimate(meter)` (the owner's
-per-meter estimates; image meter 'google', clip meter 'byteplus'). Static beats are priced as AI
-stills (the conservative worst case — some may turn out free commons images). With no budget
-configured the estimate is 0.0 (as today). Also hardens `_sanitize_source_urls` to drop URLs that
-carry control characters (D3b security advisory).
+A paid render reserves max(adapter price, owner estimate), not just the owner's configured figure —
+so `_estimate_bed_cost` prices stills/clips at max(media.{image,video}.price(...), budget_estimate),
+plus a per-static-beat vision allowance for the commons relevance check, so the gate never shows a
+figure far below what the run will spend. With no budget configured the estimate is still non-zero
+(the adapter prices apply). Also hardens `_sanitize_source_urls` (control chars, missing host,
+userinfo).
 
-Supervisor-authored (RED-first); the builder adds `_estimate_bed_cost` and wires it into the gate.
+Supervisor-authored (RED-first); the builder reworks `_estimate_bed_cost` + `_sanitize_source_urls`.
 """
 
 from __future__ import annotations
@@ -17,6 +16,7 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+from sfvf import media
 from sfvf._runtime import reset_active, set_active
 from sfvf.context import Context, ContextFile, ContextPaths
 
@@ -32,8 +32,6 @@ def _load_main():
 
 
 class _PricedCtx:
-    """Minimal stand-in exposing budget_estimate for the pure estimate helper."""
-
     def __init__(self, prices: dict[str, float]) -> None:
         self._prices = prices
 
@@ -41,27 +39,60 @@ class _PricedCtx:
         return self._prices.get(meter)
 
 
-def test_estimate_bed_cost_prices_stills_and_clips() -> None:
+def _expected(main, ctx, narration: str) -> float:
+    words = len(narration.split())
+    beats = max(1, round((words / main._WORDS_PER_SEC) / main._BEAT_S))
+    clips = min(main._MAX_CLIPS, 2 if beats >= 4 else 1)
+    statics = max(0, beats - clips)
+    still_unit = max(
+        media.image.price(main._IMAGE_MODEL), ctx.budget_estimate(main._IMAGE_METER) or 0.0
+    )
+    clip_unit = max(
+        media.video.price(main._CLIP_MODEL, main._CLIP_DURATION_S),
+        ctx.budget_estimate(main._CLIP_METER) or 0.0,
+    )
+    return round(clips * clip_unit + statics * (still_unit + main._RELEVANCE_COST_USD), 2)
+
+
+def test_estimate_bed_cost_uses_adapter_price_when_configured_is_lower() -> None:
     main = _load_main()
-    # 150 words / 2.5 wps = 60 s -> round(60/6) = 10 beats -> 2 clips + 8 stills
-    narration = " ".join(["word"] * 150)
-    ctx = _PricedCtx({"google": 0.02, "byteplus": 0.50})
+    ctx = _PricedCtx({"google": 0.001, "byteplus": 0.001})  # far below the real adapter prices
+    narration = " ".join(["word"] * 150)  # ~60s -> 10 beats -> 2 clips + 8 stills
     cost = main._estimate_bed_cost(ctx, narration)
-    assert cost == pytest.approx(8 * 0.02 + 2 * 0.50)  # 1.16
+    assert cost == pytest.approx(_expected(main, ctx, narration))
+    # the adapter clip price (~$2.7 for 5s Seedance) dominates the owner's tiny 0.001 estimate
+    assert cost > 5.0, f"estimate must reflect the real reserve, got {cost}"
 
 
-def test_estimate_bed_cost_zero_without_budget() -> None:
+def test_estimate_bed_cost_uses_configured_when_higher() -> None:
     main = _load_main()
-    ctx = _PricedCtx({})  # no configured estimates -> None -> 0.0
-    assert main._estimate_bed_cost(ctx, " ".join(["w"] * 150)) == 0.0
+    ctx = _PricedCtx({"google": 100.0, "byteplus": 200.0})  # above adapter -> configured wins
+    narration = " ".join(["word"] * 150)
+    assert main._estimate_bed_cost(ctx, narration) == pytest.approx(_expected(main, ctx, narration))
 
 
-def test_sanitize_source_urls_drops_control_chars() -> None:
+def test_estimate_bed_cost_nonzero_without_budget() -> None:
+    main = _load_main()
+    ctx = _PricedCtx({})  # no configured estimates -> adapter prices still apply
+    assert main._estimate_bed_cost(ctx, " ".join(["w"] * 150)) > 0.0
+
+
+def test_sanitize_source_urls_drops_control_chars_hosts_and_userinfo() -> None:
     main = _load_main()
     out = main._sanitize_source_urls(
-        ["https://ok.example/a", "https://evil.example/x\n- https://phish.example/y"]
+        [
+            "https://ok.example/a",
+            "https://evil.example/x\n- https://phish.example/y",  # control char
+            "https:javascript:alert(1)",  # no host
+            "http://user:pass@host.example/p",  # userinfo
+            "http://plainhost.example/b",
+        ]
     )
-    assert out == ["https://ok.example/a"], out
+    assert out == ["https://ok.example/a", "http://plainhost.example/b"], out
+
+
+class _StopError(Exception):
+    pass
 
 
 def _gate_ctx(tmp: Path, *, subject: str) -> Context:
@@ -88,10 +119,6 @@ def _gate_ctx(tmp: Path, *, subject: str) -> Context:
     )
 
 
-class _StopError(Exception):
-    pass
-
-
 def test_gate_payload_uses_estimated_cost(tmp_path: Path, monkeypatch) -> None:
     main = _load_main()
     ctx = _gate_ctx(tmp_path, subject="A finding")
@@ -99,14 +126,11 @@ def test_gate_payload_uses_estimated_cost(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         main.agents, "llm", lambda prompt, *, agent, model, schema=None, attach=None: script
     )
-    monkeypatch.setattr(
-        ctx, "budget_estimate", lambda meter: {"google": 0.02, "byteplus": 0.50}.get(meter)
-    )
     seen: dict[str, object] = {}
 
     def fake_gate(family, *, prompt, payload=None, **kwargs):
         seen["payload"] = payload
-        raise _StopError  # stop before media
+        raise _StopError
 
     monkeypatch.setattr(ctx, "gate", fake_gate)
     token = set_active(ctx)
@@ -119,4 +143,4 @@ def test_gate_payload_uses_estimated_cost(tmp_path: Path, monkeypatch) -> None:
     assert isinstance(payload, dict)
     narration = main._narration_text(script)
     assert payload["estimated_cost_usd"] == pytest.approx(main._estimate_bed_cost(ctx, narration))
-    assert payload["estimated_cost_usd"] > 0  # priced meters -> a real, non-zero figure
+    assert payload["estimated_cost_usd"] > 0  # a real, non-zero figure from the adapter prices

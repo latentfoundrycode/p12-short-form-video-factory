@@ -122,3 +122,47 @@ def test_source_visual_bed_collects_web_source_urls(tmp_path: Path) -> None:
         assert urls, "web-sourced images must contribute their source URLs for the description"
         for a in web_assets:
             assert a.get("url"), "a web asset carries its source URL"
+
+
+def test_source_visual_bed_sources_commons_once_via_web_source(tmp_path: Path, monkeypatch) -> None:
+    # Review B blocker: manual per-beat search/fetch/check_relevance re-pays the (PAID) vision check
+    # for the same candidates. Use media.web.source ONCE (it caches each URL's verdict in a PAID
+    # step and applies min_score) and distribute its results across the static beats.
+    main = _load_main()
+    ctx = _ctx(tmp_path)
+    beats = main._beats(75.0)
+    calls = {"source": 0, "search": 0}
+
+    def fake_source(
+        query, *, subject, sources=("commons",), want=1, consider=8, min_score=0.6, licence=None
+    ):
+        calls["source"] += 1
+        return [
+            {
+                "path": f"artifacts/websrc{i}.png",
+                "candidate": {"url": f"https://commons.example/{i}.jpg"},
+                "relevance": {"relevant": True, "score": 0.9},
+            }
+            for i in range(min(want, 3))
+        ]
+
+    def spy_search(*a, **k):
+        calls["search"] += 1
+        return []
+
+    monkeypatch.setattr(main.media.web, "source", fake_source)
+    monkeypatch.setattr(main.media.web, "search", spy_search)
+    token = set_active(ctx)
+    try:
+        bed = main._source_visual_bed(ctx, subject="A finding", beats=beats)
+    finally:
+        reset_active(token)
+    assert calls["source"] == 1, (
+        "commons must be sourced in ONE media.web.source call, not per beat"
+    )
+    assert calls["search"] == 0, (
+        "the workflow must not call the low-level per-beat media.web.search"
+    )
+    web = [a for a in bed["assets"] if a["kind"] == "web"]
+    assert web, "sourced commons images are used for static beats"
+    assert bed["source_urls"], "web-image source URLs are collected"
