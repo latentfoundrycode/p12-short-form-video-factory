@@ -28,6 +28,7 @@ _CLIP_MODEL = "byteplus/seedance-2.5"
 _WORDS_PER_SEC = 2.5
 _IMAGE_METER = "google"
 _CLIP_METER = "byteplus"
+_OPENROUTER_METER = "openrouter"
 _RELEVANCE_COST_USD = 0.03
 _WEB_CONSIDER = 24
 
@@ -496,7 +497,8 @@ def _estimate_bed_cost(ctx, narration: str) -> float:
         media.video.price(_CLIP_MODEL, _CLIP_DURATION_S),
         ctx.budget_estimate(_CLIP_METER) or 0.0,
     )
-    return round(clips * clip_unit + statics * (still_unit + _RELEVANCE_COST_USD), 2)
+    vision_unit = max(ctx.budget_estimate(_OPENROUTER_METER) or 0.0, _RELEVANCE_COST_USD)
+    return round(clips * clip_unit + statics * still_unit + _WEB_CONSIDER * vision_unit, 2)
 
 
 def _beats(duration_s: float) -> list[dict]:
