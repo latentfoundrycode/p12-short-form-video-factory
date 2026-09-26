@@ -1083,6 +1083,11 @@ textarea {
   align-items: start;
 }
 
+.video-description-text {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .video-head {
   display: flex;
   align-items: center;

@@ -37,6 +37,8 @@ def test_result_defaults() -> None:
     assert r.cover_frame_s == 1.0
     assert r.notes is None
     assert r.extra is None
+    # TASK-SSN-B5: the per-video description (e.g. the video's sources) defaults to empty.
+    assert r.description == ""
 
 
 def test_result_carries_all_fields() -> None:
@@ -47,12 +49,29 @@ def test_result_carries_all_fields() -> None:
         cover_frame_s=2.5,
         notes="n",
         extra={"k": 1},
+        description="Sources: example.com",
     )
     assert r.caption == "c"
     assert r.hashtags == ["x"]
     assert r.cover_frame_s == 2.5
     assert r.notes == "n"
     assert r.extra == {"k": 1}
+    assert r.description == "Sources: example.com"
+
+
+def test_result_event_includes_description_when_set(tmp_path: Path) -> None:
+    # TASK-SSN-B5: a non-empty description rides in the result event (and thus VideoRecord.result).
+    ctx = Context(_context_file(tmp_path))
+    event = _result_event(
+        Result(video=Path("artifacts/final.mp4"), description="Sources: example.com"), ctx
+    )
+    assert event["description"] == "Sources: example.com"
+
+
+def test_result_event_omits_empty_description(tmp_path: Path) -> None:
+    ctx = Context(_context_file(tmp_path))
+    event = _result_event(Result(video=Path("artifacts/final.mp4")), ctx)
+    assert "description" not in event
 
 
 def test_runner_emits_result_event_from_returned_result(
