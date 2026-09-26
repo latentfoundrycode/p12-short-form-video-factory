@@ -9,7 +9,7 @@
 // The fetch is mocked to never resolve, pinning the component in the loading state for assertion.
 
 import { render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RunLaunchForm } from "./RunLaunchForm";
 import type { Param } from "../types";
@@ -17,11 +17,18 @@ import type { Param } from "../types";
 vi.mock("../api", () => ({
   startRun: vi.fn(),
   fetchProviderOptions: vi.fn(),
+  fetchVoices: vi.fn(),
 }));
 
-import { fetchProviderOptions } from "../api";
+import { fetchProviderOptions, fetchVoices } from "../api";
 
 const mockFetchOptions = vi.mocked(fetchProviderOptions);
+const mockFetchVoices = vi.mocked(fetchVoices);
+
+beforeEach(() => {
+  // RunLaunchForm fetches the voice list on mount; keep it resolved for this loading-state test.
+  mockFetchVoices.mockResolvedValue([]);
+});
 
 afterEach(() => {
   vi.clearAllMocks();

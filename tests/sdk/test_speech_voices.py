@@ -26,7 +26,7 @@ from sfvf._ffmpeg import _binary, _run, probe
 from sfvf.context import Context, ContextFile, ContextPaths
 from sfvf.grants import GrantStore
 from sfvf.library import LibraryStore
-from sfvf.media.speech import _denoise, _resolve_voice
+from sfvf.media.speech import _denoise, _resolve_voice, bundled_voice_presets
 
 
 def _ctx(tmp: Path, *, workflow_id: str = "wf") -> Context:
@@ -184,6 +184,17 @@ def test_denoise_highpasses_and_preserves_voice_band(tmp_path: Path) -> None:
     voice_before, voice_after = band_db(noisy, 300), band_db(out, 300)
     assert rumble_before - rumble_after >= 8.0  # sub-70 Hz rumble strongly cut (~9.8 dB at nf=-30)
     assert voice_before - voice_after <= 4.0  # 300 Hz voice band largely preserved (not muffled)
+
+
+def test_bundled_voice_presets_lists_the_manifest() -> None:
+    # The B4b voice picker's data source: the bundled presets from assets/voices/voices.json, each
+    # with a `preset:`-prefixed id (so the resolver forces the bundled clip) and a friendly label.
+    presets = bundled_voice_presets()
+    ids = {p["id"] for p in presets}
+    assert ids == {"preset:warm-female", "preset:literary-female", "preset:classic-male"}
+    for p in presets:
+        assert p["label"] and isinstance(p["label"], str)
+        assert p["id"].startswith("preset:")
 
 
 def test_denoise_uses_the_owner_approved_gentle_filter(tmp_path, monkeypatch) -> None:

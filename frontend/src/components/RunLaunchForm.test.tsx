@@ -16,7 +16,7 @@
 
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RunLaunchForm } from "./RunLaunchForm";
 import type { Param } from "../types";
@@ -24,13 +24,24 @@ import type { Param } from "../types";
 vi.mock("../api", () => ({
   startRun: vi.fn(),
   fetchProviderOptions: vi.fn(),
+  fetchVoices: vi.fn(),
 }));
 
 // Imported after the mock is registered; typed via vi.mocked below.
-import { fetchProviderOptions, startRun } from "../api";
+import { fetchProviderOptions, fetchVoices, startRun } from "../api";
 
 const mockFetchOptions = vi.mocked(fetchProviderOptions);
 const mockStartRun = vi.mocked(startRun);
+const mockFetchVoices = vi.mocked(fetchVoices);
+
+beforeEach(() => {
+  // The form fetches the voice list on mount; every test needs it to resolve.
+  mockFetchVoices.mockResolvedValue([
+    { id: "", label: "Default voice", source: "preset" },
+    { id: "preset:warm-female", label: "Warm female narrator", source: "preset" },
+    { id: "preset:classic-male", label: "Classic male narrator", source: "preset" },
+  ]);
+});
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -217,5 +228,60 @@ describe("RunLaunchForm run settings", () => {
     await userEvent.click(screen.getByRole("button", { name: /start run/i }));
     expect(await screen.findByText(/greater than 0/i)).toBeInTheDocument();
     expect(mockStartRun).not.toHaveBeenCalled();
+  });
+});
+
+// TASK-SSN-B4b: the voice picker. The form fetches the voice list (bundled presets + owner voice
+// assets) and sends the chosen `voice` id in the launch body ("" = default; "preset:<stem>" or an
+// owner asset id otherwise). B4a's resolver interprets the id server-side.
+describe("RunLaunchForm voice picker", () => {
+  function renderPlain(onStarted = vi.fn()) {
+    render(
+      <RunLaunchForm
+        workflowId="wf"
+        workflowName="WF"
+        params={[]}
+        onStarted={onStarted}
+        onCancel={() => {}}
+      />,
+    );
+    return onStarted;
+  }
+
+  it("renders the fetched voices and defaults to the default voice", async () => {
+    mockStartRun.mockResolvedValue({ run_id: "v1" });
+    renderPlain();
+    // options from fetchVoices are present
+    expect(await screen.findByRole("option", { name: /warm female narrator/i })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /classic male narrator/i })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /start run/i }));
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled());
+    const body = mockStartRun.mock.calls[0][1] as { voice?: string };
+    expect(body.voice ?? "").toBe(""); // default selection -> the default voice
+  });
+
+  it("sends the chosen voice id in the launch body", async () => {
+    mockStartRun.mockResolvedValue({ run_id: "v2" });
+    renderPlain();
+    const select = await screen.findByRole("combobox", { name: /voice/i });
+    await userEvent.selectOptions(select, "preset:warm-female");
+    await userEvent.click(screen.getByRole("button", { name: /start run/i }));
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled());
+    const body = mockStartRun.mock.calls[0][1] as { voice?: string };
+    expect(body.voice).toBe("preset:warm-female");
+  });
+
+  it("falls back gracefully and still launches when the voice list fails to load", async () => {
+    mockFetchVoices.mockRejectedValue(new Error("network down"));
+    mockStartRun.mockResolvedValue({ run_id: "v3" });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    renderPlain();
+    // the form is still usable: Start run works and sends the default voice
+    await userEvent.click(await screen.findByRole("button", { name: /start run/i }));
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled());
+    const body = mockStartRun.mock.calls[0][1] as { voice?: string };
+    expect(body.voice ?? "").toBe("");
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });

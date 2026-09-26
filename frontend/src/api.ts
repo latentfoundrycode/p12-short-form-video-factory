@@ -24,6 +24,7 @@ import type {
   Statistics,
   StopMode,
   StopRunResult,
+  Voice,
   Workflow,
   WorkflowList,
 } from "./types";
@@ -57,6 +58,18 @@ export async function fetchProviderOptions(source: string): Promise<ProviderOpti
     throw new Error("Unexpected response while loading provider options");
   }
   return data.options;
+}
+
+export async function fetchVoices(): Promise<Voice[]> {
+  const response = await fetch("/api/library/voices");
+  if (!response.ok) {
+    throw new Error(`Could not load voices (${response.status})`);
+  }
+  const data = (await response.json()) as { voices: Voice[] };
+  if (!Array.isArray(data.voices)) {
+    throw new Error("Unexpected response while loading voices");
+  }
+  return data.voices;
 }
 
 export async function fetchLearning(): Promise<LearningRow[]> {

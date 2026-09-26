@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import threading
 from pathlib import Path
@@ -35,6 +36,27 @@ class Speech(TypedDict):
 
 def _voices_root() -> Path:
     return Path(__file__).resolve().parents[3] / "assets" / "voices"
+
+
+def bundled_voice_presets() -> list[dict[str, str]]:
+    path = _voices_root() / "voices.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return []
+    presets = data.get("presets") if isinstance(data, dict) else None
+    if not isinstance(presets, list):
+        return []
+    rows: list[dict[str, str]] = []
+    for entry in presets:
+        if not isinstance(entry, dict):
+            continue
+        stem = entry.get("id")
+        label = entry.get("label")
+        if not isinstance(stem, str) or not isinstance(label, str):
+            continue
+        rows.append({"id": f"preset:{stem}", "label": label})
+    return rows
 
 
 def _default_voice_clip() -> Path:

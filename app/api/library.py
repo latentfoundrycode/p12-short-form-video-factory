@@ -10,6 +10,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 from sfvf.grants import GrantError, GrantStore, validate_grant
 from sfvf.library import Asset, LibraryError, LibraryStore, normalise_facet_value
+from sfvf.media.speech import bundled_voice_presets
 
 from app.api.workflows import _holder
 
@@ -46,6 +47,16 @@ class LibraryWorkflowOut(BaseModel):
 
 class LibraryWorkflowsOut(BaseModel):
     workflows: list[LibraryWorkflowOut]
+
+
+class LibraryVoiceOut(BaseModel):
+    id: str
+    label: str
+    source: str
+
+
+class LibraryVoicesOut(BaseModel):
+    voices: list[LibraryVoiceOut]
 
 
 class LibraryAssetUpdateIn(BaseModel):
@@ -281,6 +292,23 @@ def reactivate_library_asset(request: Request, asset_id: str) -> LibraryAssetOut
     _require_owner_asset(request, asset_id)
     asset = _owner_store(_owner_root(request)).reactivate(asset_id)
     return _updated_row(request, asset)
+
+
+@router.get("/library/voices", response_model=LibraryVoicesOut)
+def list_library_voices(request: Request) -> LibraryVoicesOut:
+    voices: list[LibraryVoiceOut] = [
+        LibraryVoiceOut(id=preset["id"], label=preset["label"], source="preset")
+        for preset in bundled_voice_presets()
+    ]
+    owner_root = _owner_root(request)
+    if owner_root.is_dir():
+        store = _owner_store(owner_root)
+        for asset in store.find(status="active"):
+            if asset.kind != "voice":
+                continue
+            label = store.name_for(asset.id) or asset.id
+            voices.append(LibraryVoiceOut(id=asset.id, label=label, source="asset"))
+    return LibraryVoicesOut(voices=voices)
 
 
 @router.get("/library/workflows", response_model=LibraryWorkflowsOut)
