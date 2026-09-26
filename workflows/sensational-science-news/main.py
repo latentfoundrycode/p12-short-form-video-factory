@@ -1,6 +1,8 @@
 import json
+import posixpath
 import re
 from html import escape
+from urllib.parse import urlparse
 
 from sfvf import Context, Result, agents, media
 
@@ -12,6 +14,158 @@ _DURATION_S = 30
 _GROUP_SIZE = 4
 _GROUP_HOLD_S = 0.4
 _GROUP_GAP_S = 0.05
+
+_USED_SUBJECTS_CAP = 500
+_POOL_PROMPT_LIMIT = 40
+_POOL_TEXT_TITLE_MAX = 200
+_POOL_TEXT_SNIPPET_MAX = 200
+
+_SCIENCE_NEWS_ALLOWLIST: list[tuple[str, str]] = [
+    ("sciencenews.org", ""),
+    ("science.org", ""),
+    ("sciencedaily.com", ""),
+    ("nature.com", ""),
+    ("scientificamerican.com", ""),
+    ("bbc.com", "/news/science_and_environment"),
+    ("phys.org", ""),
+    ("sci.news", ""),
+    ("livescience.com", ""),
+    ("npr.org", "/sections/science"),
+    ("cbc.ca", "/news/science"),
+    ("snexplores.org", ""),
+    ("newscientist.com", ""),
+    ("reuters.com", "/science"),
+    ("bloomberg.com", "/ai"),
+    ("news.mit.edu", ""),
+    ("reuters.com", "/technology"),
+]
+
+_SUBJECT_PICKER_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {"subjects": {"type": "array", "items": {"type": "string"}}},
+    "required": ["subjects"],
+}
+
+
+def _normalize_host(host: str) -> str:
+    h = host.lower()
+    if h.startswith("www."):
+        return h[4:]
+    return h
+
+
+def _url_on_allowlist(url: str, entry_host: str, path_prefix: str) -> bool:
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if hostname is None:
+        return False
+    if _normalize_host(hostname) != _normalize_host(entry_host):
+        return False
+    if path_prefix == "":
+        return True
+    raw_path = parsed.path or ""
+    path = posixpath.normpath(raw_path or "/")
+    if path == ".":
+        path = "/"
+    return path == path_prefix or path.startswith(path_prefix + "/")
+
+
+def _allowlist_filter(sources: list) -> list:
+    kept: list = []
+    for source in sources:
+        url = source.get("url", "")
+        for host, prefix in _SCIENCE_NEWS_ALLOWLIST:
+            if _url_on_allowlist(url, host, prefix):
+                kept.append(source)
+                break
+    return kept
+
+
+def _dedupe_sources_by_url(sources: list) -> list:
+    seen: set[str] = set()
+    out: list = []
+    for source in sources:
+        url = source.get("url", "")
+        if url in seen:
+            continue
+        seen.add(url)
+        out.append(source)
+    return out
+
+
+def _allowlist_site_hints() -> str:
+    seen: set[str] = set()
+    parts: list[str] = []
+    for host, _ in _SCIENCE_NEWS_ALLOWLIST:
+        if host in seen:
+            continue
+        seen.add(host)
+        parts.append(f"site:{host}")
+    return " OR ".join(parts)
+
+
+def _research_query(*, strict: bool) -> str:
+    if strict:
+        hints = _allowlist_site_hints()
+        return (
+            f"Recent captivating science news stories for a lay audience ({hints}). "
+            "Focus on surprising, entertaining discoveries and breakthroughs."
+        )
+    return (
+        "Recent science news, discoveries, and research breakthroughs "
+        "suitable for a general audience."
+    )
+
+
+def _build_sources_map(chosen: list[str], pool: list) -> dict[str, list]:
+    by_title = {s.get("title", ""): s for s in pool}
+    mapping: dict[str, list] = {}
+    for subject in chosen:
+        if subject in by_title:
+            mapping[subject] = [by_title[subject]]
+        else:
+            mapping[subject] = list(pool)
+    return mapping
+
+
+def _pool_title_by_casefold(pool: list) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for source in pool:
+        title = str(source.get("title", ""))
+        if title:
+            out.setdefault(title.casefold(), title)
+    return out
+
+
+def _finalize_subject_list(picked: list[str], pool: list, used: set[str], n: int) -> list[str]:
+    title_by_fold = _pool_title_by_casefold(pool)
+    chosen: list[str] = []
+    seen_fold: set[str] = set()
+    for subject in picked:
+        canonical = title_by_fold.get(subject.casefold())
+        if canonical is None:
+            continue
+        if canonical in used:
+            continue
+        key = canonical.casefold()
+        if key in seen_fold:
+            continue
+        seen_fold.add(key)
+        chosen.append(canonical)
+        if len(chosen) >= n:
+            return chosen
+    for source in pool:
+        title = str(source.get("title", ""))
+        if not title or title in used:
+            continue
+        key = title.casefold()
+        if key in seen_fold:
+            continue
+        seen_fold.add(key)
+        chosen.append(title)
+        if len(chosen) >= n:
+            break
+    return chosen
 
 
 def _sec(value: object) -> float:
@@ -158,10 +312,80 @@ def _caption(script: str) -> str:
 
 
 def prepare(ctx: Context) -> dict:
-    with ctx.step("choose-subjects", inputs={"count": ctx.video_count}) as step:
+    sources_map: dict[str, list] = {}
+    n = ctx.video_count
+    with ctx.step("choose-subjects", inputs={"count": n}) as step:
         if not step.cached:
-            step.set([f"Placeholder science subject {i + 1}" for i in range(ctx.video_count)])
-    return {"subjects": step.value}
+            raw = list(agents.research(_research_query(strict=True)))
+            pool = _allowlist_filter(raw)
+            if len(pool) < n:
+                broad_raw = list(agents.research(_research_query(strict=False)))
+                raw = _dedupe_sources_by_url(raw + broad_raw)
+                pool = _dedupe_sources_by_url(pool + _allowlist_filter(broad_raw))
+            if not pool:
+                if ctx.dry_run:
+                    pool = raw
+                else:
+                    raise RuntimeError(
+                        "No research sources matched the science-news allowlist; "
+                        "cannot choose subjects."
+                    )
+            stored_used: list[str] = []
+            if ctx.library is not None:
+                raw_used = ctx.library.value("used-subjects")
+                if isinstance(raw_used, list):
+                    stored_used = [str(x) for x in raw_used]
+            used = set(stored_used)
+            prompt_pool = pool[:_POOL_PROMPT_LIMIT]
+            pool_lines: list[str] = []
+            for s in prompt_pool:
+                title = str(s.get("title", ""))[:_POOL_TEXT_TITLE_MAX]
+                snippet = str(s.get("snippet", ""))[:_POOL_TEXT_SNIPPET_MAX]
+                pool_lines.append(f"- {title}: {snippet}")
+            pool_text = "\n".join(pool_lines)
+            used_text = ", ".join(sorted(used)) if used else "(none)"
+            picker_prompt = "\n".join(
+                [
+                    "Rank and select the most captivating science-news subjects for short "
+                    "vertical videos aimed at a lay audience. Entertainment value comes first.",
+                    f"Pick up to {n} distinct subjects from the pool below. Do not reuse any "
+                    "subject already used in prior runs.",
+                    "",
+                    "Already used (forbidden):",
+                    used_text,
+                    "",
+                    "Research pool:",
+                    pool_text,
+                ]
+            )
+            llm_result = agents.llm(
+                picker_prompt,
+                agent="subject-picker",
+                model=_LLM_MODEL,
+                schema=_SUBJECT_PICKER_SCHEMA,
+            )
+            picked = llm_result.get("subjects", [])
+            if not isinstance(picked, list):
+                picked = []
+            chosen = _finalize_subject_list(picked, pool, used, n)
+            if ctx.library is not None:
+                merged: list[str] = []
+                seen_merge: set[str] = set()
+                for item in stored_used + chosen:
+                    if item in seen_merge:
+                        continue
+                    seen_merge.add(item)
+                    merged.append(item)
+                if len(merged) > _USED_SUBJECTS_CAP:
+                    merged = merged[-_USED_SUBJECTS_CAP:]
+                ctx.library.put(
+                    "used-subjects",
+                    merged,
+                    kind="value",
+                )
+            sources_map = _build_sources_map(chosen, pool)
+            step.set(chosen)
+    return {"subjects": step.value, "sources": sources_map}
 
 
 def run(ctx: Context) -> Result:
