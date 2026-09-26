@@ -299,8 +299,6 @@ window.__timelines["main"] = tl;
 
 def _neutralize_untrusted_fence_markers(text: str) -> str:
     text = text.replace("[", "(").replace("]", ")")
-    text = text.replace(_BEGIN_UNTRUSTED, "BEGIN UNTRUSTED SOURCE MATERIAL")
-    text = text.replace(_END_UNTRUSTED, "END UNTRUSTED SOURCE MATERIAL")
     return text
 
 
