@@ -3,7 +3,7 @@ import posixpath
 import re
 from datetime import date
 from html import escape
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urlsplit
 
 from sfvf import Context, Result, agents, media
 
@@ -59,7 +59,7 @@ def _normalize_host(host: str) -> str:
 
 
 def _url_on_allowlist(url: str, entry_host: str, path_prefix: str) -> bool:
-    parsed = urlparse(url)
+    parsed = urlsplit(url)
     hostname = parsed.hostname
     if hostname is None:
         return False
@@ -67,7 +67,7 @@ def _url_on_allowlist(url: str, entry_host: str, path_prefix: str) -> bool:
         return False
     if path_prefix == "":
         return True
-    raw_path = unquote(parsed.path or "")
+    raw_path = unquote(parsed.path or "").replace("\\", "/")
     path = posixpath.normpath(raw_path or "/")
     if path == ".":
         path = "/"
