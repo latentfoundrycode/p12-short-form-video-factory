@@ -19,6 +19,13 @@ _GROUP_SIZE = 4
 _GROUP_HOLD_S = 0.4
 _GROUP_GAP_S = 0.05
 
+_BEAT_S = 6.0
+_MAX_CLIPS = 2
+_CLIP_DURATION_S = 5.0
+_IMAGE_MODEL = "google/gemini-3.1-flash-image"
+_CLIP_MODEL = "byteplus/seedance-2.5"
+_WEB_SEARCH_LIMIT = 6
+
 _USED_SUBJECTS_CAP = 500
 _POOL_PROMPT_LIMIT = 40
 _POOL_TEXT_TITLE_MAX = 200
@@ -356,6 +363,92 @@ def _caption(script: str) -> str:
     return stripped[:120] if stripped else "Science news"
 
 
+def _beats(duration_s: float) -> list[dict]:
+    n = max(1, round(duration_s / _BEAT_S))
+    beats: list[dict] = []
+    step = duration_s / n
+    start = 0.0
+    for i in range(n):
+        end = duration_s if i == n - 1 else start + step
+        beats.append({"index": i, "start": start, "end": end})
+        start = end
+    return beats
+
+
+def _source_visual_bed(ctx: Context, *, subject: str, beats: list[dict]) -> dict:
+    del ctx  # bed sourcing uses media providers; ctx reserved for future budget-gated paid web
+    clip_indices: set[int] = {0}
+    if len(beats) >= 4:
+        clip_indices.add(len(beats) - 1)
+    used_urls: set[str] = set()
+    source_urls: list[str] = []
+    assets: list[dict] = []
+    for beat in beats:
+        idx = beat["index"]
+        start = beat["start"]
+        end = beat["end"]
+        if idx in clip_indices:
+            path = media.video.generate(
+                f"<a vivid ~5s shot for: {subject}>",
+                model=_CLIP_MODEL,
+                duration_s=_CLIP_DURATION_S,
+            )
+            assets.append(
+                {
+                    "kind": "clip",
+                    "path": path,
+                    "start": start,
+                    "end": end,
+                    "url": None,
+                    "ken_burns": False,
+                }
+            )
+            continue
+        # Prefer free commons; paid web tier could be budget-gated later.
+        cands = media.web.search(subject, sources=("commons",), limit=_WEB_SEARCH_LIMIT)
+        chosen_web: dict | None = None
+        img_path: str | None = None
+        for cand in cands:
+            url = str(cand.get("url", ""))
+            if not url or url in used_urls:
+                continue
+            img = media.web.fetch(cand)
+            rel = media.web.check_relevance(img, subject=subject)
+            if rel.get("relevant"):
+                chosen_web = cand
+                img_path = img
+                used_urls.add(url)
+                source_urls.append(url)
+                break
+        if chosen_web is not None and img_path is not None:
+            assets.append(
+                {
+                    "kind": "web",
+                    "path": img_path,
+                    "start": start,
+                    "end": end,
+                    "url": chosen_web["url"],
+                    "ken_burns": True,
+                }
+            )
+            continue
+        still_path = media.image.generate(
+            f"<a striking still for: {subject}>",
+            model=_IMAGE_MODEL,
+        )
+        assets.append(
+            {
+                "kind": "still",
+                "path": still_path,
+                "start": start,
+                "end": end,
+                "url": None,
+                "ken_burns": True,
+            }
+        )
+    return {"assets": assets, "source_urls": source_urls}
+
+
 def prepare(ctx: Context) -> dict:
     n = ctx.video_count
     stored_used: list[str] = []
@@ -479,6 +572,14 @@ def run(ctx: Context) -> Result:
         if not step.cached:
             step.set(media.speech.speak(narration, voice=voice, model=_TTS_MODEL))
     speech = step.value
+
+    with ctx.step(
+        "visual-bed", inputs={"subject": subject, "duration": speech["duration"]}
+    ) as step:
+        if not step.cached:
+            step.set(_source_visual_bed(ctx, subject=subject, beats=_beats(speech["duration"])))
+    bed = step.value
+    ctx.log(f"visual bed: {len(bed['assets'])} assets")
 
     html = _composition_html(narration, speech["timings"], media.graphics.safe_zone_css())
     with ctx.step("render", inputs={"html": html}) as step:
