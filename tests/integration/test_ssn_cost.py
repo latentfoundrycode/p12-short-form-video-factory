@@ -51,7 +51,10 @@ def _expected(main, ctx, narration: str) -> float:
         media.video.price(main._CLIP_MODEL, main._CLIP_DURATION_S),
         ctx.budget_estimate(main._CLIP_METER) or 0.0,
     )
-    return round(clips * clip_unit + statics * (still_unit + main._RELEVANCE_COST_USD), 2)
+    # commons relevance uses up to _WEB_CONSIDER paid gpt-4o vision checks, each reserving the
+    # owner's openrouter estimate (floor _RELEVANCE_COST_USD) -- counted ONCE for the whole bed.
+    vision_unit = max(ctx.budget_estimate("openrouter") or 0.0, main._RELEVANCE_COST_USD)
+    return round(clips * clip_unit + statics * still_unit + main._WEB_CONSIDER * vision_unit, 2)
 
 
 def test_estimate_bed_cost_uses_adapter_price_when_configured_is_lower() -> None:
@@ -69,6 +72,17 @@ def test_estimate_bed_cost_uses_configured_when_higher() -> None:
     ctx = _PricedCtx({"google": 100.0, "byteplus": 200.0})  # above adapter -> configured wins
     narration = " ".join(["word"] * 150)
     assert main._estimate_bed_cost(ctx, narration) == pytest.approx(_expected(main, ctx, narration))
+
+
+def test_estimate_bed_cost_counts_openrouter_vision_reserve() -> None:
+    # Review B r2: the vision allowance must track the openrouter reserve x the fan-out
+    # (_WEB_CONSIDER relevance checks), not a flat per-beat constant, or the gate understates.
+    main = _load_main()
+    narration = " ".join(["word"] * 150)
+    low = main._estimate_bed_cost(_PricedCtx({}), narration)  # openrouter unset -> floor
+    high = main._estimate_bed_cost(_PricedCtx({"openrouter": 0.10}), narration)
+    assert high > low
+    assert high - low == pytest.approx(main._WEB_CONSIDER * (0.10 - main._RELEVANCE_COST_USD))
 
 
 def test_estimate_bed_cost_nonzero_without_budget() -> None:
