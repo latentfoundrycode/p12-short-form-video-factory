@@ -38,6 +38,7 @@ def test_scaffold_dry_run_produces_a_finished_video(tmp_path: Path) -> None:
         cache_dir=tmp_path / "cache",
         ensure_env=_ready,
         dry_run=True,
+        gates_auto=True,  # C4: unattended rehearsal auto-approves the plan gate
     )
     assert not isinstance(result, EnvBlocked | RunBusy)
 
@@ -67,6 +68,7 @@ def test_scaffold_prepare_returns_subjects_shape(tmp_path: Path) -> None:
         cache_dir=tmp_path / "cache",
         ensure_env=_ready,
         dry_run=True,
+        gates_auto=True,  # C4: unattended rehearsal auto-approves the plan gate
     )
     run_dir = next((tmp_path / "runs" / "sensational-science-news").iterdir())
     context = json.loads((run_dir / "01" / "context.json").read_text(encoding="utf-8"))
