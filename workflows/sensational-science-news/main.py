@@ -1,6 +1,7 @@
 import json
 import posixpath
 import re
+import shutil
 from datetime import date
 from html import escape
 from urllib.parse import unquote, urlsplit
@@ -18,6 +19,18 @@ _END_UNTRUSTED = "[END UNTRUSTED SOURCE MATERIAL]"
 _GROUP_SIZE = 4
 _GROUP_HOLD_S = 0.4
 _GROUP_GAP_S = 0.05
+
+_BEAT_S = 6.0
+_MAX_CLIPS = 2
+_CLIP_DURATION_S = 5.0
+_IMAGE_MODEL = "google/gemini-3.1-flash-image"
+_CLIP_MODEL = "byteplus/seedance-2.5"
+_WORDS_PER_SEC = 2.5
+_IMAGE_METER = "google"
+_CLIP_METER = "byteplus"
+_OPENROUTER_METER = "openrouter"
+_RELEVANCE_COST_USD = 0.03
+_WEB_CONSIDER = 24
 
 _USED_SUBJECTS_CAP = 500
 _POOL_PROMPT_LIMIT = 40
@@ -217,7 +230,12 @@ def _caption_groups(timings: object) -> list[dict[str, object]]:
     return groups
 
 
-def _composition_html(script: str, timings: object, css_path: str) -> str:
+_KEN_BURNS_SCALE_END = 1.18
+_KEN_BURNS_X_PERCENT = 5.0
+_KEN_BURNS_Y_PERCENT = 4.0
+
+
+def _composition_html(script: str, timings: object, css_path: str, bed: object = None) -> str:
     # `script` / `css_path` stay in the signature; on-screen text is the timed words.
     del script, css_path
     groups = _caption_groups(timings)
@@ -251,12 +269,70 @@ def _composition_html(script: str, timings: object, css_path: str) -> str:
     # it escapes U+2028/U+2029 (JS line terminators) and non-ASCII so untrusted word
     # text cannot break out of the inline <script>; do not pass ensure_ascii=False.
     groups_json = json.dumps(payload)
+
+    bed_gsap_lines: list[str] = []
+    bed_css = ""
+    bed_div = ""
+    if bed and isinstance(bed, dict) and bed.get("assets"):
+        assets = bed["assets"]
+        bed_items: list[str] = []
+        for i, asset in enumerate(assets):
+            kind = asset.get("kind")
+            path = escape(str(asset.get("path", "")))
+            start = float(asset.get("start", 0))
+            end = float(asset.get("end", start))
+            if kind == "clip":
+                dur = end - start
+                bed_items.append(
+                    f'<video id="bed{i}" class="bed-item" src="{path}" '
+                    f'data-start="{start}" data-duration="{dur}" '
+                    f'data-media-start="0" muted></video>'
+                )
+            elif kind in ("web", "still"):
+                bed_items.append(f'<img id="bed{i}" class="bed-item" src="{path}">')
+            else:
+                continue
+
+            bed_gsap_lines.append(f'  tl.set("#bed{i}", {{visibility:"visible"}}, {start});')
+            bed_gsap_lines.append(
+                f'  tl.fromTo("#bed{i}", {{opacity:0}}, {{opacity:1, duration:0.2}}, {start});'
+            )
+            bed_gsap_lines.append(f'  tl.to("#bed{i}", {{opacity:0, duration:0.2}}, {end - 0.2});')
+            bed_gsap_lines.append(f'  tl.set("#bed{i}", {{visibility:"hidden"}}, {end});')
+            if kind in ("web", "still") and asset.get("ken_burns"):
+                sign = 1 if i % 2 == 0 else -1
+                xp = _KEN_BURNS_X_PERCENT * sign
+                yp = _KEN_BURNS_Y_PERCENT * sign
+                span = end - start
+                bed_gsap_lines.append(
+                    f'  tl.fromTo("#bed{i}", {{scale:1.0, xPercent:0, yPercent:0}}, '
+                    f"{{scale:{_KEN_BURNS_SCALE_END}, xPercent:{xp}, yPercent:{yp}, "
+                    f'duration:{span}, ease:"none"}}, {start});'
+                )
+
+        bed_markup = "".join(bed_items)
+        bed_div = f'<div id="bed">{bed_markup}</div>\n'
+        bed_css = """
+#bed {
+  position:absolute; inset:0; z-index:0; overflow:hidden;
+}
+.bed-item {
+  position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+  opacity:0; visibility:hidden; will-change:transform,opacity;
+}
+"""
+        bed_gsap_block = "\n".join(bed_gsap_lines) + "\n" if bed_gsap_lines else ""
+    else:
+        bed_gsap_block = ""
+
     return f"""<style>
 @import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@800&display=swap");
-#captions {{
-  position:absolute; left:0; right:0; bottom:22%;
-  display:flex; flex-wrap:wrap; justify-content:center; align-items:flex-end;
+{bed_css}#captions {{
+  position:absolute; left:0; right:0; top:50%; bottom:auto;
+  transform:translateY(-50%);
+  display:flex; flex-wrap:wrap; justify-content:center; align-items:center;
   gap:10px; padding:0 162px;
+  z-index:2;
 }}
 .cap-word {{
   font-family:"Montserrat",sans-serif; font-weight:800; font-size:76px;
@@ -271,18 +347,20 @@ def _composition_html(script: str, timings: object, css_path: str) -> str:
   opacity:0; transform:scaleX(0); transform-origin:0% 50%;
 }}
 .cap-group {{
-  position:absolute; left:0; right:0; bottom:0;
-  display:flex; flex-wrap:wrap; justify-content:center; align-items:flex-end;
+  position:absolute; left:0; right:0; top:50%; bottom:auto;
+  transform:translateY(-50%);
+  display:flex; flex-wrap:wrap; justify-content:center; align-items:center;
   gap:10px; padding:0 162px;
   opacity:0; visibility:hidden;
+  z-index:2;
 }}
 </style>
-<div id="captions">{"".join(markup)}</div>
+{bed_div}<div id="captions">{"".join(markup)}</div>
 <script>
 window.__timelines = window.__timelines || {{}};
 var GROUPS = {groups_json};
 var tl = gsap.timeline({{paused:true}});
-GROUPS.forEach(function (g) {{
+{bed_gsap_block}GROUPS.forEach(function (g) {{
   var group = "#" + g.id;
   tl.set(group, {{visibility:"visible"}}, g.start);
   tl.fromTo(group, {{opacity:0}}, {{opacity:1, duration:0.12, ease:"power2.out"}}, g.start);
@@ -352,6 +430,162 @@ def _narration_text(raw: str) -> str:
 def _caption(script: str) -> str:
     stripped = " ".join(script.split())
     return stripped[:120] if stripped else "Science news"
+
+
+def _sanitize_source_urls(urls) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        s = str(url).strip()
+        if not s.isprintable():
+            continue
+        parsed = urlsplit(s)
+        if parsed.scheme not in ("http", "https"):
+            continue
+        if not parsed.hostname:
+            continue
+        if parsed.username or parsed.password:
+            continue
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
+def _video_description(article_urls: list[str], image_urls: list[str]) -> str:
+    articles = _sanitize_source_urls(article_urls)
+    images = _sanitize_source_urls(image_urls)
+    sections: list[str] = []
+    if articles:
+        sections.append("Sources:\n" + "\n".join(f"- {u}" for u in articles))
+    if images:
+        sections.append("Image sources:\n" + "\n".join(f"- {u}" for u in images))
+    return "\n\n".join(sections)
+
+
+def _select_music(ctx) -> str | None:
+    if ctx.library is None:
+        return None
+    assets = [a for a in ctx.library.find(status="active") if getattr(a, "kind", None) == "music"]
+    if not assets:
+        return None
+    asset = assets[0]
+    src = ctx.library.path(asset.id)
+    if src is None:
+        return None
+    dest = ctx.paths.artifacts / f"music{src.suffix}"
+    shutil.copyfile(src, dest)
+    return f"artifacts/music{src.suffix}"
+
+
+def _beat_count(duration_s: float) -> int:
+    return max(1, round(duration_s / _BEAT_S))
+
+
+def _clip_count(n_beats: int) -> int:
+    return min(_MAX_CLIPS, 2 if n_beats >= 4 else 1)
+
+
+def _estimate_bed_cost(ctx, narration: str) -> float:
+    words = len(narration.split())
+    beats = _beat_count(words / _WORDS_PER_SEC)
+    clips = _clip_count(beats)
+    statics = max(0, beats - clips)
+    still_unit = max(media.image.price(_IMAGE_MODEL), ctx.budget_estimate(_IMAGE_METER) or 0.0)
+    clip_unit = max(
+        media.video.price(_CLIP_MODEL, _CLIP_DURATION_S),
+        ctx.budget_estimate(_CLIP_METER) or 0.0,
+    )
+    vision_unit = max(ctx.budget_estimate(_OPENROUTER_METER) or 0.0, _RELEVANCE_COST_USD)
+    return round(clips * clip_unit + statics * still_unit + _WEB_CONSIDER * vision_unit, 2)
+
+
+def _beats(duration_s: float) -> list[dict]:
+    n = _beat_count(duration_s)
+    beats: list[dict] = []
+    step = duration_s / n
+    start = 0.0
+    for i in range(n):
+        end = duration_s if i == n - 1 else start + step
+        beats.append({"index": i, "start": start, "end": end})
+        start = end
+    return beats
+
+
+def _source_visual_bed(ctx: Context, *, subject: str, beats: list[dict]) -> dict:
+    del ctx
+    n_beats = len(beats)
+    clips = _clip_count(n_beats)
+    clip_indices: set[int] = set()
+    if clips >= 1:
+        clip_indices.add(0)
+    if clips >= 2:
+        clip_indices.add(n_beats - 1)
+    static_beats = [b for b in beats if b["index"] not in clip_indices]
+    if static_beats:
+        sourced = media.web.source(
+            subject,
+            subject=subject,
+            want=len(static_beats),
+            consider=_WEB_CONSIDER,
+        )
+    else:
+        sourced = []
+    sourced_iter = iter(sourced)
+    source_urls: list[str] = []
+    assets: list[dict] = []
+    for beat in beats:
+        idx = beat["index"]
+        start = beat["start"]
+        end = beat["end"]
+        if idx in clip_indices:
+            path = media.video.generate(
+                f"<a vivid ~5s shot for: {subject}>",
+                model=_CLIP_MODEL,
+                duration_s=_CLIP_DURATION_S,
+            )
+            assets.append(
+                {
+                    "kind": "clip",
+                    "path": path,
+                    "start": start,
+                    "end": end,
+                    "url": None,
+                    "ken_burns": False,
+                }
+            )
+            continue
+        s = next(sourced_iter, None)
+        if s is not None:
+            url = s["candidate"]["url"]
+            source_urls.append(url)
+            assets.append(
+                {
+                    "kind": "web",
+                    "path": s["path"],
+                    "start": start,
+                    "end": end,
+                    "url": url,
+                    "ken_burns": True,
+                }
+            )
+            continue
+        still_path = media.image.generate(
+            f"<a striking still for: {subject}>",
+            model=_IMAGE_MODEL,
+        )
+        assets.append(
+            {
+                "kind": "still",
+                "path": still_path,
+                "start": start,
+                "end": end,
+                "url": None,
+                "ken_burns": True,
+            }
+        )
+    return {"assets": assets, "source_urls": source_urls}
 
 
 def prepare(ctx: Context) -> dict:
@@ -461,7 +695,7 @@ def run(ctx: Context) -> Result:
     script = step.value
     narration = _narration_text(script)
 
-    estimated_cost = 0.0
+    estimated_cost = _estimate_bed_cost(ctx, narration)
     ctx.gate(
         "approve-plan",
         prompt=f"Approve the plan for video {ctx.video_index}: {subject!r}?",
@@ -478,16 +712,35 @@ def run(ctx: Context) -> Result:
             step.set(media.speech.speak(narration, voice=voice, model=_TTS_MODEL))
     speech = step.value
 
-    html = _composition_html(narration, speech["timings"], media.graphics.safe_zone_css())
+    with ctx.step(
+        "visual-bed",
+        inputs={"subject": subject, "duration": speech["duration"]},
+        paid=True,
+    ) as step:
+        if not step.cached:
+            step.set(_source_visual_bed(ctx, subject=subject, beats=_beats(speech["duration"])))
+    bed = step.value
+    ctx.log(f"visual bed: {len(bed['assets'])} assets")
+
+    html = _composition_html(narration, speech["timings"], media.graphics.safe_zone_css(), bed)
     with ctx.step("render", inputs={"html": html}) as step:
         if not step.cached:
             step.set(media.graphics.render(html, duration_s=speech["duration"]))
     visual = step.value
 
     captions = media.graphics.captions(speech["audio"], speech["timings"], style="bold")
-    final = media.finalize(visual, audio=speech["audio"], captions=captions)
+    music_rel = _select_music(ctx)
+    narration_audio = speech["audio"]
+    audio = (
+        media.edit.mix(narration_audio, music=music_rel, duck=True)
+        if music_rel
+        else narration_audio
+    )
+    final = media.finalize(visual, audio=audio, captions=captions)
+    article_urls = [str(s.get("url", "")) for s in sources]
+    description = _video_description(article_urls, bed["source_urls"])
     return Result(
         video=ctx.video_dir / final,
         caption=_caption(narration),
-        description="",
+        description=description,
     )

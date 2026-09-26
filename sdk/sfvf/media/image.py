@@ -11,6 +11,12 @@ _EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 _DEFAULT_W = _DEFAULT_H = 1024
 
 
+def price(model: str, size: str | None = None) -> float:
+    provider, mdl = resolve(model)
+    adapter = importlib.import_module(f"sfvf.providers.{provider.adapter}")
+    return float(adapter.image_price(mdl, size))
+
+
 def generate(
     prompt: str,
     *,
