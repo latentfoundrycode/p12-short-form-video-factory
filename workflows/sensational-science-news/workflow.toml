@@ -1,0 +1,23 @@
+[workflow]
+id = "sensational-science-news"
+name = "Sensational Science News"
+version = "1.0.0"
+entrypoint = "main:run"
+prepare = "main:prepare"
+sdk = "1"
+video_semantics = "variants"
+
+[output]
+aspect = "9:16"
+fps = 30
+safe_zone = "tiktok"
+
+# OpenRouter powers the LLM steps; SerpApi is used for paid web images from Stage D onward.
+# Local speech (Chatterbox/WhisperX) needs no key.
+[[requires_keys]]
+name = "OPENROUTER_API_KEY"
+label = "OpenRouter"
+
+[[requires_keys]]
+name = "SERPAPI_API_KEY"
+label = "SerpApi"
