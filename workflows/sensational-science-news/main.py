@@ -453,6 +453,18 @@ def run(ctx: Context) -> Result:
     script = step.value
     narration = _narration_text(script)
 
+    estimated_cost = 0.0
+    ctx.gate(
+        "approve-plan",
+        prompt=f"Approve the plan for video {ctx.video_index}: {subject!r}?",
+        payload={
+            "subject": subject,
+            "script": narration,
+            "estimated_cost_usd": estimated_cost,
+        },
+        on_bypass="approve",
+    )
+
     with ctx.step("speech", inputs={"script": narration, "voice": voice}) as step:
         if not step.cached:
             step.set(media.speech.speak(narration, voice=voice, model=_TTS_MODEL))
