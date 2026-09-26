@@ -37,23 +37,38 @@ def _load_main():
     return module
 
 
-def _ctx(tmp: Path, *, video_count: int, dry_run: bool = False) -> Context:
-    (tmp / "01" / "artifacts").mkdir(parents=True, exist_ok=True)
-    (tmp / "01" / ".steps").mkdir(parents=True, exist_ok=True)
-    (tmp / "cache").mkdir(parents=True, exist_ok=True)
+def _ctx(
+    tmp: Path,
+    *,
+    video_count: int,
+    dry_run: bool = False,
+    run_id: str = "",
+    video_sub: str = "01",
+    cache_dir: Path | None = None,
+    library_dir: Path | None = None,
+) -> Context:
+    # cache_dir / library_dir let a test share ONE cache + library across two "requests" (distinct
+    # run_ids) to exercise cross-run behaviour; default to per-ctx dirs under tmp.
+    cache = cache_dir if cache_dir is not None else tmp / "cache"
+    library = library_dir if library_dir is not None else tmp / "lib"
+    vdir = tmp / video_sub
+    (vdir / "artifacts").mkdir(parents=True, exist_ok=True)
+    (vdir / ".steps").mkdir(parents=True, exist_ok=True)
+    cache.mkdir(parents=True, exist_ok=True)
     return Context(
         ContextFile(
             settings={},
             dry_run=dry_run,
             workflow_id="sensational-science-news",
+            run_id=run_id,
             video_count=video_count,
             paths=ContextPaths(
-                video=tmp / "01",
-                artifacts=tmp / "01" / "artifacts",
-                steps=tmp / "01" / ".steps",
-                shared=tmp / "01",
-                cache=tmp / "cache",
-                library=tmp / "lib",
+                video=vdir,
+                artifacts=vdir / "artifacts",
+                steps=vdir / ".steps",
+                shared=vdir,
+                cache=cache,
+                library=library,
             ),
         )
     )
@@ -247,6 +262,134 @@ def test_prepare_empty_on_allowlist_pool_fails_cleanly(tmp_path: Path, monkeypat
     ctx = _ctx(tmp_path, video_count=1, dry_run=False)
     token = set_active(ctx)
     try:
+        with pytest.raises(RuntimeError):
+            main.prepare(ctx)
+    finally:
+        reset_active(token)
+
+
+def test_allowlist_filter_rejects_percent_encoded_traversal() -> None:
+    # Review B blocker: normpath on the RAW path removes literal ../ but leaves %2e%2e / %2f intact,
+    # so an encoded dot-segment escapes a path-prefixed entry (bbc /news/science_and_environment,
+    # reuters /science) into a non-science section. The filter must percent-DECODE before normpath.
+    main = _load_main()
+    on = "https://www.bbc.com/news/science_and_environment/real-story"
+    sources = [
+        _src(
+            main,
+            "https://www.bbc.com/news/science_and_environment/%2e%2e/%2e%2e/entertainment/x",
+            "e1",
+        ),
+        _src(
+            main, "https://www.bbc.com/news/science_and_environment/..%2f..%2fentertainment/y", "e2"
+        ),
+        _src(main, "https://reuters.com/science/%2e%2e/world/z", "e3"),
+        _src(main, on, "ok"),
+    ]
+    kept = {s["url"] for s in main._allowlist_filter(sources)}
+    assert kept == {on}, f"encoded traversal escaped the path prefix: {kept}"
+
+
+def test_prepare_reselects_per_request_not_from_cache(tmp_path: Path, monkeypatch) -> None:
+    # Review B blocker: the choose-subjects step was keyed on video count only, so a second real
+    # request cache-hit and replayed request 1's subjects (dedup never re-ran) and returned no
+    # sources. Two requests sharing ONE cache + library (distinct run_ids) must select fresh,
+    # non-repeating subjects AND return sources both times.
+    main = _load_main()
+    calls = {"research": 0}
+
+    def _research(query):
+        calls["research"] += 1
+        return [
+            _src(main, "https://www.nature.com/a", "A finding"),
+            _src(main, "https://phys.org/b", "B finding"),
+            _src(main, "https://www.science.org/c", "C finding"),
+            _src(main, "https://www.sciencedaily.com/d", "D finding"),
+        ]
+
+    monkeypatch.setattr(main.agents, "research", _research)
+    monkeypatch.setattr(
+        main.agents,
+        "llm",
+        lambda prompt, *, agent, model, schema=None, attach=None: {
+            "subjects": ["A finding", "B finding", "C finding", "D finding"]
+        },
+    )
+    cache = tmp_path / "shared-cache"
+    library = tmp_path / "shared-lib"
+
+    ctx1 = _ctx(
+        tmp_path,
+        video_count=1,
+        run_id="run-1",
+        video_sub="r1",
+        cache_dir=cache,
+        library_dir=library,
+    )
+    tok1 = set_active(ctx1)
+    try:
+        shared1 = main.prepare(ctx1)
+    finally:
+        reset_active(tok1)
+    research_after_1 = calls["research"]
+
+    ctx2 = _ctx(
+        tmp_path,
+        video_count=1,
+        run_id="run-2",
+        video_sub="r2",
+        cache_dir=cache,
+        library_dir=library,
+    )
+    tok2 = set_active(ctx2)
+    try:
+        shared2 = main.prepare(ctx2)
+    finally:
+        reset_active(tok2)
+
+    assert calls["research"] > research_after_1, (
+        "request 2 must re-run research, not reuse the cache"
+    )
+    assert shared1["subjects"] and shared2["subjects"]
+    assert set(shared1["subjects"]).isdisjoint(shared2["subjects"]), (
+        "cross-run dedup must exclude prior"
+    )
+    assert shared2["sources"], "sources must be present on the second request (not dropped)"
+
+
+def test_prepare_cross_run_dedup_is_case_insensitive(tmp_path: Path, monkeypatch) -> None:
+    # A prior subject that differs only in case must still be treated as used (not re-selectable).
+    main = _load_main()
+    sources = [_src(main, "https://www.nature.com/a", "Mars Water Found")]
+    _patch_agents(monkeypatch, main, sources=sources, chosen=["Mars Water Found"])
+    ctx = _ctx(tmp_path, video_count=1)
+    token = set_active(ctx)
+    try:
+        ctx.library.put(
+            "used-subjects", ["mars water found"], kind="value"
+        )  # same title, lower case
+        with pytest.raises(
+            RuntimeError
+        ):  # only pool title is already used -> nothing fresh -> clean fail
+            main.prepare(ctx)
+    finally:
+        reset_active(token)
+
+
+def test_prepare_raises_when_pool_exhausted_by_dedup(tmp_path: Path, monkeypatch) -> None:
+    # If every on-allowlist pool title is already in used-subjects, no fresh subject can be chosen.
+    # prepare() must fail cleanly (RuntimeError) rather than return a short list that makes run()
+    # IndexError on ctx.shared["subjects"][video_index - 1].
+    main = _load_main()
+    sources = [
+        _src(main, "https://www.nature.com/a", "Used A"),
+        _src(main, "https://phys.org/b", "Used B"),
+    ]
+    _patch_agents(monkeypatch, main, sources=sources, chosen=["Used A", "Used B"])
+    ctx = _ctx(tmp_path, video_count=2)
+    token = set_active(ctx)
+    try:
+        ctx.library.put("used-subjects", ["Used A", "Used B"], kind="value")
         with pytest.raises(RuntimeError):
             main.prepare(ctx)
     finally:
