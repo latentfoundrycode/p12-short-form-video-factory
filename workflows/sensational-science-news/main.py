@@ -1,8 +1,9 @@
 import json
 import posixpath
 import re
+from datetime import date
 from html import escape
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from sfvf import Context, Result, agents, media
 
@@ -66,7 +67,7 @@ def _url_on_allowlist(url: str, entry_host: str, path_prefix: str) -> bool:
         return False
     if path_prefix == "":
         return True
-    raw_path = parsed.path or ""
+    raw_path = unquote(parsed.path or "")
     path = posixpath.normpath(raw_path or "/")
     if path == ".":
         path = "/"
@@ -141,6 +142,7 @@ def _pool_title_by_casefold(pool: list) -> dict[str, str]:
 
 
 def _finalize_subject_list(picked: list[str], pool: list, used: set[str], n: int) -> list[str]:
+    """Return up to n subjects from pool; `used` is a set of casefolded titles already taken."""
     title_by_fold = _pool_title_by_casefold(pool)
     chosen: list[str] = []
     seen_fold: set[str] = set()
@@ -150,7 +152,7 @@ def _finalize_subject_list(picked: list[str], pool: list, used: set[str], n: int
         canonical = title_by_fold.get(subject.casefold())
         if canonical is None:
             continue
-        if canonical in used:
+        if canonical.casefold() in used:
             continue
         key = canonical.casefold()
         if key in seen_fold:
@@ -161,7 +163,7 @@ def _finalize_subject_list(picked: list[str], pool: list, used: set[str], n: int
             return chosen
     for source in pool:
         title = str(source.get("title", ""))
-        if not title or title in used:
+        if not title or title.casefold() in used:
             continue
         key = title.casefold()
         if key in seen_fold:
@@ -353,9 +355,17 @@ def _caption(script: str) -> str:
 
 
 def prepare(ctx: Context) -> dict:
-    sources_map: dict[str, list] = {}
     n = ctx.video_count
-    with ctx.step("choose-subjects", inputs={"count": n}) as step:
+    stored_used: list[str] = []
+    if ctx.library is not None:
+        raw_used = ctx.library.value("used-subjects")
+        if isinstance(raw_used, list):
+            stored_used = [str(x) for x in raw_used]
+    used_fold = {u.casefold() for u in stored_used}
+    with ctx.step(
+        "choose-subjects",
+        inputs={"count": n, "run_id": ctx.run_id, "as_of": date.today().isoformat()},
+    ) as step:
         if not step.cached:
             raw = list(agents.research(_research_query(strict=True)))
             pool = _allowlist_filter(raw)
@@ -371,12 +381,6 @@ def prepare(ctx: Context) -> dict:
                         "No research sources matched the science-news allowlist; "
                         "cannot choose subjects."
                     )
-            stored_used: list[str] = []
-            if ctx.library is not None:
-                raw_used = ctx.library.value("used-subjects")
-                if isinstance(raw_used, list):
-                    stored_used = [str(x) for x in raw_used]
-            used = set(stored_used)
             prompt_pool = pool[:_POOL_PROMPT_LIMIT]
             pool_lines: list[str] = []
             for s in prompt_pool:
@@ -384,7 +388,7 @@ def prepare(ctx: Context) -> dict:
                 snippet = str(s.get("snippet", ""))[:_POOL_TEXT_SNIPPET_MAX]
                 pool_lines.append(f"- {title}: {snippet}")
             pool_text = "\n".join(pool_lines)
-            used_text = ", ".join(sorted(used)) if used else "(none)"
+            used_text = ", ".join(sorted(stored_used)) if stored_used else "(none)"
             picker_prompt = "\n".join(
                 [
                     "Rank and select the most captivating science-news subjects for short "
@@ -408,7 +412,12 @@ def prepare(ctx: Context) -> dict:
             picked = llm_result.get("subjects", [])
             if not isinstance(picked, list):
                 picked = []
-            chosen = _finalize_subject_list(picked, pool, used, n)
+            chosen = _finalize_subject_list(picked, pool, used_fold, n)
+            if len(chosen) < n:
+                raise RuntimeError(
+                    f"only {len(chosen)} fresh on-allowlist subjects available for {n} videos; "
+                    "cannot satisfy video count."
+                )
             if ctx.library is not None:
                 merged: list[str] = []
                 seen_merge: set[str] = set()
@@ -425,8 +434,9 @@ def prepare(ctx: Context) -> dict:
                     kind="value",
                 )
             sources_map = _build_sources_map(chosen, pool)
-            step.set(chosen)
-    return {"subjects": step.value, "sources": sources_map}
+            step.set({"subjects": chosen, "sources": sources_map})
+        result = step.value
+    return {"subjects": result["subjects"], "sources": result["sources"]}
 
 
 def run(ctx: Context) -> Result:
