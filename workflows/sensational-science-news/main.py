@@ -1,6 +1,7 @@
 import json
 import posixpath
 import re
+import shutil
 from datetime import date
 from html import escape
 from urllib.parse import unquote, urlsplit
@@ -427,6 +428,47 @@ def _caption(script: str) -> str:
     return stripped[:120] if stripped else "Science news"
 
 
+def _sanitize_source_urls(urls) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        s = str(url).strip()
+        parsed = urlsplit(s)
+        if parsed.scheme not in ("http", "https"):
+            continue
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
+def _video_description(article_urls: list[str], image_urls: list[str]) -> str:
+    articles = _sanitize_source_urls(article_urls)
+    images = _sanitize_source_urls(image_urls)
+    sections: list[str] = []
+    if articles:
+        sections.append("Sources:\n" + "\n".join(f"- {u}" for u in articles))
+    if images:
+        sections.append("Image sources:\n" + "\n".join(f"- {u}" for u in images))
+    return "\n\n".join(sections)
+
+
+def _select_music(ctx) -> str | None:
+    if ctx.library is None:
+        return None
+    assets = [a for a in ctx.library.find(status="active") if getattr(a, "kind", None) == "music"]
+    if not assets:
+        return None
+    asset = assets[0]
+    src = ctx.library.path(asset.id)
+    if src is None:
+        return None
+    dest = ctx.paths.artifacts / f"music{src.suffix}"
+    shutil.copyfile(src, dest)
+    return f"artifacts/music{src.suffix}"
+
+
 def _beats(duration_s: float) -> list[dict]:
     n = max(1, round(duration_s / _BEAT_S))
     beats: list[dict] = []
@@ -444,6 +486,7 @@ def _source_visual_bed(ctx: Context, *, subject: str, beats: list[dict]) -> dict
     clip_indices: set[int] = {0}
     if len(beats) >= 4:
         clip_indices.add(len(beats) - 1)
+    clip_indices = set(sorted(clip_indices)[:_MAX_CLIPS])
     used_urls: set[str] = set()
     source_urls: list[str] = []
     assets: list[dict] = []
@@ -652,9 +695,18 @@ def run(ctx: Context) -> Result:
     visual = step.value
 
     captions = media.graphics.captions(speech["audio"], speech["timings"], style="bold")
-    final = media.finalize(visual, audio=speech["audio"], captions=captions)
+    music_rel = _select_music(ctx)
+    narration_audio = speech["audio"]
+    audio = (
+        media.edit.mix(narration_audio, music=music_rel, duck=True)
+        if music_rel
+        else narration_audio
+    )
+    final = media.finalize(visual, audio=audio, captions=captions)
+    article_urls = [str(s.get("url", "")) for s in sources]
+    description = _video_description(article_urls, bed["source_urls"])
     return Result(
         video=ctx.video_dir / final,
         caption=_caption(narration),
-        description="",
+        description=description,
     )
