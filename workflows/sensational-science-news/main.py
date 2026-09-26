@@ -25,6 +25,9 @@ _MAX_CLIPS = 2
 _CLIP_DURATION_S = 5.0
 _IMAGE_MODEL = "google/gemini-3.1-flash-image"
 _CLIP_MODEL = "byteplus/seedance-2.5"
+_WORDS_PER_SEC = 2.5
+_IMAGE_METER = "google"
+_CLIP_METER = "byteplus"
 _WEB_SEARCH_LIMIT = 6
 
 _USED_SUBJECTS_CAP = 500
@@ -433,6 +436,8 @@ def _sanitize_source_urls(urls) -> list[str]:
     seen: set[str] = set()
     for url in urls:
         s = str(url).strip()
+        if not s.isprintable():
+            continue
         parsed = urlsplit(s)
         if parsed.scheme not in ("http", "https"):
             continue
@@ -467,6 +472,18 @@ def _select_music(ctx) -> str | None:
     dest = ctx.paths.artifacts / f"music{src.suffix}"
     shutil.copyfile(src, dest)
     return f"artifacts/music{src.suffix}"
+
+
+def _estimate_bed_cost(ctx, narration: str) -> float:
+    words = len(narration.split())
+    duration = words / _WORDS_PER_SEC
+    beats = max(1, round(duration / _BEAT_S))
+    clips = min(_MAX_CLIPS, 2 if beats >= 4 else 1)
+    statics = max(0, beats - clips)
+    still_price = ctx.budget_estimate(_IMAGE_METER) or 0.0
+    clip_price = ctx.budget_estimate(_CLIP_METER) or 0.0
+    # Conservative worst case: every static beat is priced as a paid AI still.
+    return round(statics * still_price + clips * clip_price, 2)
 
 
 def _beats(duration_s: float) -> list[dict]:
@@ -663,7 +680,7 @@ def run(ctx: Context) -> Result:
     script = step.value
     narration = _narration_text(script)
 
-    estimated_cost = 0.0
+    estimated_cost = _estimate_bed_cost(ctx, narration)
     ctx.gate(
         "approve-plan",
         prompt=f"Approve the plan for video {ctx.video_index}: {subject!r}?",
