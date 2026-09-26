@@ -12,12 +12,18 @@ aspect = "9:16"
 fps = 30
 safe_zone = "tiktok"
 
-# OpenRouter powers the LLM steps; SerpApi is used for paid web images from Stage D onward.
-# Local speech (Chatterbox/WhisperX) needs no key.
+# OpenRouter powers the LLM steps (research, script, subject-picking, image-relevance vision);
+# Google (Gemini) generates the AI stills; BytePlus (Seedance) generates the short clips. Commons
+# web images are keyless, and local speech (Chatterbox/WhisperX) + render/mix need no key. (SerpApi
+# paid web images are a deferred, off-by-default enhancement, so no SerpApi key is required.)
 [[requires_keys]]
 name = "OPENROUTER_API_KEY"
 label = "OpenRouter"
 
 [[requires_keys]]
-name = "SERPAPI_API_KEY"
-label = "SerpApi"
+name = "GOOGLE_SA_JSON"
+label = "Google service-account JSON (Gemini image)"
+
+[[requires_keys]]
+name = "BYTEPLUS_ARK_API_KEY"
+label = "BytePlus ModelArk (Seedance video)"
