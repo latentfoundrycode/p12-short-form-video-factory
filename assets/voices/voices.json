@@ -1,0 +1,36 @@
+{
+  "note": "Bundled preset narration voices for media.speech voice cloning. All clips are U.S. public-domain LibriVox recordings (no attribution required); provenance is recorded for transparency. The owner adds their own voices via the Library tab (voice-clone-by-upload). A 2nd male preset is an open slot (see PROJECT_STATUS / owner).",
+  "default": "warm-female",
+  "presets": [
+    {
+      "id": "warm-female",
+      "file": "warm-female.wav",
+      "label": "Warm female narrator",
+      "gender": "female",
+      "reader": "Karen Savage",
+      "work": "Pride and Prejudice (LibriVox version 3)",
+      "source": "https://archive.org/details/pride_prejudice_krs_librivox",
+      "license": "Public Domain (US) - http://creativecommons.org/licenses/publicdomain/"
+    },
+    {
+      "id": "literary-female",
+      "file": "literary-female.wav",
+      "label": "Literary female narrator",
+      "gender": "female",
+      "reader": "Elizabeth Klett",
+      "work": "Jane Eyre (LibriVox version 3)",
+      "source": "https://archive.org/details/jane_eyre_ver03_0809_librivox",
+      "license": "Public Domain (US) - http://creativecommons.org/licenses/publicdomain/"
+    },
+    {
+      "id": "classic-male",
+      "file": "classic-male.wav",
+      "label": "Classic male narrator",
+      "gender": "male",
+      "reader": "LibriVox solo reader",
+      "work": "The Adventures of Sherlock Holmes (LibriVox version 5)",
+      "source": "https://archive.org/details/the_adventures_of_sherlock_holmes_v5_1904_librivox",
+      "license": "Public Domain (US) - http://creativecommons.org/publicdomain/mark/1.0/"
+    }
+  ]
+}

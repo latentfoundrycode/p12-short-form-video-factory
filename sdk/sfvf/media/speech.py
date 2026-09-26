@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import threading
 from pathlib import Path
 from typing import Any, TypedDict
 
-from .._ffmpeg import encode_m4a, probe, silent_audio
+from .._ffmpeg import _binary, _run, encode_m4a, probe, silent_audio
 from .._runtime import current_context
+from ..context import Context
 
 _RATE = 2.5  # words per second; dry-run duration is deterministic.
 
@@ -15,6 +17,8 @@ _tts_model: Any | None = None
 
 _align_lock = threading.Lock()
 _align_bundle: tuple[Any, Any, str] | None = None
+
+_SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 class WordTiming(TypedDict):
@@ -29,7 +33,70 @@ class Speech(TypedDict):
     duration: float
 
 
-def _synthesize(text: str, *, voice: str, model: str, dest: Path) -> None:
+def _voices_root() -> Path:
+    return Path(__file__).resolve().parents[3] / "assets" / "voices"
+
+
+def _default_voice_clip() -> Path:
+    return _voices_root() / "default.wav"
+
+
+def _safe_segment(segment: str) -> bool:
+    if segment in (".", ".."):
+        return False
+    if "/" in segment or "\\" in segment or ".." in segment:
+        return False
+    return _SAFE_SEGMENT.fullmatch(segment) is not None
+
+
+def _bundled_preset_clip(stem: str) -> Path | None:
+    if not _safe_segment(stem):
+        return None
+    path = _voices_root() / f"{stem}.wav"
+    if path.is_file():
+        return path
+    return None
+
+
+def _resolve_voice(ctx: Context, voice: str) -> Path:
+    default = _default_voice_clip()
+    if voice == "":
+        return default
+    if voice.startswith("preset:"):
+        stem = voice[len("preset:") :]
+        preset = _bundled_preset_clip(stem)
+        return preset if preset is not None else default
+    library = ctx.library
+    if library is not None:
+        owner_path = library.path(voice)
+        if owner_path is not None and owner_path.is_file():
+            return owner_path
+    preset = _bundled_preset_clip(voice)
+    return preset if preset is not None else default
+
+
+def _denoise(src: Path, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    _run(
+        [
+            _binary("ffmpeg"),
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(src),
+            "-af",
+            "highpass=f=70,afftdn=nr=12:nf=-30",
+            "-ac",
+            "1",
+            "-ar",
+            "24000",
+            str(dest),
+        ]
+    )
+
+
+def _synthesize(text: str, *, voice_clip: Path, dest: Path) -> None:
     """Synthesize `text` to a wav file at `dest` on the GPU (Chatterbox).
 
     SEAM — lazy-imports Chatterbox so CI (which patches this) never loads torch. Builder implements.
@@ -44,9 +111,6 @@ def _synthesize(text: str, *, voice: str, model: str, dest: Path) -> None:
             "'speech' extra: pip install 'sfvf[speech]'."
         ) from exc
 
-    # First cut: default Chatterbox voice/model. `voice`/`model` accepted for later mapping.
-    del voice, model
-
     global _tts_model
     dest.parent.mkdir(parents=True, exist_ok=True)
     with _tts_lock:
@@ -54,7 +118,7 @@ def _synthesize(text: str, *, voice: str, model: str, dest: Path) -> None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
             _tts_model = ChatterboxTTS.from_pretrained(device=device)
         # generate mutates instance state; hold the lock so ctx.map concurrency cannot race.
-        wav = _tts_model.generate(text).detach().cpu()
+        wav = _tts_model.generate(text, audio_prompt_path=str(voice_clip)).detach().cpu()
         sample_rate = _tts_model.sr
     torchaudio.save(str(dest), wav, sample_rate)
 
@@ -132,11 +196,15 @@ def speak(text: str, *, voice: str, model: str) -> Speech:
         )
 
     ctx.paths.artifacts.mkdir(parents=True, exist_ok=True)
-    sha = hashlib.sha256(f"{voice}|{model}|{text}".encode()).hexdigest()[:8]
-    wav = ctx.paths.artifacts / f"narration-{sha}.wav"
+    clip = _resolve_voice(ctx, voice)
+    clip_hash = hashlib.sha256(clip.read_bytes()).hexdigest()
+    sha = hashlib.sha256(f"{clip_hash}|{model}|{text}".encode()).hexdigest()[:8]
+    raw_wav = ctx.paths.artifacts / f"narration-{sha}-raw.wav"
+    clean_wav = ctx.paths.artifacts / f"narration-{sha}.wav"
     dest = ctx.paths.artifacts / f"narration-{sha}.m4a"
-    _synthesize(text, voice=voice, model=model, dest=wav)
-    encode_m4a(wav, dest)
+    _synthesize(text, voice_clip=clip, dest=raw_wav)
+    _denoise(raw_wav, clean_wav)
+    encode_m4a(clean_wav, dest)
     timings = _align(text, dest)
     if text.split() and not timings:
         raise RuntimeError(
