@@ -124,6 +124,14 @@ class ContextFile(_ContextModel):
         default=False,
         description="True when scheduled-run gates should resolve without waiting for a user.",
     )
+    per_video_budget: float | None = Field(
+        default=None,
+        description="Owner's per-video cost cap; None means no per-video limit.",
+    )
+    voice: str = Field(
+        default="",
+        description="Narration voice id; empty string means the default voice.",
+    )
     step_concurrency: int = Field(
         default=1,
         description="User's parallel-steps setting for ctx.map.",
@@ -560,6 +568,8 @@ class Context:
         self.video_count = file.video_count
         self.dry_run = file.dry_run
         self.gates_auto = file.gates_auto
+        self.per_video_budget = file.per_video_budget
+        self.voice = file.voice
         self._gate_counts: dict[str, int] = {}
         self.step_concurrency = file.step_concurrency
         self.video_dir = file.paths.video
@@ -653,6 +663,7 @@ class Context:
             unit=unit,
             estimate=reserve_amount,
             workflow_id=self.workflow_id,
+            video_index=self.video_index,
         )
 
     def _budget_reconcile(
@@ -715,6 +726,7 @@ class Context:
             cfg.ledger_path,
             ceilings=Ceilings(per_run=cfg.per_run, per_day=cfg.per_day),
             kill_switch_path=cfg.kill_switch_path,
+            per_video_ceiling=self.per_video_budget,
         )
 
     def emit(self, event: dict[str, Any]) -> None:

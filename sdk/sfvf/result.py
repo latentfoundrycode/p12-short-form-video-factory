@@ -13,3 +13,4 @@ class Result:
     cover_frame_s: float = 1.0
     notes: str | None = None
     extra: dict[str, Any] | None = None
+    description: str = ""

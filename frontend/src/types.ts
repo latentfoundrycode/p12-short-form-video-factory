@@ -75,6 +75,12 @@ export type LibraryWorkflow = {
   label: string;
 };
 
+export type Voice = {
+  id: string;
+  label: string;
+  source: string;
+};
+
 export type LearningRow = {
   workflow_id: string;
   name: string | null;
@@ -201,6 +207,9 @@ export type LaunchBody = {
   params: Record<string, unknown>;
   video_count: number;
   concurrency: number;
+  gates_auto?: boolean;
+  per_video_budget?: number;
+  voice?: string;
 };
 
 export type StartRunOk = { run_id: string };

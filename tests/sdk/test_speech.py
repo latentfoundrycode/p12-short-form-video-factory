@@ -116,7 +116,7 @@ def test_speak_real_mode_assembles_speech_from_seams(
     video_dir = tmp_path / "01"
     video_dir.mkdir()
 
-    def fake_synthesize(text: str, *, voice: str, model: str, dest: Path) -> None:
+    def fake_synthesize(text: str, *, voice_clip: Path, dest: Path) -> None:
         _write_wav(dest, seconds=1.0)
 
     monkeypatch.setattr(media.speech, "_synthesize", fake_synthesize)
@@ -143,16 +143,19 @@ def test_speak_real_mode_assembles_speech_from_seams(
     assert speech["timings"] == _CANNED
 
 
-def test_speak_real_mode_passes_text_voice_model_to_seams(
+def test_speak_real_mode_passes_text_and_resolved_clip_to_seams(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # B4: speak() resolves the chosen `voice` to a reference CLIP and hands that to the synth seam
+    # (never a raw id, never None). An unknown voice id resolves to the bundled default clip, so the
+    # synth seam always receives an explicit reference (the isolation fix: no prompt-less call).
     video_dir = tmp_path / "01"
     video_dir.mkdir()
     synth_calls: list[dict[str, object]] = []
     align_calls: list[tuple[str, str]] = []
 
-    def fake_synthesize(text: str, *, voice: str, model: str, dest: Path) -> None:
-        synth_calls.append({"text": text, "voice": voice, "model": model})
+    def fake_synthesize(text: str, *, voice_clip: Path, dest: Path) -> None:
+        synth_calls.append({"text": text, "voice_clip": Path(voice_clip)})
         _write_wav(dest, seconds=0.5)
 
     def fake_align(text: str, audio: Path) -> list[WordTiming]:
@@ -168,7 +171,11 @@ def test_speak_real_mode_passes_text_voice_model_to_seams(
     finally:
         reset_active(token)
 
-    assert synth_calls == [{"text": "the script text", "voice": "narrator", "model": "local-tts"}]
+    assert len(synth_calls) == 1
+    assert synth_calls[0]["text"] == "the script text"
+    clip = synth_calls[0]["voice_clip"]
+    assert isinstance(clip, Path) and clip.is_file()  # an explicit, existing reference clip
+    assert clip.name == "default.wav"  # unknown "narrator" -> bundled default
     # alignment runs on the delivered .m4a, so timings and the probed duration describe one file
     assert len(align_calls) == 1
     assert align_calls[0][0] == "the script text"
@@ -183,7 +190,7 @@ def test_speak_real_mode_fails_closed_on_empty_timings(
     video_dir = tmp_path / "01"
     video_dir.mkdir()
 
-    def fake_synthesize(text: str, *, voice: str, model: str, dest: Path) -> None:
+    def fake_synthesize(text: str, *, voice_clip: Path, dest: Path) -> None:
         _write_wav(dest, seconds=0.5)
 
     monkeypatch.setattr(media.speech, "_synthesize", fake_synthesize)

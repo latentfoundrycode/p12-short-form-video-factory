@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import mimetypes
+import re
 import shutil
 import subprocess
 import threading
@@ -10,11 +12,12 @@ import time
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sfvf.context import BudgetConfig
 from sfvf.providers import UnknownModelError, provider_configured, resolve
 
@@ -56,6 +59,8 @@ _CLEARABLE = frozenset({"failed", "stopped", "stopped-budget"})
 _REQUEST_WAIT_SECONDS = 2.0
 _REQUEST_POLL_SECONDS = 0.05
 _LIVE_POLL_SECONDS = 0.25
+MAX_PER_VIDEO_BUDGET = 1000.0
+_VOICE_ID = re.compile(r"^(preset:)?[A-Za-z0-9._-]+$")
 
 # Known limitation: POST /runs admission waits through ensure_env (venv setup).
 # An existing venv is fast; a first-time build makes the response slow. Env setup
@@ -84,6 +89,52 @@ class LaunchBody(BaseModel):
     params: dict[str, Any]
     video_count: int = Field(ge=1)
     concurrency: int = Field(ge=1)
+    gates_auto: bool = False
+    per_video_budget: float | None = None
+    voice: str = ""
+
+    @field_validator("per_video_budget")
+    @classmethod
+    def _per_video_budget_in_range(cls, value: float | None) -> float | None:
+        if value is None:
+            return None
+        if not math.isfinite(value):
+            raise ValueError("per_video_budget must be a finite number")
+        if value <= 0 or value > MAX_PER_VIDEO_BUDGET:
+            raise ValueError(
+                f"per_video_budget must be > 0 and <= {MAX_PER_VIDEO_BUDGET:g} when set"
+            )
+        return value
+
+    @field_validator("voice")
+    @classmethod
+    def _voice_path_safe(cls, value: str) -> str:
+        if not value:
+            return value
+        if ".." in value or _VOICE_ID.fullmatch(value) is None:
+            raise ValueError("voice must be empty or a path-safe id (optional preset: prefix)")
+        token = value.removeprefix("preset:")
+        if token and re.fullmatch(r"\.+", token):
+            raise ValueError("voice must be empty or a path-safe id (optional preset: prefix)")
+        return value
+
+
+async def _parse_launch_body(request: Request) -> LaunchBody:
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid JSON body") from None
+    if isinstance(payload, dict):
+        budget = payload.get("per_video_budget")
+        if isinstance(budget, float) and not math.isfinite(budget):
+            raise HTTPException(
+                status_code=422,
+                detail="per_video_budget must be a finite number",
+            )
+    try:
+        return LaunchBody.model_validate(payload)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from None
 
 
 class LaunchAcceptedOut(BaseModel):
@@ -251,6 +302,8 @@ def admit_run(
     concurrency: int,
     dry_run: bool = False,
     gates_auto: bool = False,
+    per_video_budget: float | None = None,
+    voice: str = "",
     runs_dir: Path,
     ensure_env: EnsureEnv = default_ensure_env,
     popen: PopenFn = subprocess.Popen,
@@ -281,6 +334,8 @@ def admit_run(
                     popen=popen,
                     dry_run=dry_run,
                     gates_auto=gates_auto,
+                    per_video_budget=per_video_budget,
+                    voice=voice,
                     on_started=on_started,
                     secrets=secrets,
                     budget=budget,
@@ -364,7 +419,11 @@ def _is_well_formed_gate_event(source: object, event: object) -> bool:
 
 
 @router.post("/workflows/{workflow_id}/runs")
-def launch_run(workflow_id: str, body: LaunchBody, request: Request) -> JSONResponse:
+def launch_run(
+    workflow_id: str,
+    request: Request,
+    body: Annotated[LaunchBody, Depends(_parse_launch_body)],
+) -> JSONResponse:
     entry = _require_workflow(request, workflow_id)
     if any(problem.severity == "error" for problem in entry.problems):
         raise HTTPException(status_code=422, detail="workflow is invalid")
@@ -376,6 +435,9 @@ def launch_run(workflow_id: str, body: LaunchBody, request: Request) -> JSONResp
         params=body.params,
         video_count=body.video_count,
         concurrency=body.concurrency,
+        gates_auto=body.gates_auto,
+        per_video_budget=body.per_video_budget,
+        voice=body.voice,
         runs_dir=_runs_dir(request),
         ensure_env=_ensure_env(request),
         popen=_popen(request),

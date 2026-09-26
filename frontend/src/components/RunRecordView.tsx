@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { fetchRun, fetchRunFiles, runVideoDirectory } from "../api";
 import { statusPillClass } from "../statusPill";
 import { QualityPanel } from "./QualityPanel";
@@ -452,6 +452,23 @@ export function RunStatusPanel({ run, stage, actions }: RunStatusPanelProps) {
   );
 }
 
+export function VideoDescription({ video }: { video: VideoRecord }) {
+  const raw = video.result?.description;
+  if (typeof raw !== "string" || raw.length === 0) {
+    return null;
+  }
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <span className="eyebrow">Description · #{video.index}</span>
+      </div>
+      <div className="panel-body">
+        <p className="video-description-text">{raw}</p>
+      </div>
+    </div>
+  );
+}
+
 function SelfReviewPanel({ video }: { video: VideoRecord }) {
   const review = parseSelfReview(video.self_review);
   return (
@@ -758,7 +775,12 @@ export function RunRecordView({
               </div>
             </div>
           ) : (
-            records.map((video) => <SelfReviewPanel key={video.index} video={video} />)
+            records.map((video) => (
+              <Fragment key={video.index}>
+                <VideoDescription video={video} />
+                <SelfReviewPanel video={video} />
+              </Fragment>
+            ))
           )}
           {filesError ? (
             <div className="panel">

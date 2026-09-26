@@ -173,6 +173,8 @@ def _result_event(result: Result, ctx: Context) -> dict[str, Any]:
         event["notes"] = result.notes
     if result.extra is not None:
         event["extra"] = result.extra
+    if result.description:
+        event["description"] = result.description
     return event
 
 

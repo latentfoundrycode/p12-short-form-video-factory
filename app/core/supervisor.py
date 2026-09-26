@@ -95,6 +95,8 @@ class _ContextWiring:
     step_concurrency: int
     secrets: dict[str, str]
     gates_auto: bool = False
+    per_video_budget: float | None = None
+    voice: str = ""
     budget: BudgetConfig | None = None
     disabled_web_tiers: list[str] = field(default_factory=list)
     # Library namespace root + declared facets, computed once per run and written into every
@@ -278,6 +280,8 @@ def _make_context(
         video_count=wiring.video_count,
         dry_run=wiring.dry_run,
         gates_auto=wiring.gates_auto,
+        per_video_budget=wiring.per_video_budget,
+        voice=wiring.voice,
         step_concurrency=wiring.step_concurrency,
         settings=params,
         paths=ContextPaths(
@@ -438,6 +442,8 @@ def run_request(
     library_dir: Path | None = None,
     dry_run: bool = False,
     gates_auto: bool = False,
+    per_video_budget: float | None = None,
+    voice: str = "",
     step_concurrency: int = 1,
     secrets: Mapping[str, str] | None = None,
     budget: BudgetConfig | None = None,
@@ -491,6 +497,8 @@ def run_request(
             workflow_dir=workflow_dir,
             dry_run=dry_run,
             gates_auto=gates_auto,
+            per_video_budget=per_video_budget,
+            voice=voice,
             step_concurrency=step_concurrency,
             secrets=injected,
             budget=budget,
