@@ -111,7 +111,24 @@ def _validate(settings: AppSettings) -> None:
             raise ValueError(f"{name} must be an int >= 1")
 
 
+_INT_UPDATE_FIELDS = frozenset(
+    {"default_concurrency", "default_step_concurrency", "cache_max_bytes"}
+)
+
+
+def _validate_update_fields(fields: dict[str, object]) -> None:
+    for name, value in fields.items():
+        if isinstance(value, bool):
+            raise ValueError(f"{name} must not be a bool")
+        if name in _INT_UPDATE_FIELDS:
+            if type(value) is not int:
+                raise ValueError(f"{name} must be an int >= 1")
+        elif name == "silence_limit_seconds" and not isinstance(value, int | float):
+            raise ValueError("silence_limit_seconds must be finite and > 0")
+
+
 def update(**fields: float | int) -> AppSettings:
+    _validate_update_fields(dict(fields))
     current = load()
     merged = AppSettings(
         silence_limit_seconds=float(

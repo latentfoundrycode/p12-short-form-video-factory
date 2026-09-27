@@ -41,6 +41,19 @@ class DefaultsUpdateIn(BaseModel):
     default_step_concurrency: int | None = None
     cache_max_bytes: int | None = None
 
+    @field_validator(
+        "silence_limit_seconds",
+        "default_concurrency",
+        "default_step_concurrency",
+        "cache_max_bytes",
+        mode="before",
+    )
+    @classmethod
+    def reject_bool(cls, v: object) -> object:
+        if isinstance(v, bool):
+            raise ValueError("bool values are not allowed")
+        return v
+
 
 class SecretValueIn(BaseModel):
     value: SecretStr
