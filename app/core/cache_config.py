@@ -1,10 +1,11 @@
 """Configured maximum size of the cheap cache partition (Architecture §5.9, §8.7).
 
 The cheap partition (renders/research) is LRU-evicted once it exceeds this many bytes; the paid
-partition is never evicted, so this ceiling does not apply to it. Read from `SFVF_CACHE_MAX_BYTES`
-(an integer byte count) with a conservative default. A missing, non-integer, or negative value
-falls back to the default rather than failing a run — the cache is derived and eviction is a
-best-effort housekeeping step, not a correctness gate.
+partition is never evicted, so this ceiling does not apply to it. The ceiling resolves with
+precedence env `SFVF_CACHE_MAX_BYTES` (an integer byte count) > the stored global default
+(app.core.app_settings) > a conservative built-in default. A missing, non-integer, or negative env
+value falls through to the stored setting (or the built-in default) rather than failing a run — the
+cache is derived and eviction is a best-effort housekeeping step, not a correctness gate.
 """
 
 from __future__ import annotations
