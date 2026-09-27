@@ -4,7 +4,7 @@ from contextlib import suppress
 from typing import cast
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, SecretStr, field_validator
 from sfvf.providers import PROVIDERS, provider_configured
 
 from app.api.workflows import RegistryHolder, configured_secret_names
@@ -29,12 +29,12 @@ class SettingsOut(BaseModel):
 
 
 class SecretValueIn(BaseModel):
-    value: str
+    value: SecretStr
 
     @field_validator("value")
     @classmethod
-    def non_blank(cls, value: str) -> str:
-        if not value.strip():
+    def non_blank(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
             raise ValueError("value must not be blank")
         return value
 
@@ -55,7 +55,9 @@ def _allowed_secret_names(holder: RegistryHolder) -> set[str]:
 
 
 def _refresh_secrets(request: Request, store: SecretStore) -> None:
-    request.app.state.secrets = dict(store.all())
+    current = request.app.state.secrets
+    current.clear()
+    current.update(store.all())
     registry = _holder(request)
     request.app.state.registry = RegistryHolder(
         registry.workflows_dir,
@@ -97,7 +99,7 @@ def put_secret(name: str, body: SecretValueIn, request: Request) -> dict[str, bo
     if name not in allowed:
         raise HTTPException(status_code=400, detail=f"unknown secret name {name!r}")
     store = _require_writable_store(request)
-    store.set(name, body.value)
+    store.set(name, body.value.get_secret_value().strip())
     _refresh_secrets(request, store)
     provider = next(
         (p for p in PROVIDERS.values() if name in p.secret_names),

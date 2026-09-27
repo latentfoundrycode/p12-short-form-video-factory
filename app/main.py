@@ -71,9 +71,8 @@ def create_app(
 
         @asynccontextmanager
         async def scheduler_lifespan(scheduler_app: FastAPI) -> AsyncIterator[None]:
-            holder: RegistryHolder = scheduler_app.state.registry
-
             def resolve_workflow(workflow_id: str) -> Path | None:
+                holder: RegistryHolder = scheduler_app.state.registry
                 entry = holder.get(workflow_id)
                 if entry is None or any(problem.severity == "error" for problem in entry.problems):
                     return None
