@@ -28,14 +28,14 @@ requirement (the requirement ID is threaded into those tests as increments touch
 | R-016 | The "file" setting type (reference media input) is accepted and rendered as a dedicated file picker in the run form. | requirements document §8.2, §13 | planned | — (accepted in schema and shown as a plain text field; a dedicated file picker is absent) |
 | R-017 | A choice list may be supplied by a named provider source and filled in when the form opens. | requirements document §8.2 | built | tests/api/test_providers.py |
 | R-018 | The chosen provider-supplied value is recorded as a pinned identifier so the run stays reproducible. | requirements document §8.2 | built | tests/api/test_providers.py |
-| R-019 | If the provider cannot be reached, the last-known option list is offered with a note (fallback to manual entry). | requirements document §8.2 | built | tests/api/test_providers.py |
-| R-020 | Numeric settings are validated before the run starts, with the unit shown beside the field. | requirements document §8.2 | built | frontend RunLaunchForm.test.tsx |
+| R-019 | If the provider cannot be reached, the last-known option list is offered with a note (fallback to manual entry). | requirements document §8.2 | planned | — (on fetch failure RunLaunchForm offers manual entry with a note, but no last-known list is retained; app/api/providers.py stores no previous list) |
+| R-020 | Numeric settings are validated before the run starts, with the unit shown beside the field. | requirements document §8.2 | built | frontend/src/components/RunLaunchForm.tsx (unit via controlLabel; validation in collectParams) — a dedicated numeric-validation test is still to be added |
 | R-021 | Decimal values use a point regardless of regional settings. | requirements document §8.2 | planned | — |
 | R-022 | Chassis setting: Number of videos, per Generation Request. | requirements document §8.2 | built | tests/api/test_run_settings_api.py |
 | R-023 | Number of videos is capped where the workflow declares a maximum. | requirements document §8.2, §5.1 | planned | — |
 | R-024 | Chassis setting: Budget, with one line per active meter. | requirements document §8.2, §7.2 | planned | — |
 | R-025 | Chassis setting: Maximum retries (default 3), set per Generation Request. | requirements document §8.2, §9.3 | planned | — |
-| R-026 | Chassis setting: Concurrency (videos produced at the same time); ignored for a sequence workflow. | requirements document §8.2 | built | tests/api/test_run_settings_api.py |
+| R-026 | Chassis setting: Concurrency (videos produced at the same time). | requirements document §8.2 | built | tests/api/test_run_settings_api.py (the "ignored for a sequence workflow" clause is tracked under R-082, planned) |
 | R-027 | Chassis setting: Parallel steps per video (default 1). | requirements document §8.2 | planned | — |
 | R-028 | Chassis setting: Dry run (fake assets, no spending) selectable per run from the form. | requirements document §8.2 | planned | — |
 | R-029 | The run form offers an approval mode (require approval vs autonomous) mapping to gate auto-pass. | requirements document §9.6a; mockup "Run" modal | built | tests/api/test_gate_api.py; tests/core/test_supervisor.py |
@@ -164,7 +164,7 @@ requirement (the requirement ID is threaded into those tests as increments touch
 | R-152 | Still-image generation is behind an adapter; a workflow requiring it cannot start when unavailable. | requirements document §6.5 | built | tests/api/test_admission_model_config.py |
 | R-153 | Video generation via Higgsfield (OAuth MCP, credits meter). | requirements document §6.1, §7.1 | dropped — owner 2026-09-27 | — (superseded by BytePlus Seedance + direct APIs/aggregator; docs/INVENTORY.md Decisions) |
 | R-154 | Speech via ElevenLabs with character-level timings grouped into word timings for captions. | requirements document §6.1 | dropped — owner 2026-09-27 | — (superseded by local Chatterbox TTS + WhisperX; the caption capability exists via the local path) |
-| R-155 | SFVF does not create voices; voices are created in the provider and referenced by identifier. | requirements document §6.6, §3.2 | built | tests/api/test_library_voices.py |
+| R-155 | SFVF does not create voices; a voice is a bundled preset or a user-provided reference clip, referenced by identifier. | requirements document §6.6, §3.2 | built | tests/api/test_library_voices.py (non-goal honoured via bundled `preset:` ids + library voice assets cloned per call; no provider voice is created — the "created in the provider" mechanism is superseded like R-154) |
 | R-156 | A `sfvf` launch command starts the app and serves the SPA and API as one process. | requirements document §3.1; docs/DELIVERY.md | built | tests/core/test_serve.py; tests/core/test_no_console_window.py |
 | R-157 | A per-user Windows installer installs, upgrades in place (keeping data), and uninstalls. | docs/DELIVERY.md; docs/INVENTORY.md (Windows installer) | built | scripts/install-check.ps1 |
 | R-158 | Generation Requests are refused/warned based on disk space (5 GB refuse / 20 GB warn) as a hard chassis rule. | requirements document §12, §8.7 | planned | — |
@@ -174,3 +174,4 @@ requirement (the requirement ID is threaded into those tests as increments touch
 | R-162 | Planned workflow: reference-driven (analyse an existing short's pacing/hook/structure, produce differentiated concepts). | requirements document §13 | planned | — |
 | R-163 | Publishing/uploading is deliberately excluded; SFVF only produces files. | requirements document §3.2 | built | (by omission — no upload path exists) |
 | R-164 | A learning run that errors reverts entirely to its pre-run state (no files modified) and shows a red outline with a pop-up; errors the program can handle are silent. | requirements document §8.5 | planned | — (no revert path in app/learning) |
+| R-165 | Learning cards use the same outline colours as the Main tab: yellow while a learning run is in progress, green while it awaits review, cleared once the user accepts or rejects. | requirements document §8.5 | planned | — (LearningView tracks running/ready/error as text, draws no outline) |
