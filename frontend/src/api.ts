@@ -7,6 +7,7 @@ import type {
   LibraryAsset,
   LibraryGrant,
   LibraryWorkflow,
+  EstimateOut,
   LaunchBody,
   PendingGate,
   ProviderOption,
@@ -260,6 +261,25 @@ export async function submitGate(
     },
   );
   if (!response.ok) throw new Error(`Could not submit decision (${response.status})`);
+}
+
+export async function fetchEstimate(
+  workflowId: string,
+  params: Record<string, unknown>,
+  videoCount: number,
+): Promise<EstimateOut> {
+  const response = await fetch(
+    `/api/workflows/${encodeURIComponent(workflowId)}/estimate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ params, video_count: videoCount }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Could not load cost estimate (${response.status})`);
+  }
+  return (await response.json()) as EstimateOut;
 }
 
 export async function startRun(id: string, body: LaunchBody): Promise<StartRunResult> {

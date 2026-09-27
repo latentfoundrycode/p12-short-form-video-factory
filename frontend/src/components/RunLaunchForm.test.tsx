@@ -26,15 +26,26 @@ vi.mock("../api", () => ({
   fetchProviderOptions: vi.fn(),
   fetchVoices: vi.fn(),
   fetchSettings: vi.fn(),
+  fetchEstimate: vi.fn(),
 }));
 
 // Imported after the mock is registered; typed via vi.mocked below.
-import { fetchProviderOptions, fetchSettings, fetchVoices, startRun } from "../api";
+import { fetchEstimate, fetchProviderOptions, fetchSettings, fetchVoices, startRun } from "../api";
 
 const mockFetchOptions = vi.mocked(fetchProviderOptions);
 const mockStartRun = vi.mocked(startRun);
 const mockFetchVoices = vi.mocked(fetchVoices);
 const mockFetchSettings = vi.mocked(fetchSettings);
+const mockFetchEstimate = vi.mocked(fetchEstimate);
+
+function estimate(amount: number, confidence = "matched", matches = 2) {
+  return {
+    per_meter: { openrouter: { amount, unit: "usd", kind: "fiat" } },
+    confidence,
+    matches,
+    video_count: 1,
+  };
+}
 
 function runDefaults(defaultConcurrency: number) {
   return {
@@ -59,6 +70,8 @@ beforeEach(() => {
   ]);
   // The form also seeds its concurrency from the stored global default (F1b/F1c).
   mockFetchSettings.mockResolvedValue(runDefaults(1) as never);
+  // The form shows a pre-launch cost estimate (F3-3).
+  mockFetchEstimate.mockResolvedValue(estimate(0.2) as never);
 });
 
 afterEach(() => {
@@ -319,5 +332,128 @@ describe("RunLaunchForm concurrency default seeding", () => {
     );
     const concurrency = await screen.findByLabelText("Concurrency");
     await waitFor(() => expect((concurrency as HTMLInputElement).value).toBe("4"));
+  });
+});
+
+
+describe("RunLaunchForm pre-launch cost estimate (F3-3)", () => {
+  it("fetches and shows the per-meter estimate with unit and confidence", async () => {
+    mockFetchOptions.mockResolvedValue([]);
+    mockFetchEstimate.mockResolvedValue(estimate(0.42, "matched", 3) as never);
+    render(
+      <RunLaunchForm
+        workflowId="wf"
+        workflowName="WF"
+        params={[]}
+        onStarted={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    await waitFor(() => expect(mockFetchEstimate).toHaveBeenCalled());
+    // the estimate is visible: amount, meter, and unit
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("0.42");
+    });
+    expect(document.body.textContent).toContain("usd");
+  });
+
+  it("re-estimates when the video count changes", async () => {
+    mockFetchOptions.mockResolvedValue([]);
+    render(
+      <RunLaunchForm
+        workflowId="wf"
+        workflowName="WF"
+        params={[]}
+        onStarted={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    await waitFor(() => expect(mockFetchEstimate).toHaveBeenCalled());
+    const before = mockFetchEstimate.mock.calls.length;
+    const videoCount = screen.getByLabelText(/number of videos|video count|videos/i);
+    await userEvent.clear(videoCount);
+    await userEvent.type(videoCount, "3");
+    await waitFor(() => {
+      expect(mockFetchEstimate.mock.calls.length).toBeGreaterThan(before);
+      const last = mockFetchEstimate.mock.calls.at(-1);
+      expect(last?.[2]).toBe(3);
+    });
+  });
+});
+
+
+function param(overrides: Partial<Param>): Param {
+  return {
+    key: "k",
+    type: "text",
+    label: "K",
+    required: false,
+    default: null,
+    help: null,
+    affects_cost: false,
+    min: null,
+    max: null,
+    step: null,
+    options: null,
+    options_from: null,
+    placeholder: null,
+    unit: null,
+    ...overrides,
+  };
+}
+
+describe("RunLaunchForm estimate is cost-scoped and failure-tolerant (F3-3-fix)", () => {
+  it("does not re-estimate on a non-cost-affecting field edit", async () => {
+    mockFetchOptions.mockResolvedValue([]);
+    render(
+      <RunLaunchForm
+        workflowId="wf"
+        workflowName="WF"
+        params={[param({ key: "topic", label: "Topic", type: "text", affects_cost: false })]}
+        onStarted={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    await waitFor(() => expect(mockFetchEstimate).toHaveBeenCalled());
+    const before = mockFetchEstimate.mock.calls.length;
+    await userEvent.type(screen.getByLabelText(/Topic/), "cats");
+    await new Promise((r) => setTimeout(r, 400));
+    expect(mockFetchEstimate.mock.calls.length).toBe(before);
+  });
+
+  it("estimates the cost-affecting fields even while a required field is empty", async () => {
+    mockFetchOptions.mockResolvedValue([]);
+    render(
+      <RunLaunchForm
+        workflowId="wf"
+        workflowName="WF"
+        params={[
+          param({ key: "duration_s", label: "Duration", type: "number", default: 30, affects_cost: true }),
+          param({ key: "topic", label: "Topic", type: "text", required: true, affects_cost: false }),
+        ]}
+        onStarted={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    // topic is required and empty (form invalid), but the estimate must still carry duration_s
+    await waitFor(() => expect(mockFetchEstimate).toHaveBeenCalled());
+    const call = mockFetchEstimate.mock.calls.at(-1);
+    expect(call?.[1]).toMatchObject({ duration_s: 30 });
+  });
+
+  it("on a failed estimate shows only the error, not the empty message", async () => {
+    mockFetchOptions.mockResolvedValue([]);
+    mockFetchEstimate.mockRejectedValue(new Error("boom"));
+    render(
+      <RunLaunchForm
+        workflowId="wf"
+        workflowName="WF"
+        params={[]}
+        onStarted={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    await waitFor(() => expect(document.body.textContent).toMatch(/couldn.?t load|could not load/i));
+    expect(document.body.textContent).not.toMatch(/no estimate yet|no history/i);
   });
 });
