@@ -25,7 +25,9 @@ from app.api.workflows import RegistryHolder
 from app.core import app_settings
 from app.core.env import EnvBlocked
 from app.core.env import ensure_env as default_ensure_env
+from app.core.estimate import estimate_cost, scale_estimate
 from app.core.layout import format_video_dir
+from app.core.meters import meter_info
 from app.core.records import (
     RequestRecord,
     RequestStatus,
@@ -136,6 +138,31 @@ async def _parse_launch_body(request: Request) -> LaunchBody:
         return LaunchBody.model_validate(payload)
     except ValidationError as exc:
         raise RequestValidationError(exc.errors()) from None
+
+
+class EstimateIn(BaseModel):
+    params: dict[str, Any]
+    video_count: int = Field(ge=1)
+
+    @field_validator("video_count", mode="before")
+    @classmethod
+    def _video_count_not_bool(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("video_count must be an integer >= 1")
+        return value
+
+
+class MeterEstimateOut(BaseModel):
+    amount: float
+    unit: str
+    kind: str
+
+
+class EstimateOut(BaseModel):
+    per_meter: dict[str, MeterEstimateOut]
+    confidence: str
+    matches: int
+    video_count: int
 
 
 class LaunchAcceptedOut(BaseModel):
@@ -448,6 +475,35 @@ def _is_well_formed_gate_event(source: object, event: object) -> bool:
         and all(
             isinstance(event.get(field), str) for field in ("token", "family", "shape", "prompt")
         )
+    )
+
+
+@router.post("/workflows/{workflow_id}/estimate", response_model=EstimateOut)
+def estimate_workflow_run(
+    workflow_id: str,
+    request: Request,
+    body: EstimateIn,
+) -> EstimateOut:
+    entry = _require_workflow(request, workflow_id)
+    manifest = entry.manifest
+    affects = frozenset(
+        p.key for p in (manifest.params if manifest is not None else []) if p.affects_cost
+    )
+    est = estimate_cost(_runs_dir(request), workflow_id, body.params, affects)
+    scaled = scale_estimate(est, body.video_count)
+    per_meter = {
+        meter: MeterEstimateOut(
+            amount=amount,
+            unit=meter_info(meter).unit,
+            kind=meter_info(meter).kind,
+        )
+        for meter, amount in scaled.per_meter.items()
+    }
+    return EstimateOut(
+        per_meter=per_meter,
+        confidence=scaled.confidence,
+        matches=scaled.matches,
+        video_count=body.video_count,
     )
 
 
