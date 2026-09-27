@@ -248,6 +248,19 @@ export type LaunchBody = {
   voice?: string;
 };
 
+export type EstimateMeter = {
+  amount: number;
+  unit: string;
+  kind: string;
+};
+
+export type EstimateOut = {
+  per_meter: Record<string, EstimateMeter>;
+  confidence: string;
+  matches: number;
+  video_count: number;
+};
+
 export type StartRunOk = { run_id: string };
 export type StartRunErr = { error: string; status: 409 | 422 | number };
 export type StartRunResult = StartRunOk | StartRunErr;

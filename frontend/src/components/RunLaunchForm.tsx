@@ -1,7 +1,8 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { fetchProviderOptions, fetchVoices, startRun } from "../api";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { fetchEstimate, fetchProviderOptions, fetchVoices, startRun } from "../api";
 import {
   isStartRunOk,
+  type EstimateOut,
   type Param,
   type ProviderOption,
   type SettingsData,
@@ -134,6 +135,29 @@ function collectParams(
     }
   }
   return { ok: true, value: result };
+}
+
+function formatEstimateAmount(amount: number): string {
+  if (!Number.isFinite(amount)) {
+    return "—";
+  }
+  if (Number.isInteger(amount)) {
+    return String(amount);
+  }
+  return amount.toFixed(2);
+}
+
+function estimateConfidenceLabel(confidence: string, matches: number): string {
+  switch (confidence) {
+    case "matched":
+      return `matched · ${matches} runs`;
+    case "crude":
+      return "crude average";
+    case "none":
+      return "no data";
+    default:
+      return confidence;
+  }
 }
 
 function FieldHelp({ param, extra }: { param: Param; extra?: string }) {
@@ -517,6 +541,49 @@ export function RunLaunchForm({
   const [values, setValues] = useState<Record<string, FieldValue>>(() => initialValues(params));
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [estimate, setEstimate] = useState<EstimateOut | null>(null);
+  const [estimateUnavailable, setEstimateUnavailable] = useState(false);
+
+  const estimateDepsKey = useMemo(() => {
+    const bits: unknown[] = [videoCount];
+    for (const param of params) {
+      if (param.affects_cost) {
+        bits.push(param.key, values[param.key] ?? seedValue(param));
+      }
+    }
+    return JSON.stringify(bits);
+  }, [params, values, videoCount]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (!Number.isInteger(videoCount) || videoCount < 1) {
+        return;
+      }
+      const parsed = collectParams(params, values);
+      const collectedParams = parsed.ok ? parsed.value : {};
+      void fetchEstimate(workflowId, collectedParams, videoCount).then(
+        (data) => {
+          if (cancelled) {
+            return;
+          }
+          setEstimate(data);
+          setEstimateUnavailable(false);
+        },
+        () => {
+          if (cancelled) {
+            return;
+          }
+          setEstimate(null);
+          setEstimateUnavailable(true);
+        },
+      );
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [workflowId, estimateDepsKey, params, values, videoCount]);
 
   useEffect(() => {
     let ignore = false;
@@ -735,6 +802,32 @@ export function RunLaunchForm({
             }}
           />
         ))}
+        <div className="field">
+          <span className="field-label">Estimated cost</span>
+          {estimate && Object.keys(estimate.per_meter).length > 0 ? (
+            <div className="meters">
+              {Object.entries(estimate.per_meter).map(([meterId, meter]) => (
+                <div className="meter" key={meterId}>
+                  <div className="meter-name">{meterId}</div>
+                  <div className="meter-val">
+                    {formatEstimateAmount(meter.amount)}
+                    <span className="meter-unit">{meter.unit}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <span className="field-help">No estimate yet / no history</span>
+          )}
+          {estimate ? (
+            <span className="field-help">
+              {estimateConfidenceLabel(estimate.confidence, estimate.matches)}
+            </span>
+          ) : null}
+          {estimateUnavailable ? (
+            <span className="field-help">Couldn&apos;t load estimate.</span>
+          ) : null}
+        </div>
         {formError ? <div className="form-error">{formError}</div> : null}
         <div className="card-foot launch-actions">
           <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
