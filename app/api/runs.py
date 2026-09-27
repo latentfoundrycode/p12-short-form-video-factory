@@ -519,14 +519,20 @@ def launch_run(
     blocked = _unconfigured_model_param(entry, body.params, set(_secrets(request)))
     if blocked is not None:
         raise HTTPException(status_code=422, detail=blocked)
+    target = _runs_dir(request)
+    for candidate in (target, *target.parents):
+        if candidate.exists():
+            target = candidate
+            break
     try:
-        if shutil.disk_usage(_runs_dir(request)).free < 5 * 1024**3:
-            raise HTTPException(
-                status_code=422,
-                detail="Not enough free disk space to start a run (need at least 5 GB).",
-            )
+        free = shutil.disk_usage(target).free
     except OSError:
-        pass
+        free = None
+    if free is not None and free < 5 * 1024**3:
+        raise HTTPException(
+            status_code=422,
+            detail="Not enough free disk space to start a run (need at least 5 GB).",
+        )
     manifest = entry.manifest
     if manifest is not None:
         configured = configured_secret_names(_secrets(request))
