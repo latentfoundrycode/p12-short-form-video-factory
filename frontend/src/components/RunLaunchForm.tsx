@@ -137,6 +137,59 @@ function collectParams(
   return { ok: true, value: result };
 }
 
+function costParams(
+  declared: Param[],
+  values: Record<string, FieldValue>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const param of declared) {
+    if (!param.affects_cost) {
+      continue;
+    }
+    const raw = values[param.key] ?? seedValue(param);
+    if (usesManualInput(param)) {
+      const text = typeof raw === "string" ? raw : "";
+      if (param.type === "multiselect") {
+        result[param.key] = text
+          .split(",")
+          .map((item) => item.trim())
+          .filter((item) => item !== "");
+        continue;
+      }
+      result[param.key] = text;
+      continue;
+    }
+    switch (param.type) {
+      case "text":
+      case "textarea":
+      case "select":
+        result[param.key] = typeof raw === "string" ? raw : "";
+        break;
+      case "number": {
+        const text = typeof raw === "string" ? raw : "";
+        if (text.trim() === "") {
+          break;
+        }
+        const parsed = Number(text);
+        if (!Number.isNaN(parsed)) {
+          result[param.key] = parsed;
+        }
+        break;
+      }
+      case "bool":
+        result[param.key] = Boolean(raw);
+        break;
+      case "multiselect":
+        result[param.key] = isStringArray(raw) ? raw : [];
+        break;
+      case "file":
+        result[param.key] = typeof raw === "string" ? raw : "";
+        break;
+    }
+  }
+  return result;
+}
+
 function formatEstimateAmount(amount: number): string {
   if (!Number.isFinite(amount)) {
     return "—";
@@ -544,15 +597,10 @@ export function RunLaunchForm({
   const [estimate, setEstimate] = useState<EstimateOut | null>(null);
   const [estimateUnavailable, setEstimateUnavailable] = useState(false);
 
-  const estimateDepsKey = useMemo(() => {
-    const bits: unknown[] = [videoCount];
-    for (const param of params) {
-      if (param.affects_cost) {
-        bits.push(param.key, values[param.key] ?? seedValue(param));
-      }
-    }
-    return JSON.stringify(bits);
-  }, [params, values, videoCount]);
+  const estimateDepsKey = useMemo(
+    () => JSON.stringify([videoCount, costParams(params, values)]),
+    [params, values, videoCount],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -560,8 +608,7 @@ export function RunLaunchForm({
       if (!Number.isInteger(videoCount) || videoCount < 1) {
         return;
       }
-      const parsed = collectParams(params, values);
-      const collectedParams = parsed.ok ? parsed.value : {};
+      const collectedParams = costParams(params, values);
       void fetchEstimate(workflowId, collectedParams, videoCount).then(
         (data) => {
           if (cancelled) {
@@ -574,7 +621,6 @@ export function RunLaunchForm({
           if (cancelled) {
             return;
           }
-          setEstimate(null);
           setEstimateUnavailable(true);
         },
       );
@@ -583,7 +629,9 @@ export function RunLaunchForm({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [workflowId, estimateDepsKey, params, values, videoCount]);
+    // estimateDepsKey folds params, values, and videoCount; read them fresh here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workflowId, estimateDepsKey]);
 
   useEffect(() => {
     let ignore = false;
@@ -816,7 +864,7 @@ export function RunLaunchForm({
                 </div>
               ))}
             </div>
-          ) : (
+          ) : estimateUnavailable ? null : (
             <span className="field-help">No estimate yet / no history</span>
           )}
           {estimate ? (
