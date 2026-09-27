@@ -17,6 +17,8 @@ SDK_DIR = APP_ROOT / "sdk"
 def is_safe_path_segment(name: str) -> bool:
     if not name or name in {".", ".."}:
         return False
+    if ":" in name or Path(name).drive:
+        return False
     if "/" in name or "\\" in name:
         return False
     rel = Path(name)

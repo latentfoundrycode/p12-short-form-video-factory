@@ -41,6 +41,16 @@ def test_is_safe_path_segment_rejects_traversal() -> None:
     assert not is_safe_path_segment("/etc/passwd")
 
 
+def test_is_safe_path_segment_rejects_windows_drive_relative() -> None:
+    # `runs_dir / "C:"` resets to the C: drive root on Windows (drive-relative), escaping the base.
+    # Any segment carrying a drive / colon must be rejected.
+    for bad in ("C:", "D:", "c:", "C:foo", "a:b", "::"):
+        assert not is_safe_path_segment(bad), bad
+    # legitimate ids (workflow folder names, run ids) are unaffected
+    assert is_safe_path_segment("20260927-000001")
+    assert is_safe_path_segment("sensational-science-news")
+
+
 def test_safe_join_stays_inside_folder(tmp_path: Path) -> None:
     folder = tmp_path / "wf"
     folder.mkdir()

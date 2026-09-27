@@ -385,6 +385,30 @@ def _require_workflow(request: Request, workflow_id: str) -> WorkflowEntry:
     return entry
 
 
+def _workflow_has_runs_on_disk(request: Request, workflow_id: str) -> bool:
+    root = _runs_dir(request) / workflow_id
+    if not root.is_dir():
+        return False
+    try:
+        if not root.resolve().is_relative_to(_runs_dir(request).resolve()):
+            return False
+        return any(
+            child.is_dir() and (child / "request.json").is_file() for child in root.iterdir()
+        )
+    except OSError:
+        return False
+
+
+def _require_workflow_readable(request: Request, workflow_id: str) -> None:
+    if not is_safe_path_segment(workflow_id):
+        raise HTTPException(status_code=404)
+    if _holder(request).get(workflow_id) is not None:
+        return
+    if _workflow_has_runs_on_disk(request, workflow_id):
+        return
+    raise HTTPException(status_code=404)
+
+
 def _summary(record: RequestRecord) -> RunSummaryOut:
     return RunSummaryOut(
         run_id=record.run_id,
@@ -485,7 +509,7 @@ def stop_run(workflow_id: str, run_id: str, body: StopBody, request: Request) ->
 
 @router.get("/workflows/{workflow_id}/runs", response_model=RunListOut)
 def list_runs(workflow_id: str, request: Request) -> RunListOut:
-    _require_workflow(request, workflow_id)
+    _require_workflow_readable(request, workflow_id)
     root = _runs_dir(request) / workflow_id
     if not root.is_dir():
         return RunListOut(runs=[])
@@ -550,7 +574,7 @@ def delete_run(workflow_id: str, run_id: str, request: Request) -> DeleteRunOut:
 
 @router.get("/workflows/{workflow_id}/runs/{run_id}", response_model=RunDetailOut)
 def get_run(workflow_id: str, run_id: str, request: Request) -> RunDetailOut:
-    _require_workflow(request, workflow_id)
+    _require_workflow_readable(request, workflow_id)
     if not is_safe_path_segment(run_id):
         raise HTTPException(status_code=404)
     run_dir = _runs_dir(request) / workflow_id / run_id
@@ -561,7 +585,7 @@ def get_run(workflow_id: str, run_id: str, request: Request) -> RunDetailOut:
 
 @router.get("/workflows/{workflow_id}/runs/{run_id}/gates", response_model=GatesOut)
 def list_pending_gates(workflow_id: str, run_id: str, request: Request) -> GatesOut:
-    _require_workflow(request, workflow_id)
+    _require_workflow_readable(request, workflow_id)
     if not is_safe_path_segment(run_id):
         raise HTTPException(status_code=404)
     run_dir = _runs_dir(request) / workflow_id / run_id
@@ -737,7 +761,7 @@ async def _sse_event_stream(request: Request, run_dir: Path) -> AsyncIterator[st
 
 @router.get("/workflows/{workflow_id}/runs/{run_id}/events")
 async def stream_run_events(workflow_id: str, run_id: str, request: Request) -> StreamingResponse:
-    _require_workflow(request, workflow_id)
+    _require_workflow_readable(request, workflow_id)
     if not is_safe_path_segment(run_id):
         raise HTTPException(status_code=404)
     run_dir = _runs_dir(request) / workflow_id / run_id
@@ -755,7 +779,7 @@ async def stream_run_events(workflow_id: str, run_id: str, request: Request) -> 
 
 @router.get("/workflows/{workflow_id}/runs/{run_id}/files", response_model=RunFilesOut)
 def list_run_files(workflow_id: str, run_id: str, request: Request) -> RunFilesOut:
-    _require_workflow(request, workflow_id)
+    _require_workflow_readable(request, workflow_id)
     if not is_safe_path_segment(run_id):
         raise HTTPException(status_code=404)
     run_dir = _runs_dir(request) / workflow_id / run_id
@@ -785,7 +809,7 @@ def list_run_files(workflow_id: str, run_id: str, request: Request) -> RunFilesO
 
 @router.get("/workflows/{workflow_id}/runs/{run_id}/files/{path:path}")
 def get_run_file(workflow_id: str, run_id: str, path: str, request: Request) -> FileResponse:
-    _require_workflow(request, workflow_id)
+    _require_workflow_readable(request, workflow_id)
     if not is_safe_path_segment(run_id):
         raise HTTPException(status_code=404)
     run_dir = _runs_dir(request) / workflow_id / run_id

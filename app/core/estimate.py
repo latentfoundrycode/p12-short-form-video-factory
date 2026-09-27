@@ -17,10 +17,12 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 from app.core.records import RequestRecord, read_request, read_video
+from app.paths import is_safe_path_segment
 
 # Estimates are drawn from at most this many most-recent comparable runs (PRD §7.3: "last ten").
 MAX_HISTORY = 10
@@ -82,6 +84,54 @@ def estimate_cost(
     )
 
 
+def average_cost_per_meter(
+    runs_dir: Path, workflow_id: str, *, limit: int = 10
+) -> tuple[dict[str, float], int]:
+    """Mean actual cost per meter across the workflow's most recent counted runs (PRD §8.1).
+
+    Uses the same candidate pool as cost estimates (`complete`/`partial`, non-dry). For each run,
+    per-video actual cost (finished videos' `cost["actual"]` plus `prepare_cost["actual"]`, divided
+    by the count of videos with status `complete`) is averaged over the pool size.
+    """
+    pool = _candidates(runs_dir, workflow_id)[:limit]
+    if not pool:
+        return ({}, 0)
+    pool_size = len(pool)
+    sums: dict[str, float] = {}
+    for run_dir, record in pool:
+        for meter, amount in _run_per_video_actual_with_prepare(run_dir, record).items():
+            total = sums.get(meter, 0.0) + amount
+            if not math.isfinite(total):
+                continue
+            sums[meter] = total
+    result: dict[str, float] = {}
+    for meter, total in sums.items():
+        mean = total / pool_size
+        if math.isfinite(mean):
+            result[meter] = mean
+    return (result, pool_size)
+
+
+def archived_workflow_ids(runs_dir: Path, known_ids: set[str]) -> list[str]:
+    """Workflow folder names under `runs_dir` that have run output but no live plugin folder."""
+    if not runs_dir.is_dir():
+        return []
+    try:
+        children = list(runs_dir.iterdir())
+    except OSError:
+        return []
+    found: list[str] = []
+    for child in children:
+        if not child.is_dir():
+            continue
+        name = child.name
+        if not is_safe_path_segment(name) or name in known_ids:
+            continue
+        if _has_request_json_run(child):
+            found.append(name)
+    return sorted(found)
+
+
 def scale_estimate(estimate: Estimate, count: int) -> Estimate:
     """Scale a PER-VIDEO estimate to a whole run of `count` videos, then add the per-run prepare
     overhead once. Confidence and matches are preserved; `prepare_per_meter` is folded into
@@ -119,6 +169,81 @@ def _candidates(runs_dir: Path, workflow_id: str) -> list[tuple[Path, RequestRec
         found.append((child, record))
     found.sort(key=lambda item: item[0].name, reverse=True)
     return found
+
+
+def _has_request_json_run(workflow_runs_root: Path) -> bool:
+    try:
+        children = list(workflow_runs_root.iterdir())
+    except OSError:
+        return False
+    return any(child.is_dir() and (child / "request.json").is_file() for child in children)
+
+
+def _run_per_video_actual_with_prepare(run_dir: Path, record: RequestRecord) -> dict[str, float]:
+    """Per-video actual for one run: complete videos' actual plus prepare, divided by N complete."""
+    video_sums: dict[str, float] = {}
+    complete = 0
+    try:
+        children = list(run_dir.iterdir())
+    except OSError:
+        return {}
+    for child in children:
+        if not child.is_dir() or not (child / "video.json").is_file():
+            continue
+        try:
+            video = read_video(child)
+        except (OSError, TypeError, ValueError):
+            continue
+        if video.status != "complete":
+            continue
+        complete += 1
+        cost = video.cost
+        if not isinstance(cost, dict):
+            continue
+        actual = cost.get("actual")
+        if not isinstance(actual, dict):
+            continue
+        for meter, raw in actual.items():
+            if isinstance(raw, bool) or not isinstance(raw, int | float):
+                continue
+            try:
+                amount = float(raw)
+            except (OverflowError, ValueError):
+                continue
+            if not math.isfinite(amount) or amount < 0.0:
+                continue
+            running = video_sums.get(meter, 0.0) + amount
+            if not math.isfinite(running):
+                continue
+            video_sums[meter] = running
+    if complete == 0:
+        return {}
+    prepare_sums: dict[str, float] = {}
+    prepare = record.prepare_cost
+    if isinstance(prepare, dict):
+        prepare_actual = prepare.get("actual")
+        if isinstance(prepare_actual, dict):
+            for meter, raw in prepare_actual.items():
+                if isinstance(raw, bool) or not isinstance(raw, int | float):
+                    continue
+                try:
+                    amount = float(raw)
+                except (OverflowError, ValueError):
+                    continue
+                if not math.isfinite(amount) or amount < 0.0:
+                    continue
+                prepare_sums[meter] = amount
+    divisor = Decimal(complete)
+    meters = video_sums.keys() | prepare_sums.keys()
+    result: dict[str, float] = {}
+    for meter in meters:
+        meter_total = Decimal(str(video_sums.get(meter, 0.0))) + Decimal(
+            str(prepare_sums.get(meter, 0.0))
+        )
+        mean = float(meter_total / divisor)
+        if math.isfinite(mean):
+            result[meter] = mean
+    return result
 
 
 def _try_read_request(run_dir: Path) -> RequestRecord | None:
