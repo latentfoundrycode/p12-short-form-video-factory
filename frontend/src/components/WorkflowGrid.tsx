@@ -6,14 +6,15 @@ import { WorkflowCard } from "./WorkflowCard";
 type WorkflowGridProps = {
   onCount: (count: number | null) => void;
   onStarted: (workflowId: string, runId: string) => void;
-  onViewRuns: (workflowId: string) => void;
+  onViewRuns: (workflowId: string, runId: string | null) => void;
+  openedRuns: ReadonlySet<string>;
 };
 
 function messageOf(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
 
-export function WorkflowGrid({ onCount, onStarted, onViewRuns }: WorkflowGridProps) {
+export function WorkflowGrid({ onCount, onStarted, onViewRuns, openedRuns }: WorkflowGridProps) {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +58,26 @@ export function WorkflowGrid({ onCount, onStarted, onViewRuns }: WorkflowGridPro
       cancelled = true;
     };
   }, [applyList, applyError]);
+
+  useEffect(() => {
+    const anyRunning = workflows.some((workflow) => workflow.last_run?.status === "running");
+    if (!anyRunning) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      void fetchWorkflows().then(
+        (list) => {
+          applyList(list);
+        },
+        () => {
+          /* keep polling until runs finish */
+        },
+      );
+    }, 3000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [workflows, applyList]);
 
   function onRetry() {
     setStatus("loading");
@@ -162,10 +183,13 @@ export function WorkflowGrid({ onCount, onStarted, onViewRuns }: WorkflowGridPro
             <WorkflowCard
               key={workflow.id}
               workflow={workflow}
+              seen={workflow.last_run != null && openedRuns.has(workflow.last_run.run_id)}
               onStarted={(runId) => {
                 onStarted(workflow.id, runId);
               }}
-              onViewRuns={onViewRuns}
+              onViewRuns={(workflowId, runId) => {
+                onViewRuns(workflowId, runId);
+              }}
             />
           ))}
         </div>

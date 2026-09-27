@@ -20,6 +20,7 @@ function App() {
   const [workflowCount, setWorkflowCount] = useState<number | null>(null);
   const [activeRun, setActiveRun] = useState<ActiveRun | null>(null);
   const [browsing, setBrowsing] = useState<{ workflowId: string } | null>(null);
+  const [openedRuns, setOpenedRuns] = useState<Set<string>>(() => new Set());
 
   return (
     <Shell tab={tab} onTab={setTab} workflowCount={workflowCount}>
@@ -52,7 +53,11 @@ function App() {
           onStarted={(workflowId, runId) => {
             setActiveRun({ workflowId, runId });
           }}
-          onViewRuns={(workflowId) => {
+          openedRuns={openedRuns}
+          onViewRuns={(workflowId, runId) => {
+            if (runId) {
+              setOpenedRuns((prev) => new Set(prev).add(runId));
+            }
             setBrowsing({ workflowId });
           }}
         />
