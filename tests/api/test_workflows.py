@@ -17,6 +17,7 @@ WORKFLOW_FIELDS = {
     "avg_cost_per_meter",
     "runs_counted",
     "archived",
+    "last_run",
 }
 
 PARAM_FIELDS = {

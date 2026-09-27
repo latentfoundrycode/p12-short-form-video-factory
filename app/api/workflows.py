@@ -9,7 +9,12 @@ from pydantic import BaseModel
 from sfvf.context import BudgetConfig
 from sfvf.providers import capabilities_offered
 
-from app.core.estimate import archived_workflow_ids, average_cost_per_meter
+from app.core.estimate import (
+    LastRunSnapshot,
+    archived_workflow_ids,
+    average_cost_per_meter,
+    last_run_snapshot,
+)
 from app.paths import RUNS_DIR, is_safe_path_segment, safe_join
 from app.registry.scan import scan
 from app.registry.validate import WorkflowEntry
@@ -72,6 +77,24 @@ class QualityFactorOut(BaseModel):
     question: str
 
 
+class StageOut(BaseModel):
+    index: int
+    total: int
+    label: str
+
+
+class ProgressOut(BaseModel):
+    done: int
+    total: int
+
+
+class LastRunOut(BaseModel):
+    run_id: str
+    status: str
+    stage: StageOut | None
+    progress: ProgressOut | None
+
+
 class ParamOut(BaseModel):
     key: str
     type: str
@@ -101,6 +124,7 @@ class WorkflowOut(BaseModel):
     avg_cost_per_meter: dict[str, float] = {}
     runs_counted: int = 0
     archived: bool = False
+    last_run: LastRunOut | None = None
 
 
 class WorkflowListOut(BaseModel):
@@ -113,6 +137,29 @@ def _holder(request: Request) -> RegistryHolder:
 
 def _runs_dir(request: Request) -> Path:
     return cast(Path, getattr(request.app.state, "runs_dir", RUNS_DIR))
+
+
+def _last_run_out(snapshot: LastRunSnapshot | None) -> LastRunOut | None:
+    if snapshot is None:
+        return None
+    return LastRunOut(
+        run_id=snapshot.run_id,
+        status=snapshot.status,
+        stage=(
+            None
+            if snapshot.stage is None
+            else StageOut(
+                index=snapshot.stage.index,
+                total=snapshot.stage.total,
+                label=snapshot.stage.label,
+            )
+        ),
+        progress=(
+            None
+            if snapshot.progress is None
+            else ProgressOut(done=snapshot.progress.done, total=snapshot.progress.total)
+        ),
+    )
 
 
 def _serialize(entry: WorkflowEntry, runs_dir: Path) -> WorkflowOut:
@@ -164,6 +211,7 @@ def _serialize(entry: WorkflowEntry, runs_dir: Path) -> WorkflowOut:
         avg_cost_per_meter=avg_cost,
         runs_counted=runs_counted,
         archived=False,
+        last_run=_last_run_out(last_run_snapshot(runs_dir, entry.folder_name)),
     )
 
 
@@ -181,6 +229,7 @@ def _serialize_archived(workflow_id: str, runs_dir: Path) -> WorkflowOut:
         avg_cost_per_meter=avg_cost,
         runs_counted=runs_counted,
         archived=True,
+        last_run=_last_run_out(last_run_snapshot(runs_dir, workflow_id)),
     )
 
 

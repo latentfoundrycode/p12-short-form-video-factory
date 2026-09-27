@@ -21,13 +21,34 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from app.core.records import RequestRecord, read_request, read_video
+from app.core.records import RequestRecord, read_events, read_request, read_video
 from app.paths import is_safe_path_segment
 
 # Estimates are drawn from at most this many most-recent comparable runs (PRD §7.3: "last ten").
 MAX_HISTORY = 10
 # Only completed history feeds estimates; running/pending (and failed/stopped/dry) are excluded.
 INCLUDED_STATUSES = frozenset({"complete", "partial"})
+
+
+@dataclass(frozen=True)
+class StageSnapshot:
+    index: int
+    total: int
+    label: str
+
+
+@dataclass(frozen=True)
+class ProgressSnapshot:
+    done: int
+    total: int
+
+
+@dataclass(frozen=True)
+class LastRunSnapshot:
+    run_id: str
+    status: str
+    stage: StageSnapshot | None
+    progress: ProgressSnapshot | None
 
 
 @dataclass(frozen=True)
@@ -110,6 +131,50 @@ def average_cost_per_meter(
         if math.isfinite(mean):
             result[meter] = mean
     return (result, pool_size)
+
+
+def last_run_snapshot(runs_dir: Path, workflow_id: str) -> LastRunSnapshot | None:
+    """Newest run dir (by run-id name) for card state: status plus last stage/progress events."""
+    root = runs_dir / workflow_id
+    if not root.is_dir():
+        return None
+    try:
+        children = list(root.iterdir())
+    except OSError:
+        return None
+    run_dirs = [
+        child for child in children if child.is_dir() and (child / "request.json").is_file()
+    ]
+    if not run_dirs:
+        return None
+    run_dirs.sort(key=lambda path: path.name, reverse=True)
+    run_dir = run_dirs[0]
+    record = _try_read_request(run_dir)
+    if record is None:
+        return None
+    stage: StageSnapshot | None = None
+    progress: ProgressSnapshot | None = None
+    try:
+        for _ts, _source, event in read_events(run_dir):
+            if not isinstance(event, dict):
+                continue
+            kind = event.get("t")
+            if kind == "stage":
+                maybe_stage = _parse_stage_event(event)
+                if maybe_stage is not None:
+                    stage = maybe_stage
+            elif kind == "progress":
+                maybe_progress = _parse_progress_event(event)
+                if maybe_progress is not None:
+                    progress = maybe_progress
+    except (OSError, ValueError):
+        pass
+    return LastRunSnapshot(
+        run_id=run_dir.name,
+        status=record.status,
+        stage=stage,
+        progress=progress,
+    )
 
 
 def archived_workflow_ids(runs_dir: Path, known_ids: set[str]) -> list[str]:
@@ -244,6 +309,34 @@ def _run_per_video_actual_with_prepare(run_dir: Path, record: RequestRecord) -> 
         if math.isfinite(mean):
             result[meter] = mean
     return result
+
+
+def _parse_stage_event(event: dict[str, Any]) -> StageSnapshot | None:
+    index = event.get("index")
+    total = event.get("total")
+    label = event.get("label")
+    if (
+        isinstance(index, bool)
+        or not isinstance(index, int)
+        or isinstance(total, bool)
+        or not isinstance(total, int)
+        or not isinstance(label, str)
+    ):
+        return None
+    return StageSnapshot(index=index, total=total, label=label)
+
+
+def _parse_progress_event(event: dict[str, Any]) -> ProgressSnapshot | None:
+    done = event.get("done")
+    total = event.get("total")
+    if (
+        isinstance(done, bool)
+        or not isinstance(done, int)
+        or isinstance(total, bool)
+        or not isinstance(total, int)
+    ):
+        return None
+    return ProgressSnapshot(done=done, total=total)
 
 
 def _try_read_request(run_dir: Path) -> RequestRecord | None:

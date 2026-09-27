@@ -36,6 +36,7 @@ def _write_run(
     status: str = "complete",
     dry_run: bool = False,
     prepare: dict[str, float] | None = None,
+    events: list[dict] | None = None,
 ) -> None:
     run_dir = runs_dir / workflow_id / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -53,6 +54,12 @@ def _write_run(
     if prepare is not None:
         request["prepare_cost"] = {"actual": dict(prepare), "uncached": dict(prepare)}
     (run_dir / "request.json").write_text(json.dumps(request), encoding="utf-8")
+    if events:
+        lines = [
+            json.dumps({"ts": "2026-09-27T00:00:10Z", "source": "workflow", "event": event})
+            for event in events
+        ]
+        (run_dir / "events.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
     for i, cost in enumerate(videos):
         vdir = run_dir / f"{i:02d}"
         vdir.mkdir(parents=True, exist_ok=True)
@@ -200,3 +207,97 @@ def test_drive_relative_workflow_id_is_rejected(tmp_path: Path) -> None:
     client = _client(tmp_path / "wf", tmp_path / "runs")
     for bad in ("C:", "D:"):
         assert client.get(f"/api/workflows/{bad}/runs").status_code == 404, bad
+
+
+# --------------------------------------------------------------------------- last_run (F2b backend)
+
+
+def test_no_runs_has_null_last_run(tmp_path: Path) -> None:
+    write_plugin(tmp_path / "wf", "alpha", minimal_toml("alpha"))
+    card = _card(_client(tmp_path / "wf", tmp_path / "runs").get("/api/workflows").json(), "alpha")
+    assert card["last_run"] is None
+
+
+def test_last_run_status_from_newest_run(tmp_path: Path) -> None:
+    write_plugin(tmp_path / "wf", "alpha", minimal_toml("alpha"))
+    runs = tmp_path / "runs"
+    _write_run(runs, "alpha", "20260927-000001", videos=[{"openrouter": 0.10}], status="complete")
+    _write_run(runs, "alpha", "20260927-000002", videos=[{"openrouter": 0.10}], status="running")
+    card = _card(_client(tmp_path / "wf", runs).get("/api/workflows").json(), "alpha")
+    assert card["last_run"]["run_id"] == "20260927-000002"
+    assert card["last_run"]["status"] == "running"
+
+
+def test_last_run_stage_and_progress_from_events(tmp_path: Path) -> None:
+    write_plugin(tmp_path / "wf", "alpha", minimal_toml("alpha"))
+    runs = tmp_path / "runs"
+    _write_run(
+        runs,
+        "alpha",
+        "20260927-000001",
+        videos=[{"openrouter": 0.10}],
+        status="running",
+        events=[
+            {"t": "stage", "index": 2, "total": 7, "label": "Researching"},
+            {"t": "progress", "family": "shots", "done": 10, "total": 60},
+            {"t": "stage", "index": 3, "total": 7, "label": "Generating shots"},
+            {"t": "progress", "family": "shots", "done": 37, "total": 60},
+        ],
+    )
+    card = _card(_client(tmp_path / "wf", runs).get("/api/workflows").json(), "alpha")
+    assert card["last_run"]["stage"] == {"index": 3, "total": 7, "label": "Generating shots"}
+    assert card["last_run"]["progress"] == {"done": 37, "total": 60}
+
+
+def test_last_run_no_events_has_null_stage(tmp_path: Path) -> None:
+    write_plugin(tmp_path / "wf", "alpha", minimal_toml("alpha"))
+    runs = tmp_path / "runs"
+    _write_run(runs, "alpha", "20260927-000001", videos=[{"openrouter": 0.10}], status="complete")
+    card = _card(_client(tmp_path / "wf", runs).get("/api/workflows").json(), "alpha")
+    assert card["last_run"]["status"] == "complete"
+    assert card["last_run"]["stage"] is None
+    assert card["last_run"]["progress"] is None
+
+
+def test_archived_card_carries_last_run(tmp_path: Path) -> None:
+    write_plugin(tmp_path / "wf", "alpha", minimal_toml("alpha"))
+    runs = tmp_path / "runs"
+    _write_run(runs, "ghost", "20260927-000001", videos=[{"openrouter": 0.10}], status="failed")
+    ghost = _card(_client(tmp_path / "wf", runs).get("/api/workflows").json(), "ghost")
+    assert ghost["archived"] is True
+    assert ghost["last_run"]["status"] == "failed"
+
+
+def test_last_run_ignores_bool_stage_and_progress(tmp_path: Path) -> None:
+    # bool is an int subclass; a `{"index": true}` event must be skipped, not coerced to 1/0.
+    write_plugin(tmp_path / "wf", "alpha", minimal_toml("alpha"))
+    runs = tmp_path / "runs"
+    _write_run(
+        runs,
+        "alpha",
+        "20260927-000001",
+        videos=[{"openrouter": 0.10}],
+        status="running",
+        events=[
+            {"t": "stage", "index": 3, "total": 7, "label": "Generating shots"},
+            {"t": "progress", "family": "shots", "done": 37, "total": 60},
+            {"t": "stage", "index": True, "total": 7, "label": "bad"},
+            {"t": "progress", "family": "shots", "done": False, "total": 60},
+        ],
+    )
+    card = _card(_client(tmp_path / "wf", runs).get("/api/workflows").json(), "alpha")
+    assert card["last_run"]["stage"] == {"index": 3, "total": 7, "label": "Generating shots"}
+    assert card["last_run"]["progress"] == {"done": 37, "total": 60}
+
+
+def test_undecodable_events_file_does_not_500_the_list(tmp_path: Path) -> None:
+    # A run whose events.jsonl has invalid UTF-8 must not take down GET /api/workflows.
+    write_plugin(tmp_path / "wf", "alpha", minimal_toml("alpha"))
+    runs = tmp_path / "runs"
+    _write_run(runs, "alpha", "20260927-000001", videos=[{"openrouter": 0.10}], status="running")
+    (runs / "alpha" / "20260927-000001" / "events.jsonl").write_bytes(
+        b'{"ts":"t","source":"s","event":{"t":"stage","index":3,"total":7,"label":"ok"}}\n\xff\xfe'
+    )
+    resp = _client(tmp_path / "wf", runs).get("/api/workflows")
+    assert resp.status_code == 200
+    assert _card(resp.json(), "alpha")["last_run"]["status"] == "running"
