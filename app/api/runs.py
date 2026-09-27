@@ -389,7 +389,14 @@ def _workflow_has_runs_on_disk(request: Request, workflow_id: str) -> bool:
     root = _runs_dir(request) / workflow_id
     if not root.is_dir():
         return False
-    return any(child.is_dir() and (child / "request.json").is_file() for child in root.iterdir())
+    try:
+        if not root.resolve().is_relative_to(_runs_dir(request).resolve()):
+            return False
+        return any(
+            child.is_dir() and (child / "request.json").is_file() for child in root.iterdir()
+        )
+    except OSError:
+        return False
 
 
 def _require_workflow_readable(request: Request, workflow_id: str) -> None:
