@@ -235,3 +235,81 @@ def test_refresh_failure_leaves_previous_secrets_intact(
         client.put("/api/settings/secrets/GOOGLE_SA_JSON", json={"value": "x"})
     # the previously loaded map must still be intact, not wiped
     assert client.app.state.secrets.get("OPENROUTER_API_KEY") == _SECRET_VALUE
+
+
+# ------------------------------------- global defaults (F1b)
+
+_DEFAULTS_ENV = (
+    "SFVF_SILENCE_LIMIT_SECONDS",
+    "SFVF_DEFAULT_CONCURRENCY",
+    "SFVF_DEFAULT_STEP_CONCURRENCY",
+    "SFVF_CACHE_MAX_BYTES",
+)
+
+
+def _isolate_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.paths.DATA_ROOT", tmp_path)
+    for var in _DEFAULTS_ENV:
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_get_settings_includes_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _isolate_defaults(tmp_path, monkeypatch)
+    store = _store(tmp_path)
+    body = _writable_client(tmp_path, store).get("/api/settings").json()
+    assert "defaults" in body
+    fields = {
+        "silence_limit_seconds",
+        "default_concurrency",
+        "default_step_concurrency",
+        "cache_max_bytes",
+    }
+    assert fields <= set(body["defaults"])
+    for field in fields:
+        cell = body["defaults"][field]
+        assert {"effective", "source"} <= set(cell)
+        assert cell["source"] in {"env", "stored", "default"}
+
+
+def test_put_defaults_persists_and_reflects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_defaults(tmp_path, monkeypatch)
+    store = _store(tmp_path)
+    client = _writable_client(tmp_path, store)
+    resp = client.put(
+        "/api/settings/defaults", json={"silence_limit_seconds": 90, "default_concurrency": 2}
+    )
+    assert resp.status_code == 200
+    defaults = client.get("/api/settings").json()["defaults"]
+    assert defaults["silence_limit_seconds"]["effective"] == 90
+    assert defaults["silence_limit_seconds"]["source"] == "stored"
+    assert defaults["default_concurrency"]["effective"] == 2
+
+
+def test_put_defaults_rejects_invalid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _isolate_defaults(tmp_path, monkeypatch)
+    store = _store(tmp_path)
+    client = _writable_client(tmp_path, store)
+    resp = client.put("/api/settings/defaults", json={"default_concurrency": 0})
+    assert resp.status_code in (400, 422)
+
+
+def test_put_defaults_rejects_bool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # JSON true must not be coerced to 1 and stored (pydantic lax mode would otherwise accept it).
+    _isolate_defaults(tmp_path, monkeypatch)
+    client = _writable_client(tmp_path, _store(tmp_path))
+    for field in (
+        "silence_limit_seconds",
+        "default_concurrency",
+        "default_step_concurrency",
+        "cache_max_bytes",
+    ):
+        resp = client.put("/api/settings/defaults", json={field: True})
+        assert resp.status_code in (400, 422), (
+            f"{field}=true must be rejected, got {resp.status_code}"
+        )
+    # nothing was stored: fields still report the built-in default
+    defaults = client.get("/api/settings").json()["defaults"]
+    assert defaults["cache_max_bytes"]["source"] == "default"
+    assert defaults["silence_limit_seconds"]["source"] == "default"

@@ -1,32 +1,22 @@
 """Configured maximum size of the cheap cache partition (Architecture §5.9, §8.7).
 
 The cheap partition (renders/research) is LRU-evicted once it exceeds this many bytes; the paid
-partition is never evicted, so this ceiling does not apply to it. Read from `SFVF_CACHE_MAX_BYTES`
-(an integer byte count) with a conservative default. A missing, non-integer, or negative value
-falls back to the default rather than failing a run — the cache is derived and eviction is a
-best-effort housekeeping step, not a correctness gate.
+partition is never evicted, so this ceiling does not apply to it. The ceiling resolves with
+precedence env `SFVF_CACHE_MAX_BYTES` (an integer byte count) > the stored global default
+(app.core.app_settings) > a conservative built-in default. A missing, non-integer, or negative env
+value falls through to the stored setting (or the built-in default) rather than failing a run — the
+cache is derived and eviction is a best-effort housekeeping step, not a correctness gate.
 """
 
 from __future__ import annotations
-
-import os
 
 # Default ceiling for the cheap partition when unset. Per cache root (workflow + mode) in v1; a
 # single global ceiling across all partitions (§8.7) is a later refinement — see HARDENING.
 DEFAULT_CACHE_MAX_BYTES = 5 * 1024 * 1024 * 1024  # 5 GiB
 
-_ENV_VAR = "SFVF_CACHE_MAX_BYTES"
-
 
 def cache_max_bytes() -> int:
-    """Return the configured cheap-cache ceiling in bytes, or the default when unset/invalid."""
-    raw = os.environ.get(_ENV_VAR)
-    if raw is None:
-        return DEFAULT_CACHE_MAX_BYTES
-    try:
-        value = int(raw)
-    except ValueError:
-        return DEFAULT_CACHE_MAX_BYTES
-    if value < 0:
-        return DEFAULT_CACHE_MAX_BYTES
-    return value
+    """Return the configured cheap-cache ceiling in bytes (env > stored settings > default)."""
+    from app.core import app_settings
+
+    return app_settings.cache_max_bytes()

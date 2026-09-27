@@ -1,5 +1,5 @@
 # Inventory — SFVF (Short-Form Video Factory)
-Reflected through: 2026-09-21 — agents.vision: real-mode LLM image attachments
+Reflected through: 2026-09-27 — Settings tab backend: API-key management + editable global defaults
 Updated: 2026-09-27
 
 ## Features
@@ -29,7 +29,8 @@ Updated: 2026-09-27
 | SFVF_SECRETS_PATH SFVF_SECRETS_PASSPHRASE | env var | user env var | app.core.secrets (encrypted store location + unlock passphrase) | owner |
 | SFVF_BUDGET_CONFIG SFVF_BUDGET_STATE | env var | user env var (paths) | app.core.budget (per-meter caps TOML + persisted spend state) | owner |
 | SFVF_ENABLE_SCHEDULER | env var | user env var | app scheduler (opt-in unattended runs) | owner |
-| SFVF_CACHE_MAX_BYTES | env var | user env var | app.core.cache_config (cheap-cache eviction ceiling) | owner / defaults (5 GiB) |
+| SFVF_CACHE_MAX_BYTES | env var | user env var | app.core.cache_config / app.core.app_settings (cheap-cache eviction ceiling) | owner / defaults (5 GiB) |
+| SFVF_SILENCE_LIMIT_SECONDS SFVF_DEFAULT_CONCURRENCY SFVF_DEFAULT_STEP_CONCURRENCY | env var | user env var | app.core.app_settings resolvers (global-default overrides; env > stored > built-in) | owner / defaults |
 | SFVF_DISABLE_WEB_TIERS | env var | user env var | sdk/sfvf/media/web tier gating | owner / tests |
 | SFVF_HYPERFRAMES_ENTRY SFVF_HYPERFRAMES_TIMEOUT_S | env var | user env var | sdk/sfvf/media/graphics (render entrypoint + hard timeout) | owner / defaults |
 | PUPPETEER_CACHE_DIR PUPPETEER_EXECUTABLE_PATH HYPERFRAMES_BROWSER_PATH PRODUCER_HEADLESS_SHELL_PATH | env var | process env | sdk/sfvf/media/dom_check.mjs (Chrome binary + download-cache resolution for the HyperFrames render toolchain) | installer / dev |

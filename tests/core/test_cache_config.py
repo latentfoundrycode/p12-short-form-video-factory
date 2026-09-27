@@ -6,9 +6,21 @@ default so a bad env var never fails a run.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app.core.cache_config import DEFAULT_CACHE_MAX_BYTES, cache_max_bytes
+
+
+@pytest.fixture(autouse=True)
+def _isolate_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # cache_max_bytes() now delegates to app_settings, which reads DATA_ROOT/app_settings.json.
+    # Point DATA_ROOT at an empty tmp dir so these env-precedence tests never pick up a real
+    # saved defaults file.
+    from app import paths
+
+    monkeypatch.setattr(paths, "DATA_ROOT", tmp_path)
 
 
 def test_default_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -2,6 +2,10 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-27 — Settings tab backend: API-key management + editable global defaults
+
+The Settings tab (PRD §8.7) gains its backend, replacing the terminal-only key workflow. `GET/PUT/DELETE /api/settings` manage the encrypted API keys from the app — the GUI shows only whether a name is configured, never a value — and a key set this way makes its provider usable **without a restart** (including for scheduled runs). New `GET /api/settings` + `PUT /api/settings/defaults` expose and edit the four §8.7 global defaults (step silence limit, default concurrency, default step concurrency, max cache size), persisted in a new app-settings store; the stored silence limit and step concurrency are now actually applied to runs (via `admit_run`), and the cache ceiling is honoured by eviction — each overridable by its env var (env > stored > default). The Settings tab UI that drives all this arrives next (F1c). (F1a #176 + F1b.)
+
 ## 2026-09-21 — agents.vision: real-mode LLM image attachments
 
 `agents.llm(..., attach=[...])` previously raised `NotImplementedError` on the real path. It now
