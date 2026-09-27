@@ -15,12 +15,10 @@
 // frozen contract (RED-first); the builder implements WorkflowCard.tsx (+ types/css/grid wiring).
 
 import { render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { Workflow } from "../types";
 import { WorkflowCard } from "./WorkflowCard";
-
-let errorSpy: ReturnType<typeof vi.spyOn>;
 
 function make(overrides: Partial<Workflow> = {}): Workflow {
   return {
@@ -56,10 +54,6 @@ function article(container: HTMLElement): HTMLElement {
   }
   return el as HTMLElement;
 }
-
-afterEach(() => {
-  errorSpy?.mockRestore();
-});
 
 describe("WorkflowCard", () => {
   it("idle: plain card, Idle pill, Run + Runs buttons", () => {

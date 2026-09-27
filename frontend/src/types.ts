@@ -32,6 +32,13 @@ export type ProviderOption = {
   offered: boolean;
 };
 
+export type WorkflowLastRun = {
+  run_id: string;
+  status: string;
+  stage: { index: number; total: number; label: string } | null;
+  progress: { done: number; total: number } | null;
+};
+
 export type Workflow = {
   id: string;
   name: string | null;
@@ -41,6 +48,10 @@ export type Workflow = {
   problems: Problem[];
   quality_factors: QualityFactor[];
   params: Param[];
+  avg_cost_per_meter: Record<string, number>;
+  runs_counted: number;
+  archived: boolean;
+  last_run: WorkflowLastRun | null;
 };
 
 export type VideoQualityInput = {

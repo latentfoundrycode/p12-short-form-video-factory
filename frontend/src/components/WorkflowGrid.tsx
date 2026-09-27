@@ -18,6 +18,7 @@ export function WorkflowGrid({ onCount, onStarted, onViewRuns }: WorkflowGridPro
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
   const [rescanning, setRescanning] = useState(false);
+  const [seenWorkflowIds, setSeenWorkflowIds] = useState<Set<string>>(() => new Set());
 
   const applyList = useCallback(
     (list: Workflow[]) => {
@@ -57,6 +58,41 @@ export function WorkflowGrid({ onCount, onStarted, onViewRuns }: WorkflowGridPro
       cancelled = true;
     };
   }, [applyList, applyError]);
+
+  useEffect(() => {
+    const anyRunning = workflows.some((workflow) => workflow.last_run?.status === "running");
+    if (!anyRunning) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      void fetchWorkflows().then(
+        (list) => {
+          applyList(list);
+        },
+        () => {
+          /* keep polling until runs finish */
+        },
+      );
+    }, 3000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [workflows, applyList]);
+
+  const markSeenAndViewRuns = useCallback(
+    (workflowId: string) => {
+      setSeenWorkflowIds((prev) => {
+        if (prev.has(workflowId)) {
+          return prev;
+        }
+        const next = new Set(prev);
+        next.add(workflowId);
+        return next;
+      });
+      onViewRuns(workflowId);
+    },
+    [onViewRuns],
+  );
 
   function onRetry() {
     setStatus("loading");
@@ -162,10 +198,11 @@ export function WorkflowGrid({ onCount, onStarted, onViewRuns }: WorkflowGridPro
             <WorkflowCard
               key={workflow.id}
               workflow={workflow}
+              seen={seenWorkflowIds.has(workflow.id)}
               onStarted={(runId) => {
                 onStarted(workflow.id, runId);
               }}
-              onViewRuns={onViewRuns}
+              onViewRuns={markSeenAndViewRuns}
             />
           ))}
         </div>

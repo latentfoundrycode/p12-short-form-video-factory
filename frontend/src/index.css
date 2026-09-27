@@ -532,6 +532,19 @@ textarea {
   line-height: 1.45;
 }
 
+.card-meters {
+  margin-top: 11px;
+}
+
+.avg-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 5px;
+}
+
 .card-state {
   display: flex;
   align-items: center;
@@ -1150,6 +1163,12 @@ textarea {
   font-weight: 500;
   color: var(--text);
   margin-top: 1px;
+}
+
+.meter-val.none {
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.02em;
 }
 
 .meter-unit {
