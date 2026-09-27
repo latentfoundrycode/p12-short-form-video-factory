@@ -124,7 +124,7 @@ function resolvePresentation(workflow: Workflow, seen: boolean): CardPresentatio
       pillText: "Broken",
       showValidationErrors: false,
       showAvgCost: true,
-      hideRun: true,
+      hideRun: false,
       stateLines: [],
     };
   }
@@ -182,7 +182,7 @@ type WorkflowCardProps = {
   workflow: Workflow;
   seen: boolean;
   onStarted: (runId: string) => void;
-  onViewRuns: (workflowId: string) => void;
+  onViewRuns: (workflowId: string, runId: string | null) => void;
 };
 
 export function WorkflowCard({ workflow, seen, onStarted, onViewRuns }: WorkflowCardProps) {
@@ -259,7 +259,7 @@ export function WorkflowCard({ workflow, seen, onStarted, onViewRuns }: Workflow
             type="button"
             className="btn btn-sm"
             onClick={() => {
-              onViewRuns(workflow.id);
+              onViewRuns(workflow.id, workflow.last_run?.run_id ?? null);
             }}
           >
             Runs

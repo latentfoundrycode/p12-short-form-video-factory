@@ -6,19 +6,19 @@ import { WorkflowCard } from "./WorkflowCard";
 type WorkflowGridProps = {
   onCount: (count: number | null) => void;
   onStarted: (workflowId: string, runId: string) => void;
-  onViewRuns: (workflowId: string) => void;
+  onViewRuns: (workflowId: string, runId: string | null) => void;
+  openedRuns: ReadonlySet<string>;
 };
 
 function messageOf(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
 
-export function WorkflowGrid({ onCount, onStarted, onViewRuns }: WorkflowGridProps) {
+export function WorkflowGrid({ onCount, onStarted, onViewRuns, openedRuns }: WorkflowGridProps) {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
   const [rescanning, setRescanning] = useState(false);
-  const [seenWorkflowIds, setSeenWorkflowIds] = useState<Set<string>>(() => new Set());
 
   const applyList = useCallback(
     (list: Workflow[]) => {
@@ -78,21 +78,6 @@ export function WorkflowGrid({ onCount, onStarted, onViewRuns }: WorkflowGridPro
       window.clearInterval(timer);
     };
   }, [workflows, applyList]);
-
-  const markSeenAndViewRuns = useCallback(
-    (workflowId: string) => {
-      setSeenWorkflowIds((prev) => {
-        if (prev.has(workflowId)) {
-          return prev;
-        }
-        const next = new Set(prev);
-        next.add(workflowId);
-        return next;
-      });
-      onViewRuns(workflowId);
-    },
-    [onViewRuns],
-  );
 
   function onRetry() {
     setStatus("loading");
@@ -198,11 +183,13 @@ export function WorkflowGrid({ onCount, onStarted, onViewRuns }: WorkflowGridPro
             <WorkflowCard
               key={workflow.id}
               workflow={workflow}
-              seen={seenWorkflowIds.has(workflow.id)}
+              seen={workflow.last_run != null && openedRuns.has(workflow.last_run.run_id)}
               onStarted={(runId) => {
                 onStarted(workflow.id, runId);
               }}
-              onViewRuns={markSeenAndViewRuns}
+              onViewRuns={(workflowId, runId) => {
+                onViewRuns(workflowId, runId);
+              }}
             />
           ))}
         </div>
