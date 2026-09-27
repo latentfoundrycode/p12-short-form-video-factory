@@ -11,6 +11,10 @@ const DEFAULT_FIELDS: { key: SettingsDefaultKey; label: string }[] = [
   { key: "cache_max_bytes", label: "Max cache size (bytes)" },
 ];
 
+function messageOf(err: unknown, fallback: string): string {
+  return err instanceof Error ? err.message : fallback;
+}
+
 function secretRowLabel(name: string, providers: SettingsProvider[]): string {
   for (const provider of providers) {
     if (provider.secret_names.includes(name)) {
@@ -20,12 +24,12 @@ function secretRowLabel(name: string, providers: SettingsProvider[]): string {
   return name;
 }
 
-function defaultsDraftFrom(data: SettingsData): Record<SettingsDefaultKey, number> {
+function defaultStringsFrom(data: SettingsData): Record<SettingsDefaultKey, string> {
   return {
-    silence_limit_seconds: data.defaults.silence_limit_seconds.effective,
-    default_concurrency: data.defaults.default_concurrency.effective,
-    default_step_concurrency: data.defaults.default_step_concurrency.effective,
-    cache_max_bytes: data.defaults.cache_max_bytes.effective,
+    silence_limit_seconds: String(data.defaults.silence_limit_seconds.effective),
+    default_concurrency: String(data.defaults.default_concurrency.effective),
+    default_step_concurrency: String(data.defaults.default_step_concurrency.effective),
+    cache_max_bytes: String(data.defaults.cache_max_bytes.effective),
   };
 }
 
@@ -33,10 +37,13 @@ export function SettingsView() {
   const [reloadKey, setReloadKey] = useState(0);
   const [status, setStatus] = useState<LoadStatus>("loading");
   const [data, setData] = useState<SettingsData | null>(null);
-  const [defaultDraft, setDefaultDraft] = useState<Record<SettingsDefaultKey, number> | null>(
+  const [defaultStrings, setDefaultStrings] = useState<Record<SettingsDefaultKey, string> | null>(
     null,
   );
   const [secretDrafts, setSecretDrafts] = useState<Record<string, string>>({});
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busySecret, setBusySecret] = useState<string | null>(null);
+  const [savingDefaults, setSavingDefaults] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,13 +53,13 @@ export function SettingsView() {
           return;
         }
         setData(loaded);
-        setDefaultDraft(defaultsDraftFrom(loaded));
+        setDefaultStrings(defaultStringsFrom(loaded));
         setStatus("ready");
       })
       .catch(() => {
         if (!cancelled) {
           setData(null);
-          setDefaultDraft(null);
+          setDefaultStrings(null);
           setStatus("error");
         }
       });
@@ -61,25 +68,51 @@ export function SettingsView() {
     };
   }, [reloadKey]);
 
-  function refetch(): void {
+  function retryLoad(): void {
     setStatus("loading");
     setReloadKey((key) => key + 1);
   }
 
+  function applyLoaded(loaded: SettingsData): void {
+    setData(loaded);
+    setDefaultStrings(defaultStringsFrom(loaded));
+  }
+
   async function saveSecret(name: string): Promise<void> {
     const value = secretDrafts[name] ?? "";
-    await putSecret(name, value);
-    setSecretDrafts((current) => ({ ...current, [name]: "" }));
-    refetch();
+    if (!value.trim()) {
+      return;
+    }
+    setActionError(null);
+    setBusySecret(name);
+    try {
+      await putSecret(name, value);
+      setSecretDrafts((current) => ({ ...current, [name]: "" }));
+      const loaded = await fetchSettings();
+      applyLoaded(loaded);
+    } catch (err) {
+      setActionError(messageOf(err, "Could not save API key"));
+    } finally {
+      setBusySecret(null);
+    }
   }
 
   async function clearSecret(name: string): Promise<void> {
-    await deleteSecret(name);
-    refetch();
+    setActionError(null);
+    setBusySecret(name);
+    try {
+      await deleteSecret(name);
+      const loaded = await fetchSettings();
+      applyLoaded(loaded);
+    } catch (err) {
+      setActionError(messageOf(err, "Could not clear API key"));
+    } finally {
+      setBusySecret(null);
+    }
   }
 
   async function saveDefaults(): Promise<void> {
-    if (!data || !defaultDraft) {
+    if (!data || !defaultStrings) {
       return;
     }
     const changes: Partial<Record<SettingsDefaultKey, number>> = {};
@@ -87,21 +120,39 @@ export function SettingsView() {
       if (data.defaults[key].source === "env") {
         continue;
       }
+      const raw = defaultStrings[key].trim();
+      if (raw === "") {
+        continue;
+      }
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed)) {
+        continue;
+      }
       const original = data.defaults[key].effective;
-      const current = defaultDraft[key];
-      if (current !== original) {
-        changes[key] = current;
+      if (parsed !== original) {
+        changes[key] = parsed;
       }
     }
     if (Object.keys(changes).length === 0) {
       return;
     }
-    await putDefaults(changes);
-    refetch();
+    setActionError(null);
+    setSavingDefaults(true);
+    try {
+      await putDefaults(changes);
+      const loaded = await fetchSettings();
+      applyLoaded(loaded);
+    } catch (err) {
+      setActionError(messageOf(err, "Could not save defaults"));
+    } finally {
+      setSavingDefaults(false);
+    }
   }
 
+  const showInitialLoading = status === "loading" && data === null;
+
   return (
-    <section className="view on settings-view">
+    <section className="view on">
       <div className="page-head">
         <div>
           <div className="page-title">Settings</div>
@@ -111,7 +162,7 @@ export function SettingsView() {
         </div>
       </div>
 
-      {status === "loading" ? (
+      {showInitialLoading ? (
         <div className="panel">
           <div className="panel-body">
             <div className="page-note">Loading settings…</div>
@@ -124,7 +175,7 @@ export function SettingsView() {
           <div className="panel-body">
             <div className="form-error">
               Couldn&apos;t load settings. Check that SFVF is running.
-              <button type="button" className="btn btn-sm" style={{ marginLeft: 8 }} onClick={refetch}>
+              <button type="button" className="btn btn-sm" style={{ marginLeft: 8 }} onClick={retryLoad}>
                 Retry
               </button>
             </div>
@@ -132,31 +183,39 @@ export function SettingsView() {
         </div>
       ) : null}
 
-      {status === "ready" && data && defaultDraft ? (
-        <div className="settings-sections">
+      {data && defaultStrings ? (
+        <div className="stack">
+          {actionError ? <div className="form-error">{actionError}</div> : null}
+
           <div className="panel">
             <div className="panel-head">
-              <span className="panel-title">API keys</span>
+              <div>
+                <span className="eyebrow">Secrets</span>
+                <div className="panel-title">API keys</div>
+              </div>
             </div>
-            <div className="panel-body settings-form">
+            <div className="panel-body launch-form">
               {data.allowed_secret_names.map((name) => {
                 const configured = data.configured_secret_names.includes(name);
                 const label = secretRowLabel(name, data.providers);
+                const draft = secretDrafts[name] ?? "";
+                const rowBusy = busySecret === name;
                 return (
-                  <div className="settings-secret-row" key={name}>
-                    <div className="settings-secret-head">
-                      <span className="settings-secret-label">{label}</span>
-                      <span className={`pill ${configured ? "music" : "idle"}`}>
+                  <div className="field" key={name}>
+                    <span className="field-label">
+                      {label}{" "}
+                      <span className={`pill ${configured ? "done" : "idle"}`}>
                         {configured ? "configured" : "missing"}
                       </span>
-                    </div>
-                    <div className="settings-secret-actions">
+                    </span>
+                    <div className="detail-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
                       <input
                         className="field-input"
                         type="password"
                         autoComplete="off"
                         aria-label={`Set ${name}`}
-                        value={secretDrafts[name] ?? ""}
+                        value={draft}
+                        disabled={rowBusy}
                         onChange={(event) =>
                           setSecretDrafts((current) => ({
                             ...current,
@@ -167,14 +226,16 @@ export function SettingsView() {
                       <button
                         type="button"
                         className="btn btn-primary btn-sm"
+                        disabled={rowBusy || draft.trim() === ""}
                         onClick={() => void saveSecret(name)}
                       >
-                        Save {name}
+                        {rowBusy ? "Saving…" : `Save ${name}`}
                       </button>
                       {configured ? (
                         <button
                           type="button"
                           className="btn btn-sm"
+                          disabled={rowBusy}
                           onClick={() => void clearSecret(name)}
                         >
                           Clear {name}
@@ -189,7 +250,10 @@ export function SettingsView() {
 
           <div className="panel">
             <div className="panel-head">
-              <span className="panel-title">Connections</span>
+              <div>
+                <span className="eyebrow">Integrations</span>
+                <div className="panel-title">Connections</div>
+              </div>
             </div>
             <div className="panel-body">
               <p className="page-note">No service connections require sign-in.</p>
@@ -198,9 +262,12 @@ export function SettingsView() {
 
           <div className="panel">
             <div className="panel-head">
-              <span className="panel-title">Global defaults</span>
+              <div>
+                <span className="eyebrow">Runs</span>
+                <div className="panel-title">Global defaults</div>
+              </div>
             </div>
-            <div className="panel-body settings-form">
+            <div className="panel-body launch-form">
               {DEFAULT_FIELDS.map(({ key, label }) => {
                 const field = data.defaults[key];
                 const envLocked = field.source === "env";
@@ -212,14 +279,15 @@ export function SettingsView() {
                       type="number"
                       readOnly={envLocked}
                       aria-label={label}
-                      value={defaultDraft[key]}
+                      value={defaultStrings[key]}
+                      disabled={savingDefaults}
                       onChange={(event) => {
-                        const parsed = Number(event.target.value);
-                        if (!Number.isFinite(parsed)) {
+                        if (envLocked) {
                           return;
                         }
-                        setDefaultDraft((current) =>
-                          current ? { ...current, [key]: parsed } : current,
+                        const next = event.target.value;
+                        setDefaultStrings((current) =>
+                          current ? { ...current, [key]: next } : current,
                         );
                       }}
                     />
@@ -234,9 +302,10 @@ export function SettingsView() {
                 <button
                   type="button"
                   className="btn btn-primary btn-sm"
+                  disabled={savingDefaults}
                   onClick={() => void saveDefaults()}
                 >
-                  Save defaults
+                  {savingDefaults ? "Saving…" : "Save defaults"}
                 </button>
               </div>
             </div>

@@ -3,6 +3,7 @@ import {
   createSchedule,
   deleteSchedule,
   fetchSchedules,
+  fetchSettings,
   fetchWorkflows,
   updateSchedule,
 } from "../api";
@@ -59,6 +60,26 @@ function ScheduleForm({ workflows, entry, onCancel, onSaved }: ScheduleFormProps
   );
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (entry) {
+      return;
+    }
+    let cancelled = false;
+    void fetchSettings().then(
+      (settings) => {
+        if (!cancelled) {
+          setConcurrency(settings.defaults.default_concurrency.effective);
+        }
+      },
+      () => {
+        /* keep fallback concurrency when settings cannot be loaded */
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [entry]);
 
   function toggleDay(day: number) {
     setDays((current) =>
