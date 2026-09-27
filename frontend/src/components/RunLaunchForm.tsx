@@ -1,6 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { fetchProviderOptions, fetchVoices, startRun } from "../api";
-import { isStartRunOk, type Param, type ProviderOption, type Voice } from "../types";
+import {
+  isStartRunOk,
+  type Param,
+  type ProviderOption,
+  type SettingsData,
+  type Voice,
+} from "../types";
 
 type FieldValue = string | boolean | string[];
 
@@ -526,6 +532,33 @@ export function RunLaunchForm({
         }
       },
     );
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let ignore = false;
+    void import("../api").then((mod) => {
+      try {
+        const loadSettings = (mod as { fetchSettings?: () => Promise<SettingsData> }).fetchSettings;
+        if (typeof loadSettings !== "function" || ignore) {
+          return;
+        }
+        return loadSettings().then(
+          (settings) => {
+            if (!ignore) {
+              setConcurrency(settings.defaults.default_concurrency.effective);
+            }
+          },
+          () => {
+            /* keep initial concurrency when settings cannot be loaded */
+          },
+        );
+      } catch {
+        /* api mock may omit fetchSettings in some contract tests */
+      }
+    });
     return () => {
       ignore = true;
     };

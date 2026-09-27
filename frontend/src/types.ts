@@ -180,6 +180,31 @@ export type StatSeries = {
 
 export type Statistics = { months: number; series: StatSeries[] };
 
+export type SettingsDefaultKey =
+  | "silence_limit_seconds"
+  | "default_concurrency"
+  | "default_step_concurrency"
+  | "cache_max_bytes";
+
+export type SettingsDefaultField = {
+  effective: number;
+  source: "env" | "stored" | "default" | (string & {});
+};
+
+export type SettingsProvider = {
+  id: string;
+  label: string;
+  secret_names: string[];
+  configured: boolean;
+};
+
+export type SettingsData = {
+  providers: SettingsProvider[];
+  configured_secret_names: string[];
+  allowed_secret_names: string[];
+  defaults: Record<SettingsDefaultKey, SettingsDefaultField>;
+};
+
 export type RunDetail = {
   run_id: string;
   workflow: WorkflowRef;

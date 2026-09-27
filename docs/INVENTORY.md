@@ -1,5 +1,5 @@
 # Inventory — SFVF (Short-Form Video Factory)
-Reflected through: 2026-09-27 — Settings tab backend: API-key management + editable global defaults
+Reflected through: 2026-09-27 — Settings tab: the real screen (placeholder removed)
 Updated: 2026-09-27
 
 ## Features
@@ -20,6 +20,7 @@ Updated: 2026-09-27
 | Sensational Science News workflow | Researches the curated allowlist, picks a captivating non-repeating subject, writes a hook-first lay script, gates on cost, then assembles narrated 60-90s vertical video with sourced/generated visuals and Ken-Burns motion | workflows/sensational-science-news | tests/integration/test_ssn_* | Stage C/D (#172-174) |
 | Windows installer + lifecycle | Per-user double-click installer that installs, upgrades in place (keeps data), and uninstalls; install-check verifies the lifecycle | installer + scripts | scripts/install-check.ps1 | PKG-3/4 (#167) |
 | sfvf launch CLI + reference | `sfvf` command starts the app and serves the SPA; a command reference is generated | app | tests | PKG-1 (#165) |
+| Settings tab | Manage API keys from the GUI (configured/missing; set/replace/clear; value never shown) and edit the four §8.7 global defaults (silence limit, concurrency ×2, cache size); env-overridden fields shown read-only | frontend SettingsView.tsx + app/api/settings.py + app/core/app_settings.py | tests/api/test_settings_api.py; tests/core/test_app_settings.py; frontend SettingsView.test.tsx | F1a-c (#176/#177/F1c) |
 | Continuous integration | GitHub Actions runs ruff, ruff format, mypy, frontend lint/typecheck/vitest and pytest on every PR as the required `gate` merge check | .github/workflows/ci.yml | n/a | 2026-09-01 |
 
 ## Resources

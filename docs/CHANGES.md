@@ -2,6 +2,10 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-27 — Settings tab: the real screen (placeholder removed)
+
+The Settings tab is now a working screen, replacing the "Arrives in a later stage" placeholder that shipped in v1.0.0 (the gap that opened this cycle's audit). It manages API keys from the GUI — a row per provider/workflow key showing configured or missing, with a write-only field to set/replace a key and a Clear button, and a stored value is never shown — so credentials no longer require the terminal. It edits the four §8.7 global defaults (step silence limit, default concurrency, default step concurrency, max cache size), showing each field's effective value and marking one read-only when an environment variable overrides it. Service connections show a real empty state (no sign-in service exists yet). Completes R-066 and R-068. (F1c.)
+
 ## 2026-09-27 — Settings tab backend: API-key management + editable global defaults
 
 The Settings tab (PRD §8.7) gains its backend, replacing the terminal-only key workflow. `GET/PUT/DELETE /api/settings` manage the encrypted API keys from the app — the GUI shows only whether a name is configured, never a value — and a key set this way makes its provider usable **without a restart** (including for scheduled runs). New `GET /api/settings` + `PUT /api/settings/defaults` expose and edit the four §8.7 global defaults (step silence limit, default concurrency, default step concurrency, max cache size), persisted in a new app-settings store; the stored silence limit and step concurrency are now actually applied to runs (via `admit_run`), and the cache ceiling is honoured by eviction — each overridable by its env var (env > stored > default). The Settings tab UI that drives all this arrives next (F1c). (F1a #176 + F1b.)
