@@ -266,3 +266,38 @@ def test_archived_card_carries_last_run(tmp_path: Path) -> None:
     ghost = _card(_client(tmp_path / "wf", runs).get("/api/workflows").json(), "ghost")
     assert ghost["archived"] is True
     assert ghost["last_run"]["status"] == "failed"
+
+
+def test_last_run_ignores_bool_stage_and_progress(tmp_path: Path) -> None:
+    # bool is an int subclass; a `{"index": true}` event must be skipped, not coerced to 1/0.
+    write_plugin(tmp_path / "wf", "alpha", minimal_toml("alpha"))
+    runs = tmp_path / "runs"
+    _write_run(
+        runs,
+        "alpha",
+        "20260927-000001",
+        videos=[{"openrouter": 0.10}],
+        status="running",
+        events=[
+            {"t": "stage", "index": 3, "total": 7, "label": "Generating shots"},
+            {"t": "progress", "family": "shots", "done": 37, "total": 60},
+            {"t": "stage", "index": True, "total": 7, "label": "bad"},
+            {"t": "progress", "family": "shots", "done": False, "total": 60},
+        ],
+    )
+    card = _card(_client(tmp_path / "wf", runs).get("/api/workflows").json(), "alpha")
+    assert card["last_run"]["stage"] == {"index": 3, "total": 7, "label": "Generating shots"}
+    assert card["last_run"]["progress"] == {"done": 37, "total": 60}
+
+
+def test_undecodable_events_file_does_not_500_the_list(tmp_path: Path) -> None:
+    # A run whose events.jsonl has invalid UTF-8 must not take down GET /api/workflows.
+    write_plugin(tmp_path / "wf", "alpha", minimal_toml("alpha"))
+    runs = tmp_path / "runs"
+    _write_run(runs, "alpha", "20260927-000001", videos=[{"openrouter": 0.10}], status="running")
+    (runs / "alpha" / "20260927-000001" / "events.jsonl").write_bytes(
+        b'{"ts":"t","source":"s","event":{"t":"stage","index":3,"total":7,"label":"ok"}}\n\xff\xfe'
+    )
+    resp = _client(tmp_path / "wf", runs).get("/api/workflows")
+    assert resp.status_code == 200
+    assert _card(resp.json(), "alpha")["last_run"]["status"] == "running"
