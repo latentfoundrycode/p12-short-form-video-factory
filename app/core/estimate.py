@@ -167,7 +167,7 @@ def last_run_snapshot(runs_dir: Path, workflow_id: str) -> LastRunSnapshot | Non
                 maybe_progress = _parse_progress_event(event)
                 if maybe_progress is not None:
                     progress = maybe_progress
-    except OSError:
+    except (OSError, ValueError):
         pass
     return LastRunSnapshot(
         run_id=run_dir.name,
@@ -315,7 +315,13 @@ def _parse_stage_event(event: dict[str, Any]) -> StageSnapshot | None:
     index = event.get("index")
     total = event.get("total")
     label = event.get("label")
-    if not isinstance(index, int) or not isinstance(total, int) or not isinstance(label, str):
+    if (
+        isinstance(index, bool)
+        or not isinstance(index, int)
+        or isinstance(total, bool)
+        or not isinstance(total, int)
+        or not isinstance(label, str)
+    ):
         return None
     return StageSnapshot(index=index, total=total, label=label)
 
@@ -323,7 +329,12 @@ def _parse_stage_event(event: dict[str, Any]) -> StageSnapshot | None:
 def _parse_progress_event(event: dict[str, Any]) -> ProgressSnapshot | None:
     done = event.get("done")
     total = event.get("total")
-    if not isinstance(done, int) or not isinstance(total, int):
+    if (
+        isinstance(done, bool)
+        or not isinstance(done, int)
+        or isinstance(total, bool)
+        or not isinstance(total, int)
+    ):
         return None
     return ProgressSnapshot(done=done, total=total)
 
