@@ -171,4 +171,27 @@ describe("SettingsView", () => {
     await screen.findByText("OpenRouter");
     noPlaceholders();
   });
+
+  it("a failed save surfaces an error instead of swallowing it", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValue(settingsPayload() as SettingsPayload);
+    mockPut.mockRejectedValue(new Error("secret store is locked"));
+    render(<SettingsView />);
+    await screen.findByText("OpenRouter");
+    await user.type(screen.getByLabelText("Set OPENROUTER_API_KEY"), "sk-x");
+    await user.click(screen.getByRole("button", { name: "Save OPENROUTER_API_KEY" }));
+    // the failure is shown to the user, not silently dropped
+    await screen.findByText(/lock|could|fail|error/i);
+  });
+
+  it("disables Save for a key until a value is entered", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValue(settingsPayload() as SettingsPayload);
+    render(<SettingsView />);
+    await screen.findByText("OpenRouter");
+    const save = screen.getByRole("button", { name: "Save OPENROUTER_API_KEY" });
+    expect((save as HTMLButtonElement).disabled).toBe(true);
+    await user.type(screen.getByLabelText("Set OPENROUTER_API_KEY"), "k");
+    expect((save as HTMLButtonElement).disabled).toBe(false);
+  });
 });

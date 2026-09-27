@@ -25,14 +25,30 @@ vi.mock("../api", () => ({
   startRun: vi.fn(),
   fetchProviderOptions: vi.fn(),
   fetchVoices: vi.fn(),
+  fetchSettings: vi.fn(),
 }));
 
 // Imported after the mock is registered; typed via vi.mocked below.
-import { fetchProviderOptions, fetchVoices, startRun } from "../api";
+import { fetchProviderOptions, fetchSettings, fetchVoices, startRun } from "../api";
 
 const mockFetchOptions = vi.mocked(fetchProviderOptions);
 const mockStartRun = vi.mocked(startRun);
 const mockFetchVoices = vi.mocked(fetchVoices);
+const mockFetchSettings = vi.mocked(fetchSettings);
+
+function runDefaults(defaultConcurrency: number) {
+  return {
+    providers: [],
+    configured_secret_names: [],
+    allowed_secret_names: [],
+    defaults: {
+      silence_limit_seconds: { effective: 300, source: "default" },
+      default_concurrency: { effective: defaultConcurrency, source: "default" },
+      default_step_concurrency: { effective: 1, source: "default" },
+      cache_max_bytes: { effective: 5368709120, source: "default" },
+    },
+  };
+}
 
 beforeEach(() => {
   // The form fetches the voice list on mount; every test needs it to resolve.
@@ -41,6 +57,8 @@ beforeEach(() => {
     { id: "preset:warm-female", label: "Warm female narrator", source: "preset" },
     { id: "preset:classic-male", label: "Classic male narrator", source: "preset" },
   ]);
+  // The form also seeds its concurrency from the stored global default (F1b/F1c).
+  mockFetchSettings.mockResolvedValue(runDefaults(1) as never);
 });
 
 afterEach(() => {
@@ -283,5 +301,23 @@ describe("RunLaunchForm voice picker", () => {
     expect(body.voice ?? "").toBe("");
     expect(errorSpy).not.toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+});
+
+describe("RunLaunchForm concurrency default seeding", () => {
+  it("seeds the concurrency field from the stored global default", async () => {
+    mockFetchOptions.mockResolvedValue([]);
+    mockFetchSettings.mockResolvedValue(runDefaults(4) as never);
+    render(
+      <RunLaunchForm
+        workflowId="wf"
+        workflowName="WF"
+        params={[]}
+        onStarted={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    const concurrency = await screen.findByLabelText("Concurrency");
+    await waitFor(() => expect((concurrency as HTMLInputElement).value).toBe("4"));
   });
 });
