@@ -19,11 +19,13 @@ Writes need a live ``SecretStore`` at request time, so these tests build the app
 
 from __future__ import annotations
 
+from contextlib import suppress
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
-from app.core.secrets import SecretStore
+from app.core.secrets import SecretsError, SecretStore
 from app.main import create_app
 
 _PASSPHRASE = "test-passphrase"
@@ -212,3 +214,24 @@ def test_put_strips_surrounding_whitespace(tmp_path: Path) -> None:
     )
     assert resp.status_code == 200
     assert store.get("OPENROUTER_API_KEY") == _SECRET_VALUE
+
+
+def test_refresh_failure_leaves_previous_secrets_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The scheduler holds app.state.secrets by reference; the post-write refresh must decrypt the
+    # store BEFORE mutating the live map, so a failed reload never leaves it empty (which would
+    # make a scheduled tick inject no secrets). Load-before-clear.
+    store = _store(tmp_path)
+    store.set("OPENROUTER_API_KEY", _SECRET_VALUE)
+    client = _writable_client(tmp_path, store)
+    assert "OPENROUTER_API_KEY" in client.app.state.secrets
+
+    def boom() -> dict[str, str]:
+        raise SecretsError("decrypt failed")
+
+    monkeypatch.setattr(store, "all", boom)
+    with suppress(Exception):
+        client.put("/api/settings/secrets/GOOGLE_SA_JSON", json={"value": "x"})
+    # the previously loaded map must still be intact, not wiped
+    assert client.app.state.secrets.get("OPENROUTER_API_KEY") == _SECRET_VALUE
