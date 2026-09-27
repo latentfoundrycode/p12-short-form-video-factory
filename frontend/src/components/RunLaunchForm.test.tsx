@@ -380,3 +380,80 @@ describe("RunLaunchForm pre-launch cost estimate (F3-3)", () => {
     });
   });
 });
+
+
+function param(overrides: Partial<Param>): Param {
+  return {
+    key: "k",
+    type: "text",
+    label: "K",
+    required: false,
+    default: null,
+    help: null,
+    affects_cost: false,
+    min: null,
+    max: null,
+    step: null,
+    options: null,
+    options_from: null,
+    placeholder: null,
+    unit: null,
+    ...overrides,
+  };
+}
+
+describe("RunLaunchForm estimate is cost-scoped and failure-tolerant (F3-3-fix)", () => {
+  it("does not re-estimate on a non-cost-affecting field edit", async () => {
+    mockFetchOptions.mockResolvedValue([]);
+    render(
+      <RunLaunchForm
+        workflowId="wf"
+        workflowName="WF"
+        params={[param({ key: "topic", label: "Topic", type: "text", affects_cost: false })]}
+        onStarted={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    await waitFor(() => expect(mockFetchEstimate).toHaveBeenCalled());
+    const before = mockFetchEstimate.mock.calls.length;
+    await userEvent.type(screen.getByLabelText(/Topic/), "cats");
+    await new Promise((r) => setTimeout(r, 400));
+    expect(mockFetchEstimate.mock.calls.length).toBe(before);
+  });
+
+  it("estimates the cost-affecting fields even while a required field is empty", async () => {
+    mockFetchOptions.mockResolvedValue([]);
+    render(
+      <RunLaunchForm
+        workflowId="wf"
+        workflowName="WF"
+        params={[
+          param({ key: "duration_s", label: "Duration", type: "number", default: 30, affects_cost: true }),
+          param({ key: "topic", label: "Topic", type: "text", required: true, affects_cost: false }),
+        ]}
+        onStarted={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    // topic is required and empty (form invalid), but the estimate must still carry duration_s
+    await waitFor(() => expect(mockFetchEstimate).toHaveBeenCalled());
+    const call = mockFetchEstimate.mock.calls.at(-1);
+    expect(call?.[1]).toMatchObject({ duration_s: 30 });
+  });
+
+  it("on a failed estimate shows only the error, not the empty message", async () => {
+    mockFetchOptions.mockResolvedValue([]);
+    mockFetchEstimate.mockRejectedValue(new Error("boom"));
+    render(
+      <RunLaunchForm
+        workflowId="wf"
+        workflowName="WF"
+        params={[]}
+        onStarted={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    await waitFor(() => expect(document.body.textContent).toMatch(/couldn.?t load|could not load/i));
+    expect(document.body.textContent).not.toMatch(/no estimate yet|no history/i);
+  });
+});
