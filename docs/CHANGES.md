@@ -2,6 +2,10 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-27 — Main-tab cards: cost, run state, and archived workflows
+
+Each workflow card now shows the average cost per meter over its last ten runs ("Average per video · last 10 runs", "No runs yet" when it has none), and reflects its current run at a glance: a yellow outline with the stage it reports while running, green when a run just finished (clearing once you open that workflow's video list, and re-appearing for a new run), and red only for a run that needs attention (a failure or a budget stop — a user stop or a partial success is not red). A workflow whose code has been removed but whose videos remain now appears as a greyed-out "Archived" card that stays browsable instead of a red "Broken" one. Completes R-005/R-006/R-007/R-008/R-011. (F2a + F2b.)
+
 ## 2026-09-27 — Settings tab: the real screen (placeholder removed)
 
 The Settings tab is now a working screen, replacing the "Arrives in a later stage" placeholder that shipped in v1.0.0 (the gap that opened this cycle's audit). It manages API keys from the GUI — a row per provider/workflow key showing configured or missing, with a write-only field to set/replace a key and a Clear button, and a stored value is never shown — so credentials no longer require the terminal. It edits the four §8.7 global defaults (step silence limit, default concurrency, default step concurrency, max cache size), showing each field's effective value and marking one read-only when an environment variable overrides it. Service connections show a real empty state (no sign-in service exists yet). Completes R-066 and R-068. (F1c.)
