@@ -123,6 +123,12 @@ describe("WorkflowCard", () => {
     expect(cls).not.toContain("s-fail");
   });
 
+  it("a failed (valid) workflow keeps the Run workflow button so it can be relaunched", () => {
+    renderCard(make({ last_run: { run_id: "r", status: "failed", stage: null, progress: null } }));
+    // valid workflow whose last run failed: the only relaunch control must remain
+    screen.getByRole("button", { name: /run workflow/i });
+  });
+
   it("failed and stopped-budget are red (need attention); user stop is not", () => {
     const failed = renderCard(
       make({ last_run: { run_id: "r", status: "failed", stage: null, progress: null } }),
