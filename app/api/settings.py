@@ -55,9 +55,10 @@ def _allowed_secret_names(holder: RegistryHolder) -> set[str]:
 
 
 def _refresh_secrets(request: Request, store: SecretStore) -> None:
+    loaded = store.all()
     current = request.app.state.secrets
     current.clear()
-    current.update(store.all())
+    current.update(loaded)
     registry = _holder(request)
     request.app.state.registry = RegistryHolder(
         registry.workflows_dir,
