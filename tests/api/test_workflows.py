@@ -14,6 +14,9 @@ WORKFLOW_FIELDS = {
     "problems",
     "quality_factors",
     "params",
+    "avg_cost_per_meter",
+    "runs_counted",
+    "archived",
 }
 
 PARAM_FIELDS = {
