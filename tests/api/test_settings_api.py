@@ -176,3 +176,39 @@ def test_delete_missing_name_is_idempotent(tmp_path: Path) -> None:
 def test_delete_on_locked_store_returns_409(tmp_path: Path) -> None:
     resp = _locked_client(tmp_path, secrets={}).delete("/api/settings/secrets/OPENROUTER_API_KEY")
     assert resp.status_code == 409
+
+
+# ------------------------------------- freshness for long-lived captures + value hygiene
+
+
+def test_put_preserves_state_secrets_identity(tmp_path: Path) -> None:
+    # The scheduler lifespan captures app.state.secrets BY REFERENCE at startup; a settings write
+    # must keep that same dict object current (mutate in place) so scheduled/unattended runs see a
+    # newly stored key without a restart, rather than rebinding to a new object the scheduler
+    # never sees.
+    store = _store(tmp_path)
+    client = _writable_client(tmp_path, store)
+    before = client.app.state.secrets
+    client.put("/api/settings/secrets/OPENROUTER_API_KEY", json={"value": _SECRET_VALUE})
+    assert client.app.state.secrets is before
+    assert client.app.state.secrets.get("OPENROUTER_API_KEY") == _SECRET_VALUE
+
+
+def test_delete_preserves_state_secrets_identity(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.set("OPENROUTER_API_KEY", _SECRET_VALUE)
+    client = _writable_client(tmp_path, store)
+    before = client.app.state.secrets
+    client.delete("/api/settings/secrets/OPENROUTER_API_KEY")
+    assert client.app.state.secrets is before
+    assert "OPENROUTER_API_KEY" not in client.app.state.secrets
+
+
+def test_put_strips_surrounding_whitespace(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    client = _writable_client(tmp_path, store)
+    resp = client.put(
+        "/api/settings/secrets/OPENROUTER_API_KEY", json={"value": f"  {_SECRET_VALUE}  "}
+    )
+    assert resp.status_code == 200
+    assert store.get("OPENROUTER_API_KEY") == _SECRET_VALUE
