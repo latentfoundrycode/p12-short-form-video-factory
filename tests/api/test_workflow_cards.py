@@ -101,6 +101,39 @@ def test_meter_absent_from_some_runs_divides_by_pool_size(tmp_path: Path) -> Non
     assert card["avg_cost_per_meter"]["byteplus"] == 1.00
 
 
+def test_averages_per_video_not_per_request(tmp_path: Path) -> None:
+    # R-005 is "average per VIDEO". A 3-video run must not count as 3x a 1-video run: a run's
+    # per-video cost is (its videos + prepare) / finished-video count, then averaged over runs.
+    write_plugin(tmp_path / "wf", "alpha", minimal_toml("alpha"))
+    runs = tmp_path / "runs"
+    _write_run(runs, "alpha", "20260927-000001", videos=[{"openrouter": 1.00}])
+    _write_run(
+        runs,
+        "alpha",
+        "20260927-000002",
+        videos=[{"openrouter": 1.00}, {"openrouter": 1.00}, {"openrouter": 1.00}],
+    )
+    card = _card(_client(tmp_path / "wf", runs).get("/api/workflows").json(), "alpha")
+    assert card["runs_counted"] == 2
+    # per-video cost is 1.00 in both runs -> average per video 1.00, NOT (1.00 + 3.00) / 2 = 2.00
+    assert card["avg_cost_per_meter"]["openrouter"] == 1.00
+
+
+def test_prepare_cost_spread_across_videos(tmp_path: Path) -> None:
+    write_plugin(tmp_path / "wf", "alpha", minimal_toml("alpha"))
+    runs = tmp_path / "runs"
+    # 2 videos @0.10 + prepare 0.04 -> per video (0.20 + 0.04) / 2 = 0.12
+    _write_run(
+        runs,
+        "alpha",
+        "20260927-000001",
+        videos=[{"openrouter": 0.10}, {"openrouter": 0.10}],
+        prepare={"openrouter": 0.04},
+    )
+    card = _card(_client(tmp_path / "wf", runs).get("/api/workflows").json(), "alpha")
+    assert card["avg_cost_per_meter"]["openrouter"] == 0.12
+
+
 def test_prepare_cost_counted(tmp_path: Path) -> None:
     write_plugin(tmp_path / "wf", "alpha", minimal_toml("alpha"))
     runs = tmp_path / "runs"
