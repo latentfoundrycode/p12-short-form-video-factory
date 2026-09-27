@@ -158,3 +158,12 @@ def test_archived_workflow_runs_stay_browsable(tmp_path: Path) -> None:
     _write_run(runs, "ghost", "20260927-000001", videos=[{"openrouter": 0.50}])
     resp = _client(tmp_path / "wf", runs).get("/api/workflows/ghost/runs")
     assert resp.status_code == 200
+
+
+def test_drive_relative_workflow_id_is_rejected(tmp_path: Path) -> None:
+    # A Windows drive-relative id (e.g. "C:") must never be accepted by the browsable read route,
+    # since `runs_dir / "C:"` would escape to the drive root.
+    write_plugin(tmp_path / "wf", "alpha", minimal_toml("alpha"))
+    client = _client(tmp_path / "wf", tmp_path / "runs")
+    for bad in ("C:", "D:"):
+        assert client.get(f"/api/workflows/{bad}/runs").status_code == 404, bad
