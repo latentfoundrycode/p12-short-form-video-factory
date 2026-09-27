@@ -72,6 +72,32 @@ def test_low_disk_refuses_launch(tmp_path: Path, monkeypatch) -> None:
     assert "disk" in resp.text.lower() or "space" in resp.text.lower()
 
 
+def test_low_disk_refuses_on_fresh_data_dir(tmp_path: Path, monkeypatch) -> None:
+    """R-036: the runs directory does not exist until the first run is allocated. The disk
+    check must fall back to an existing ancestor of that path (the volume the output lands
+    on) and still refuse below 5 GB. A missing directory raises FileNotFoundError (a
+    subclass of OSError); swallowing it as 'disk unreadable' lets a fresh install on a
+    low-disk volume start, which is the exact case this preflight exists for.
+    """
+    write_plugin(tmp_path, "news-explainer", minimal_toml())
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(runs_mod, "run_request", _spy(calls))
+
+    def fake_disk_usage(p: Any) -> SimpleNamespace:
+        if not Path(p).exists():
+            raise FileNotFoundError(p)
+        return SimpleNamespace(total=500 * _GB, used=497 * _GB, free=3 * _GB)
+
+    monkeypatch.setattr(shutil, "disk_usage", fake_disk_usage)
+    runs_dir = tmp_path / "data" / "runs"  # nothing has created this yet
+    assert not runs_dir.exists()
+    client = TestClient(create_app(tmp_path, secrets={}, runs_dir=runs_dir))
+    resp = _launch(client)
+    assert resp.status_code == 422
+    assert calls == []  # refused before admit_run, despite the missing runs dir
+    assert "disk" in resp.text.lower() or "space" in resp.text.lower()
+
+
 def test_adequate_disk_proceeds(tmp_path: Path, monkeypatch) -> None:
     write_plugin(tmp_path, "news-explainer", minimal_toml())
     calls: list[dict[str, Any]] = []
