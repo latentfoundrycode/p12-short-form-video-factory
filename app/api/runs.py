@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from sfvf.context import BudgetConfig
 from sfvf.providers import UnknownModelError, provider_configured, resolve
 
-from app.api.workflows import RegistryHolder
+from app.api.workflows import RegistryHolder, configured_secret_names
 from app.core import app_settings
 from app.core.env import EnvBlocked
 from app.core.env import ensure_env as default_ensure_env
@@ -519,6 +519,29 @@ def launch_run(
     blocked = _unconfigured_model_param(entry, body.params, set(_secrets(request)))
     if blocked is not None:
         raise HTTPException(status_code=422, detail=blocked)
+    try:
+        if shutil.disk_usage(_runs_dir(request)).free < 5 * 1024**3:
+            raise HTTPException(
+                status_code=422,
+                detail="Not enough free disk space to start a run (need at least 5 GB).",
+            )
+    except OSError:
+        pass
+    manifest = entry.manifest
+    if manifest is not None:
+        configured = configured_secret_names(_secrets(request))
+        for key in manifest.requires_keys:
+            if key.name not in configured:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Required secret {key.name!r} is not configured",
+                )
+        for binary in manifest.workflow.requires_binaries:
+            if shutil.which(binary) is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Required program {binary!r} is not installed",
+                )
     outcome = admit_run(
         entry.path,
         params=body.params,
