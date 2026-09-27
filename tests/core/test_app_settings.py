@@ -88,6 +88,30 @@ def test_update_rejects_invalid_values() -> None:
             app_settings.update(**bad)
 
 
+def test_update_rejects_bool() -> None:
+    # A bool must never coerce to 1/0 and slip past validation (a stored cache ceiling of 1 would
+    # trim the cheap cache to a single byte; a stored silence limit of 1.0 would gut the watchdog).
+    for bad in (
+        {"silence_limit_seconds": True},
+        {"default_concurrency": True},
+        {"default_step_concurrency": True},
+        {"cache_max_bytes": True},
+        {"default_concurrency": False},
+    ):
+        with pytest.raises(ValueError):
+            app_settings.update(**bad)  # type: ignore[arg-type]
+
+
+def test_update_rejects_noninteger_float_for_int_fields() -> None:
+    for bad in (
+        {"default_concurrency": 2.9},
+        {"default_step_concurrency": 1.5},
+        {"cache_max_bytes": 10.5},
+    ):
+        with pytest.raises(ValueError):
+            app_settings.update(**bad)
+
+
 # --------------------------------------------------------------------------- resolvers (precedence)
 
 

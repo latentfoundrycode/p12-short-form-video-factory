@@ -293,3 +293,23 @@ def test_put_defaults_rejects_invalid(tmp_path: Path, monkeypatch: pytest.Monkey
     client = _writable_client(tmp_path, store)
     resp = client.put("/api/settings/defaults", json={"default_concurrency": 0})
     assert resp.status_code in (400, 422)
+
+
+def test_put_defaults_rejects_bool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # JSON true must not be coerced to 1 and stored (pydantic lax mode would otherwise accept it).
+    _isolate_defaults(tmp_path, monkeypatch)
+    client = _writable_client(tmp_path, _store(tmp_path))
+    for field in (
+        "silence_limit_seconds",
+        "default_concurrency",
+        "default_step_concurrency",
+        "cache_max_bytes",
+    ):
+        resp = client.put("/api/settings/defaults", json={field: True})
+        assert resp.status_code in (400, 422), (
+            f"{field}=true must be rejected, got {resp.status_code}"
+        )
+    # nothing was stored: fields still report the built-in default
+    defaults = client.get("/api/settings").json()["defaults"]
+    assert defaults["cache_max_bytes"]["source"] == "default"
+    assert defaults["silence_limit_seconds"]["source"] == "default"
