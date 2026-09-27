@@ -52,7 +52,8 @@ QUALITY_FACTORS_TOML = (
 
 
 def client_for(workflows_dir: Path) -> TestClient:
-    return TestClient(create_app(workflows_dir))
+    # Isolate card/archived reads from the developer's live runs/ tree with an empty runs dir.
+    return TestClient(create_app(workflows_dir, runs_dir=workflows_dir / "__runs__"))
 
 
 def test_list_returns_envelope_in_folder_name_order(tmp_path: Path) -> None:
