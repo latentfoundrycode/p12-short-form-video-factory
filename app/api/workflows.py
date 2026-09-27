@@ -9,7 +9,8 @@ from pydantic import BaseModel
 from sfvf.context import BudgetConfig
 from sfvf.providers import capabilities_offered
 
-from app.paths import is_safe_path_segment, safe_join
+from app.core.estimate import archived_workflow_ids, average_cost_per_meter
+from app.paths import RUNS_DIR, is_safe_path_segment, safe_join
 from app.registry.scan import scan
 from app.registry.validate import WorkflowEntry
 
@@ -97,6 +98,9 @@ class WorkflowOut(BaseModel):
     problems: list[ProblemOut]
     quality_factors: list[QualityFactorOut]
     params: list[ParamOut]
+    avg_cost_per_meter: dict[str, float] = {}
+    runs_counted: int = 0
+    archived: bool = False
 
 
 class WorkflowListOut(BaseModel):
@@ -107,9 +111,14 @@ def _holder(request: Request) -> RegistryHolder:
     return cast(RegistryHolder, request.app.state.registry)
 
 
-def _serialize(entry: WorkflowEntry) -> WorkflowOut:
+def _runs_dir(request: Request) -> Path:
+    return cast(Path, getattr(request.app.state, "runs_dir", RUNS_DIR))
+
+
+def _serialize(entry: WorkflowEntry, runs_dir: Path) -> WorkflowOut:
     manifest = entry.manifest
     declared_thumb = None if manifest is None else manifest.workflow.thumbnail
+    avg_cost, runs_counted = average_cost_per_meter(runs_dir, entry.folder_name)
     return WorkflowOut(
         id=entry.folder_name,
         name=None if manifest is None else manifest.workflow.name,
@@ -152,21 +161,45 @@ def _serialize(entry: WorkflowEntry) -> WorkflowOut:
                 for param in manifest.params
             ]
         ),
+        avg_cost_per_meter=avg_cost,
+        runs_counted=runs_counted,
+        archived=False,
     )
 
 
-def _list_payload(entries: list[WorkflowEntry]) -> WorkflowListOut:
-    return WorkflowListOut(workflows=[_serialize(entry) for entry in entries])
+def _serialize_archived(workflow_id: str, runs_dir: Path) -> WorkflowOut:
+    avg_cost, runs_counted = average_cost_per_meter(runs_dir, workflow_id)
+    return WorkflowOut(
+        id=workflow_id,
+        name=None,
+        description=None,
+        thumbnail_url=None,
+        valid=False,
+        problems=[],
+        quality_factors=[],
+        params=[],
+        avg_cost_per_meter=avg_cost,
+        runs_counted=runs_counted,
+        archived=True,
+    )
+
+
+def _list_payload(entries: list[WorkflowEntry], runs_dir: Path) -> WorkflowListOut:
+    known = {entry.folder_name for entry in entries}
+    workflows = [_serialize(entry, runs_dir) for entry in entries]
+    for workflow_id in archived_workflow_ids(runs_dir, known):
+        workflows.append(_serialize_archived(workflow_id, runs_dir))
+    return WorkflowListOut(workflows=workflows)
 
 
 @router.get("/workflows", response_model=WorkflowListOut)
 def list_workflows(request: Request) -> WorkflowListOut:
-    return _list_payload(_holder(request).snapshot)
+    return _list_payload(_holder(request).snapshot, _runs_dir(request))
 
 
 @router.post("/workflows/rescan", response_model=WorkflowListOut)
 def rescan_workflows(request: Request) -> WorkflowListOut:
-    return _list_payload(_holder(request).rescan())
+    return _list_payload(_holder(request).rescan(), _runs_dir(request))
 
 
 @router.get("/workflows/{workflow_id}/thumbnail")
