@@ -24,8 +24,8 @@ requirement (the requirement ID is threaded into those tests as increments touch
 | R-012 | The manifest identifier is permanent (links output folder); the display name may change freely. | requirements document §8.1 | built | tests/api/test_workflows.py |
 | R-013 | Broken/invalid workflows are shown with an error state and their problem messages. | requirements document §8.1 (red/error state) | built | tests/api/test_workflows.py |
 | R-014 | The Run configuration renders the workflow's own declared settings automatically from the manifest. | requirements document §8.2 | built | tests/api/test_run_settings_api.py |
-| R-015 | The run form supports the declared setting types: single-line text, multi-line text, number, yes/no, single choice, multiple choice, and file. | requirements document §8.2 | built | tests/api/test_workflows.py (params schema); file type not yet rendered in the form |
-| R-016 | The "file" setting type (reference media input) is accepted and rendered as an input in the run form. | requirements document §8.2, §13 | planned | — |
+| R-015 | The run form supports the declared setting types: single-line text, multi-line text, number, yes/no, single choice, multiple choice, and file. | requirements document §8.2 | built | tests/api/test_workflows.py (params schema); RunLaunchForm renders file as a plain text field |
+| R-016 | The "file" setting type (reference media input) is accepted and rendered as a dedicated file picker in the run form. | requirements document §8.2, §13 | planned | — (accepted in schema and shown as a plain text field; a dedicated file picker is absent) |
 | R-017 | A choice list may be supplied by a named provider source and filled in when the form opens. | requirements document §8.2 | built | tests/api/test_providers.py |
 | R-018 | The chosen provider-supplied value is recorded as a pinned identifier so the run stays reproducible. | requirements document §8.2 | built | tests/api/test_providers.py |
 | R-019 | If the provider cannot be reached, the last-known option list is offered with a note (fallback to manual entry). | requirements document §8.2 | built | tests/api/test_providers.py |
@@ -147,7 +147,7 @@ requirement (the requirement ID is threaded into those tests as increments touch
 | R-135 | Assets are identified by content hash, not by name; a name can be repointed. | requirements document §10a.2 | built | tests/core/test_supervisor_library.py |
 | R-136 | Nothing is overwritten or auto-deleted; a redesign is a new asset recording what it supersedes; manual "remove" only deactivates. | requirements document §10a.2; docs/INVENTORY.md (Decisions) | built | tests/api/test_library_mutations_api.py |
 | R-137 | Manual deletion refuses to destroy anything a past run refers to. | requirements document §10a.2 | built | tests/api/test_library_mutations_api.py |
-| R-138 | The library also holds small structured persistent state (e.g. where a series left off). | requirements document §10a.3 | planned | — |
+| R-138 | The library also holds small structured persistent state (e.g. where a series left off). | requirements document §10a.3 | built | tests/integration/test_ssn_prepare.py (used-subjects value asset); tests/core/test_supervisor_library.py |
 | R-139 | A library belongs to a body of work: a workflow names the collection it uses, defaulting to itself; collections are shared, not copied. | requirements document §10a.4 | built | tests/core/test_supervisor_library.py; tests/core/test_supervisor_library_owner_pool.py |
 | R-140 | Per-asset access grants control which workflow(s) may use each asset. | requirements document §10a.4; docs/INVENTORY.md (per-asset access grants) | built | tests/api/test_library_api.py |
 | R-141 | Asset attribute names must be declared in advance; undeclared names/values are rejected and first appearances reported (no auto-merge). | requirements document §12, §10a.1 | built | tests/core/test_supervisor_library_hardening.py |
@@ -173,3 +173,4 @@ requirement (the requirement ID is threaded into those tests as increments touch
 | R-161 | Planned workflow: serial character drama (sequential episodes, library-carried story state and character sheets, atomic budgeting, gates). | requirements document §13 | planned | — |
 | R-162 | Planned workflow: reference-driven (analyse an existing short's pacing/hook/structure, produce differentiated concepts). | requirements document §13 | planned | — |
 | R-163 | Publishing/uploading is deliberately excluded; SFVF only produces files. | requirements document §3.2 | built | (by omission — no upload path exists) |
+| R-164 | A learning run that errors reverts entirely to its pre-run state (no files modified) and shows a red outline with a pop-up; errors the program can handle are silent. | requirements document §8.5 | planned | — (no revert path in app/learning) |

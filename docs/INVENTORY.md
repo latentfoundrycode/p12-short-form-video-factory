@@ -20,19 +20,19 @@ Updated: 2026-09-27
 | Sensational Science News workflow | Researches the curated allowlist, picks a captivating non-repeating subject, writes a hook-first lay script, gates on cost, then assembles narrated 60-90s vertical video with sourced/generated visuals and Ken-Burns motion | workflows/sensational-science-news | tests/integration/test_ssn_* | Stage C/D (#172-174) |
 | Windows installer + lifecycle | Per-user double-click installer that installs, upgrades in place (keeps data), and uninstalls; install-check verifies the lifecycle | installer + scripts | scripts/install-check.ps1 | PKG-3/4 (#167) |
 | sfvf launch CLI + reference | `sfvf` command starts the app and serves the SPA; a command reference is generated | app | tests | PKG-1 (#165) |
-| Continuous integration | GitHub Actions runs ruff, mypy, frontend lint/typecheck and tests on every PR as the required merge check | .github/workflows | n/a | CI (#699-scope) |
+| Continuous integration | GitHub Actions runs ruff, ruff format, mypy, frontend lint/typecheck/vitest and pytest on every PR as the required `gate` merge check | .github/workflows/ci.yml | n/a | 2026-09-01 |
 
 ## Resources
 | Name | Kind | Where it lives | Used by | Provided |
 |---|---|---|---|---|
-| SFVF_DATA_DIR | env var | user env var / installer | app.core.paths (relocatable DATA_ROOT for runs/library/secrets/ledger/schedules) | installer/owner (defaults under %LOCALAPPDATA%) |
+| SFVF_DATA_DIR | env var | user env var / installer | app/paths.py (relocatable DATA_ROOT for runs/library/secrets/ledger/schedules) | installer/owner (defaults under %LOCALAPPDATA%) |
 | SFVF_SECRETS_PATH SFVF_SECRETS_PASSPHRASE | env var | user env var | app.core.secrets (encrypted store location + unlock passphrase) | owner |
 | SFVF_BUDGET_CONFIG SFVF_BUDGET_STATE | env var | user env var (paths) | app.core.budget (per-meter caps TOML + persisted spend state) | owner |
 | SFVF_ENABLE_SCHEDULER | env var | user env var | app scheduler (opt-in unattended runs) | owner |
 | SFVF_CACHE_MAX_BYTES | env var | user env var | app.core.cache_config (cheap-cache eviction ceiling) | owner / defaults (5 GiB) |
 | SFVF_DISABLE_WEB_TIERS | env var | user env var | sdk/sfvf/media/web tier gating | owner / tests |
 | SFVF_HYPERFRAMES_ENTRY SFVF_HYPERFRAMES_TIMEOUT_S | env var | user env var | sdk/sfvf/media/graphics (render entrypoint + hard timeout) | owner / defaults |
-| PUPPETEER_CACHE_DIR | env var | process env | frontend/installer Chromium download cache for the render toolchain | installer |
+| PUPPETEER_CACHE_DIR PUPPETEER_EXECUTABLE_PATH HYPERFRAMES_BROWSER_PATH PRODUCER_HEADLESS_SHELL_PATH | env var | process env | sdk/sfvf/media/dom_check.mjs (Chrome binary + download-cache resolution for the HyperFrames render toolchain) | installer / dev |
 | SFVF_MARKER_KEEP | test-only env var | tests/api/test_secret_injection.py | secret-injection test (asserts a declared marker survives injection) | n/a |
 | OPENROUTER_API_KEY | secret | the app's encrypted store | agents.llm/research/vision (OpenRouter) | owner (CLI set) |
 | OPENAI_API_KEY | secret | the app's encrypted store | OpenAI provider | owner (CLI set) |
@@ -57,6 +57,7 @@ Updated: 2026-09-27
 | Approval gate and per-video budget are run settings, not baked into the workflow | The owner sets risk per run (Manual vs Autonomous, budget cap) | Stage B owner | a workflow needs a fixed policy |
 | Secrets live in an encrypted store unlocked by a passphrase; the app injects only requires_keys secrets | Least privilege; a workflow sees only what it declares | S-series supervisor | a broader injection model is needed |
 | Project state is two bounded files: PROJECT_STATUS.md (<=120 lines) + INVENTORY.md | A status file grown into a log is read in slices and the needed fact is skipped (bridge rule 41) | 2026-09-27 supervisor | the bridge changes the state-file contract |
+| Speech ships as local Chatterbox TTS + WhisperX, not ElevenLabs; video/image ship via BytePlus Seedance / Gemini / BFL / MiniMax (direct APIs + aggregator), not Higgsfield-via-MCP | Local TTS removes a per-character quota meter and a paid dependency; direct provider APIs are cheaper and more controllable than the Higgsfield MCP aggregator | 2026-09 owner (drops recorded 2026-09-27: R-086, R-153, R-154) | the owner wants the original PRD providers, or an MCP-only capability returns |
 
 ## Deferred
 | Item | Why deferred | Since | Owner decision needed |
