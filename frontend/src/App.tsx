@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { LearningView } from "./components/LearningView";
 import { LibraryView } from "./components/LibraryView";
-import { PlaceholderView } from "./components/PlaceholderView";
+import { SettingsView } from "./components/SettingsView";
 import { RunsListView } from "./components/RunsListView";
 import { RunView } from "./components/RunView";
 import { ScheduleView } from "./components/ScheduleView";
@@ -65,7 +65,7 @@ function App() {
       ) : tab === "statistics" ? (
         <StatisticsView />
       ) : (
-        <PlaceholderView tab={tab} />
+        <SettingsView />
       )}
     </Shell>
   );

@@ -21,6 +21,8 @@ import type {
   StagedList,
   StagedProposal,
   StartRunResult,
+  SettingsData,
+  SettingsDefaultKey,
   Statistics,
   StopMode,
   StopRunResult,
@@ -480,6 +482,47 @@ export async function reactivateLibraryAsset(id: string): Promise<LibraryAsset> 
     throw new Error(`Could not restore library asset (${response.status})`);
   }
   return (await response.json()) as LibraryAsset;
+}
+
+export async function fetchSettings(): Promise<SettingsData> {
+  const response = await fetch("/api/settings");
+  if (!response.ok) {
+    throw new Error(`Could not load settings (${response.status})`);
+  }
+  return (await response.json()) as SettingsData;
+}
+
+export async function putSecret(name: string, value: string): Promise<void> {
+  const response = await fetch(`/api/settings/secrets/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value }),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not save secret (${response.status})`);
+  }
+}
+
+export async function deleteSecret(name: string): Promise<void> {
+  const response = await fetch(`/api/settings/secrets/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(`Could not clear secret (${response.status})`);
+  }
+}
+
+export async function putDefaults(
+  fields: Partial<Record<SettingsDefaultKey, number>>,
+): Promise<void> {
+  const response = await fetch("/api/settings/defaults", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(fields),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not save defaults (${response.status})`);
+  }
 }
 
 export async function fetchStatistics(months?: number): Promise<Statistics> {
