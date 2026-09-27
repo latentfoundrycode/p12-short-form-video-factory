@@ -22,6 +22,7 @@ from sfvf.context import BudgetConfig
 from sfvf.providers import UnknownModelError, provider_configured, resolve
 
 from app.api.workflows import RegistryHolder
+from app.core import app_settings
 from app.core.env import EnvBlocked
 from app.core.env import ensure_env as default_ensure_env
 from app.core.layout import format_video_dir
@@ -310,8 +311,14 @@ def admit_run(
     secrets: Mapping[str, str] | None = None,
     budget: BudgetConfig | None = None,
     disabled_web_tiers: list[str] | None = None,
+    silence_limit_default: float | None = None,
+    step_concurrency: int | None = None,
 ) -> AdmissionResult:
     """Launch run_request on a daemon thread; return as soon as admission resolves."""
+    if silence_limit_default is None:
+        silence_limit_default = app_settings.silence_limit_seconds()
+    if step_concurrency is None:
+        step_concurrency = app_settings.default_step_concurrency()
     started = threading.Event()
     run_ids: list[str] = []
     results: list[RunRequestResult] = []
@@ -340,6 +347,8 @@ def admit_run(
                     secrets=secrets,
                     budget=budget,
                     disabled_web_tiers=disabled_web_tiers or [],
+                    silence_limit_default=silence_limit_default,
+                    step_concurrency=step_concurrency,
                 )
             )
         except BaseException as exc:

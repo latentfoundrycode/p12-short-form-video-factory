@@ -8,6 +8,7 @@ from pydantic import BaseModel, SecretStr, field_validator
 from sfvf.providers import PROVIDERS, provider_configured
 
 from app.api.workflows import RegistryHolder, configured_secret_names
+from app.core import app_settings
 from app.core.secrets import SecretStore
 
 router = APIRouter(prefix="/api")
@@ -22,10 +23,23 @@ class ProviderSettingsOut(BaseModel):
     configured: bool
 
 
+class DefaultFieldOut(BaseModel):
+    effective: float | int
+    source: str
+
+
 class SettingsOut(BaseModel):
     providers: list[ProviderSettingsOut]
     configured_secret_names: list[str]
     allowed_secret_names: list[str]
+    defaults: dict[str, DefaultFieldOut]
+
+
+class DefaultsUpdateIn(BaseModel):
+    silence_limit_seconds: float | None = None
+    default_concurrency: int | None = None
+    default_step_concurrency: int | None = None
+    cache_max_bytes: int | None = None
 
 
 class SecretValueIn(BaseModel):
@@ -91,7 +105,24 @@ def get_settings(request: Request) -> SettingsOut:
         ],
         configured_secret_names=sorted(configured),
         allowed_secret_names=sorted(allowed),
+        defaults={
+            name: DefaultFieldOut(
+                effective=cast(float | int, cell["effective"]),
+                source=str(cell["source"]),
+            )
+            for name, cell in app_settings.effective_defaults().items()
+        },
     )
+
+
+@router.put("/settings/defaults")
+def put_defaults(body: DefaultsUpdateIn) -> dict[str, bool]:
+    fields = body.model_dump(exclude_none=True)
+    try:
+        app_settings.update(**fields)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
 
 
 @router.put("/settings/secrets/{name}")
