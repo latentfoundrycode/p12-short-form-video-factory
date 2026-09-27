@@ -76,7 +76,7 @@ requirement (the requirement ID is threaded into those tests as increments touch
 | R-064 | Real-currency providers are grouped together; credit providers are never combined with one another. | requirements document §7.1, §8.6 | built | tests/core/test_statistics.py |
 | R-065 | The forecast is shown on the card and in the Statistics tab beside the historical estimate. | requirements document §7.4 | planned | — |
 | R-066 | The Settings tab lets the user manage API keys and service connections (held in an encrypted file). | requirements document §8.7; mockup screen "Settings" | planned | — (Settings tab is a stand-in: renders "Arrives in a later stage") |
-| R-067 | MCP connections authenticate through a one-time browser login; only the resulting token is stored. | requirements document §8.7, §6.6 | planned | — |
+| R-067 | MCP connections authenticate through a one-time browser login; only the resulting token is stored. | requirements document §8.7, §6.6 | deferred — owner 2026-09-27 | — (no MCP-based provider remains after Higgsfield was dropped (R-153); build when one returns. Settings shows a real empty Connections state.) |
 | R-068 | The Settings tab exposes global defaults: step silence limit, default concurrency (both axes), max cache size. | requirements document §8.7 | planned | — |
 | R-069 | The encryption state is deliberately not shown in the interface. | requirements document §8.7 | built | tests/core/test_secrets.py |
 | R-070 | API keys are kept in an encrypted store whose passphrase is requested at application start. | requirements document §8.7 | built | tests/core/test_secrets.py; tests/api/test_configured_secrets.py |

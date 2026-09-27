@@ -21,6 +21,7 @@ from app.api.providers import router as providers_router
 from app.api.quality import router as quality_router
 from app.api.runs import router as runs_router
 from app.api.schedules import router as schedules_router
+from app.api.settings import router as settings_router
 from app.api.statistics import router as statistics_router
 from app.api.workflows import RegistryHolder, configured_secret_names
 from app.api.workflows import router as workflows_router
@@ -44,6 +45,7 @@ def create_app(
     ensure_env: EnsureEnv | None = None,
     popen: PopenFn | None = None,
     secrets: Mapping[str, str] | None = None,
+    secret_store: SecretStore | None = None,
     budget: BudgetConfig | None = None,
     learning_staging_dir: Path | None = None,
     learning_state_dir: Path | None = None,
@@ -51,20 +53,26 @@ def create_app(
     library_dir: Path | None = None,
     enable_scheduler: bool = False,
 ) -> FastAPI:
+    live_secret_store: SecretStore | None
     if secrets is not None:
         resolved: Mapping[str, str] = secrets
+        live_secret_store = None
+    elif secret_store is not None:
+        resolved = secret_store.all()
+        live_secret_store = secret_store
     elif passphrase := os.environ.get("SFVF_SECRETS_PASSPHRASE"):
-        resolved = SecretStore(_store_path(), passphrase).all()
+        live_secret_store = SecretStore(_store_path(), passphrase)
+        resolved = live_secret_store.all()
     else:
         resolved = {}
+        live_secret_store = None
 
     if enable_scheduler:
 
         @asynccontextmanager
         async def scheduler_lifespan(scheduler_app: FastAPI) -> AsyncIterator[None]:
-            holder: RegistryHolder = scheduler_app.state.registry
-
             def resolve_workflow(workflow_id: str) -> Path | None:
+                holder: RegistryHolder = scheduler_app.state.registry
                 entry = holder.get(workflow_id)
                 if entry is None or any(problem.severity == "error" for problem in entry.problems):
                     return None
@@ -115,6 +123,7 @@ def create_app(
     application.state.ensure_env = ensure_env
     application.state.popen = popen
     application.state.secrets = dict(resolved)
+    application.state.secret_store = live_secret_store
     application.state.learning_staging_dir = learning_staging_dir or (
         APP_ROOT / "state" / "learning-staging"
     )
@@ -134,6 +143,7 @@ def create_app(
     application.include_router(statistics_router)
     application.include_router(schedules_router)
     application.include_router(providers_router)
+    application.include_router(settings_router)
 
     @application.get("/api/health")
     def health() -> dict[str, bool]:
