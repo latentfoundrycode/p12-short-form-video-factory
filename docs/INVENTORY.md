@@ -18,7 +18,7 @@ Updated: 2026-09-27
 | Finalize | Enforces the house short-form format and runs the content review as the mandatory last step | sdk/sfvf/media/finalize | tests | A-6 |
 | Library subsystem | An asset library that outlives runs, with per-asset access grants and a Library tab; "remove" deactivates, never erases | app + frontend | tests | Stage A (#170) |
 | Sensational Science News workflow | Researches the curated allowlist, picks a captivating non-repeating subject, writes a hook-first lay script, gates on cost, then assembles narrated 60-90s vertical video with sourced/generated visuals and Ken-Burns motion | workflows/sensational-science-news | tests/integration/test_ssn_* | Stage C/D (#172-174) |
-| Windows installer + lifecycle | Per-user double-click installer that installs, upgrades in place (keeps data), and uninstalls; install-check verifies the lifecycle | installer + tools | installer-check.ps1 | PKG-3/4 (#167) |
+| Windows installer + lifecycle | Per-user double-click installer that installs, upgrades in place (keeps data), and uninstalls; install-check verifies the lifecycle | installer + scripts | scripts/install-check.ps1 | PKG-3/4 (#167) |
 | sfvf launch CLI + reference | `sfvf` command starts the app and serves the SPA; a command reference is generated | app | tests | PKG-1 (#165) |
 | Continuous integration | GitHub Actions runs ruff, mypy, frontend lint/typecheck and tests on every PR as the required merge check | .github/workflows | n/a | CI (#699-scope) |
 
@@ -29,6 +29,7 @@ Updated: 2026-09-27
 | SFVF_SECRETS_PATH SFVF_SECRETS_PASSPHRASE | env var | user env var | app.core.secrets (encrypted store location + unlock passphrase) | owner |
 | SFVF_BUDGET_CONFIG SFVF_BUDGET_STATE | env var | user env var (paths) | app.core.budget (per-meter caps TOML + persisted spend state) | owner |
 | SFVF_ENABLE_SCHEDULER | env var | user env var | app scheduler (opt-in unattended runs) | owner |
+| SFVF_CACHE_MAX_BYTES | env var | user env var | app.core.cache_config (cheap-cache eviction ceiling) | owner / defaults (5 GiB) |
 | SFVF_DISABLE_WEB_TIERS | env var | user env var | sdk/sfvf/media/web tier gating | owner / tests |
 | SFVF_HYPERFRAMES_ENTRY SFVF_HYPERFRAMES_TIMEOUT_S | env var | user env var | sdk/sfvf/media/graphics (render entrypoint + hard timeout) | owner / defaults |
 | PUPPETEER_CACHE_DIR | env var | process env | frontend/installer Chromium download cache for the render toolchain | installer |
