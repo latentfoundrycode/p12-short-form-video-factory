@@ -99,9 +99,7 @@ def test_step_concurrency_reaches_run_request(tmp_path: Path, calls) -> None:
     assert calls and calls[0]["step_concurrency"] == 3
 
 
-def test_step_concurrency_omitted_uses_global_default(
-    tmp_path: Path, calls, monkeypatch
-) -> None:
+def test_step_concurrency_omitted_uses_global_default(tmp_path: Path, calls, monkeypatch) -> None:
     monkeypatch.setattr(app_settings_mod, "default_step_concurrency", lambda: 4)
     resp = _launch(_client(tmp_path))
     assert resp.status_code == 202

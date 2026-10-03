@@ -18,6 +18,7 @@ WORKFLOW_FIELDS = {
     "runs_counted",
     "archived",
     "last_run",
+    "max_videos",  # F3-6a (R-023)
 }
 
 PARAM_FIELDS = {
