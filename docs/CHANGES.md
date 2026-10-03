@@ -2,6 +2,10 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-10-04 — Run form: dry run, parallel steps, video cap, point decimals, remembered values
+
+The Generation Request form gains a **Dry run** checkbox (fake assets, no spending) and a **Parallel steps per video** field seeded from the Settings default, and caps the video count at the workflow's declared maximum with a plain error above it. Decimal settings are typed with a point whatever the computer's regional format ("1,5" is refused with a message saying to use a point), while their declared minimum and maximum are still enforced. The form now remembers the values of the last successful start for each workflow and pre-fills them next time (a remembered voice is applied only once the voice list confirms it), and when a provider's option list cannot be reached it offers the last list it saw, marked "last known", instead of a blank text box. Completes R-019, R-021, R-023, R-027, R-028, R-030. (TASK-101 + TASK-102.)
+
 ## 2026-10-03 — Launch API: per-request dry run, parallel steps, and the max-videos cap
 
 `POST /api/workflows/{id}/runs` now accepts `dry_run` (fake assets, no spending) and
