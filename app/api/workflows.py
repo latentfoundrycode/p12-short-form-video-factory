@@ -125,6 +125,7 @@ class WorkflowOut(BaseModel):
     runs_counted: int = 0
     archived: bool = False
     last_run: LastRunOut | None = None
+    max_videos: int | None = None
 
 
 class WorkflowListOut(BaseModel):
@@ -212,6 +213,7 @@ def _serialize(entry: WorkflowEntry, runs_dir: Path) -> WorkflowOut:
         runs_counted=runs_counted,
         archived=False,
         last_run=_last_run_out(last_run_snapshot(runs_dir, entry.folder_name)),
+        max_videos=None if manifest is None else manifest.workflow.max_videos,
     )
 
 

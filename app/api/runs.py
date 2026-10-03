@@ -17,7 +17,7 @@ from typing import Annotated, Any, cast
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, StrictBool, ValidationError, field_validator
 from sfvf.context import BudgetConfig
 from sfvf.providers import UnknownModelError, provider_configured, resolve
 
@@ -95,6 +95,26 @@ class LaunchBody(BaseModel):
     gates_auto: bool = False
     per_video_budget: float | None = None
     voice: str = ""
+    dry_run: StrictBool = False
+    step_concurrency: int | None = None
+
+    @field_validator("video_count", mode="before")
+    @classmethod
+    def _video_count_not_bool(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("video_count must be an integer >= 1")
+        return value
+
+    @field_validator("step_concurrency", mode="before")
+    @classmethod
+    def _step_concurrency_strict(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, bool) or type(value) is not int:
+            raise ValueError("step_concurrency must be an integer >= 1")
+        if value < 1:
+            raise ValueError("step_concurrency must be an integer >= 1")
+        return value
 
     @field_validator("per_video_budget")
     @classmethod
@@ -519,6 +539,14 @@ def launch_run(
     blocked = _unconfigured_model_param(entry, body.params, set(_secrets(request)))
     if blocked is not None:
         raise HTTPException(status_code=422, detail=blocked)
+    manifest = entry.manifest
+    if manifest is not None:
+        max_videos = manifest.workflow.max_videos
+        if max_videos is not None and body.video_count > max_videos:
+            raise HTTPException(
+                status_code=422,
+                detail=f"This workflow allows at most {max_videos} videos per request",
+            )
     target = _runs_dir(request)
     for candidate in (target, *target.parents):
         if candidate.exists():
@@ -533,7 +561,6 @@ def launch_run(
             status_code=422,
             detail="Not enough free disk space to start a run (need at least 5 GB).",
         )
-    manifest = entry.manifest
     if manifest is not None:
         configured = configured_secret_names(_secrets(request))
         for key in manifest.requires_keys:
@@ -553,9 +580,11 @@ def launch_run(
         params=body.params,
         video_count=body.video_count,
         concurrency=body.concurrency,
+        dry_run=body.dry_run,
         gates_auto=body.gates_auto,
         per_video_budget=body.per_video_budget,
         voice=body.voice,
+        step_concurrency=body.step_concurrency,
         runs_dir=_runs_dir(request),
         ensure_env=_ensure_env(request),
         popen=_popen(request),
