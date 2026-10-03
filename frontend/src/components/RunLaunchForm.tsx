@@ -40,7 +40,7 @@ type LaunchFormInitial = {
   concurrency: number;
   stepConcurrency: number;
   dryRun: boolean;
-  voice: string;
+  rememberedVoice: string;
   approvalMode: "manual" | "autonomous";
   values: Record<string, FieldValue>;
   remembered: LaunchFormRememberedFlags;
@@ -100,6 +100,30 @@ function parseDecimalNumber(
   return { ok: true, value };
 }
 
+function formatRememberedDecimal(value: number): string {
+  const asString = String(value);
+  if (!/[eE]/.test(asString)) {
+    return asString;
+  }
+  const match = /^(-?)(\d+(?:\.\d+)?|\.\d+)[eE]([+-]?\d+)$/.exec(asString);
+  if (!match) {
+    return asString;
+  }
+  const sign = match[1];
+  const coefficient = match[2];
+  const exp = Number(match[3]);
+  const [intPart, fracPart = ""] = coefficient.split(".");
+  const digits = intPart + fracPart;
+  const decimalIndex = intPart.length + exp;
+  if (decimalIndex <= 0) {
+    return `${sign}0.${"0".repeat(-decimalIndex)}${digits}`;
+  }
+  if (decimalIndex >= digits.length) {
+    return `${sign}${digits}${"0".repeat(decimalIndex - digits.length)}`;
+  }
+  return `${sign}${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`;
+}
+
 function rememberedParamValue(param: Param, raw: unknown): FieldValue | null {
   switch (param.type) {
     case "text":
@@ -108,11 +132,19 @@ function rememberedParamValue(param: Param, raw: unknown): FieldValue | null {
     case "file":
       return typeof raw === "string" ? raw : null;
     case "number":
-      return typeof raw === "number" && Number.isFinite(raw) ? String(raw) : null;
+      return typeof raw === "number" && Number.isFinite(raw)
+        ? formatRememberedDecimal(raw)
+        : null;
     case "bool":
       return typeof raw === "boolean" ? raw : null;
     case "multiselect":
-      return isStringArray(raw) ? [...raw] : null;
+      if (isStringArray(raw)) {
+        if (usesManualInput(param)) {
+          return raw.join(", ");
+        }
+        return [...raw];
+      }
+      return null;
     default:
       return null;
   }
@@ -153,9 +185,9 @@ function buildLaunchFormInitial(
     dryRun = remembered.dry_run;
   }
 
-  let voice = "";
+  let rememberedVoice = "";
   if (remembered && typeof remembered.voice === "string") {
-    voice = remembered.voice;
+    rememberedVoice = remembered.voice;
   }
 
   let approvalMode: "manual" | "autonomous" = "manual";
@@ -187,7 +219,7 @@ function buildLaunchFormInitial(
     concurrency,
     stepConcurrency,
     dryRun,
-    voice,
+    rememberedVoice,
     approvalMode,
     values,
     remembered: flags,
@@ -855,7 +887,7 @@ export function RunLaunchForm({
     launchInitial.approvalMode,
   );
   const [perVideoBudget, setPerVideoBudget] = useState("");
-  const [voice, setVoice] = useState(launchInitial.voice);
+  const [voice, setVoice] = useState("");
   const [voiceOptions, setVoiceOptions] = useState<Voice[]>([]);
   const [values, setValues] = useState<Record<string, FieldValue>>(() => launchInitial.values);
   const [formError, setFormError] = useState<string | null>(null);
@@ -906,9 +938,14 @@ export function RunLaunchForm({
         if (!ignore) {
           const options = voices.filter((row) => row.id !== "");
           setVoiceOptions(options);
-          setVoice((current) =>
-            current !== "" && !options.some((row) => row.id === current) ? "" : current,
-          );
+          const pending = launchInitial.rememberedVoice;
+          if (pending !== "" && options.some((row) => row.id === pending)) {
+            setVoice(pending);
+          } else {
+            setVoice((current) =>
+              current !== "" && !options.some((row) => row.id === current) ? "" : current,
+            );
+          }
         }
       },
       () => {
@@ -921,6 +958,8 @@ export function RunLaunchForm({
     return () => {
       ignore = true;
     };
+    // One-shot voice list: apply rememberedVoice from the mount snapshot after fetch settles.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -1112,17 +1151,20 @@ export function RunLaunchForm({
             }}
           />
         </label>
-        <label className="field field-check">
-          <input
-            type="checkbox"
-            checked={dryRun}
-            disabled={submitting}
-            onChange={(e) => {
-              setDryRun(e.target.checked);
-            }}
-          />
-          <span>Dry run</span>
-        </label>
+        <div className="field">
+          <label className="field-check">
+            <input
+              type="checkbox"
+              checked={dryRun}
+              disabled={submitting}
+              onChange={(e) => {
+                setDryRun(e.target.checked);
+              }}
+            />
+            <span>Dry run</span>
+          </label>
+          <span className="field-help">Use fake assets; no spending.</span>
+        </div>
         <label className="field">
           <span className="field-label">Approval mode</span>
           <select
