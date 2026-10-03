@@ -158,6 +158,30 @@ describe("remembered decimals round-trip (R-021/R-030)", () => {
   });
 });
 
+describe("remembered decimals round-trip at both magnitude extremes (r2 assumption 1)", () => {
+  it.each([
+    ["1000000000000000000000", 1e21],
+    ["-0.00000025", -2.5e-7],
+    ["123456789012345680000000", 1.2345678901234568e23],
+  ])("restores %s without an exponent", async (typed, value) => {
+    const ratio = param({ key: "ratio", label: "Ratio", type: "number" });
+    renderForm([ratio]);
+    await userEvent.type(screen.getByLabelText(/^ratio/i), typed);
+    await submit();
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1));
+    expect(lastBody().params.ratio).toBe(value);
+    cleanup();
+
+    renderForm([ratio]);
+    const shown = (screen.getByLabelText(/^ratio/i) as HTMLInputElement).value;
+    expect(shown).not.toMatch(/e/i);
+    expect(Number(shown)).toBe(value);
+    await submit();
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(2));
+    expect(lastBody().params.ratio).toBe(value);
+  });
+});
+
 describe("remembered voice waits for the voice list (R-030)", () => {
   it("sends the default voice when submitted before the list settles", async () => {
     window.localStorage.setItem(
