@@ -61,6 +61,8 @@ Updated: 2026-09-28
 | Approval gate and per-video budget are run settings, not baked into the workflow | The owner sets risk per run (Manual vs Autonomous, budget cap) | Stage B owner | a workflow needs a fixed policy |
 | Secrets live in an encrypted store unlocked by a passphrase; the app injects only requires_keys secrets | Least privilege; a workflow sees only what it declares | S-series supervisor | a broader injection model is needed |
 | Project state is two bounded files: PROJECT_STATUS.md (<=120 lines) + INVENTORY.md | A status file grown into a log is read in slices and the needed fact is skipped (bridge rule 41) | 2026-09-27 supervisor | the bridge changes the state-file contract |
+| Run budget is one line per meter for the whole Generation Request, pre-filled from the estimate; it replaces the single per-video number (which summed all meters regardless of unit) | Matches PRD §7.2 and the request-total estimate shown beside it, so the owner compares like with like | 2026-10-03 owner (R-024 option A) | the owner wants a per-video cap back |
+| Provider-balance launch check only where the held key can read a balance: BFL, SerpApi, OpenRouter (capped keys only) | No new credentials; BytePlus/OpenAI need different keys, Google is postpaid, MiniMax PAYG has no API | 2026-10-03 owner ("build where possible") + supervisor research | a provider adds a balance API for the held key |
 | Speech ships as local Chatterbox TTS + WhisperX, not ElevenLabs; video/image ship via BytePlus Seedance / Gemini / BFL / MiniMax (direct APIs + aggregator), not Higgsfield-via-MCP | Local TTS removes a per-character quota meter and a paid dependency; direct provider APIs are cheaper and more controllable than the Higgsfield MCP aggregator | 2026-09 owner (drops recorded 2026-09-27: R-086, R-153, R-154) | the owner wants the original PRD providers, or an MCP-only capability returns |
 
 ## Deferred
@@ -72,7 +74,6 @@ Updated: 2026-09-28
 | VERSION bump to 1.1.0 + user manual | End-of-cycle finalization after features land | Stage E | no |
 | Main workflow card §8.1 (avg cost, running-stage, archived state, outline colours) | Audit gap F2; part of the paused audit-driven plan | audit 2026-09-27 | yes — scope approval |
 | Run form secondary settings §8.2 (R-016/023/025/027/028/030/031: F3-6), reliability §9.3/§7.2/§7.4/§12 (F4), video list §8.3 (F5) | Audit gaps; part of the paused audit-driven plan. F3 estimate + preflight (R-032/034/036) now built | audit 2026-09-27 | yes — scope approval |
-| Run-form owner decisions: per-meter budget (R-024, data-model choice) and provider-balance block (R-035, infeasible without a balance API) | Both need an owner call before build | audit 2026-09-27 | yes — owner (R-024 data model; R-035 recommend defer) |
 | Self-review hard-gating (H32/H33) | Owner scoped self-review as record-only for now | Stage C | yes — owner (explicitly deferred) |
 | completion.py budget reserve/release latent bugs (same class as the inc0 agents.llm fix) | Follow-up hardening, not on the critical path | inc0 | no |
 | Kling provider (KLING_ACCESS_KEY / KLING_SECRET_KEY) | Owner has not provided keys | Stage P | yes — owner provides keys |
