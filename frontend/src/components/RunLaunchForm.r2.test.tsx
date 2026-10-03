@@ -162,7 +162,7 @@ describe("remembered decimals round-trip at both magnitude extremes (r2 assumpti
   it.each([
     ["1000000000000000000000", 1e21],
     ["-0.00000025", -2.5e-7],
-    ["123456789012345680000000", 1.2345678901234568e23],
+    ["123456789012345680000000", Number("123456789012345680000000")],
   ])("restores %s without an exponent", async (typed, value) => {
     const ratio = param({ key: "ratio", label: "Ratio", type: "number" });
     renderForm([ratio]);
