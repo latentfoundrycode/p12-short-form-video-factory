@@ -15,9 +15,238 @@ type RunLaunchFormProps = {
   workflowId: string;
   workflowName: string;
   params: Param[];
+  maxVideos?: number | null;
   onStarted: (runId: string) => void;
   onCancel: () => void;
 };
+
+type RememberedLaunchRaw = {
+  params?: unknown;
+  video_count?: unknown;
+  concurrency?: unknown;
+  step_concurrency?: unknown;
+  gates_auto?: unknown;
+  voice?: unknown;
+  dry_run?: unknown;
+};
+
+type LaunchFormRememberedFlags = {
+  concurrency: boolean;
+  stepConcurrency: boolean;
+};
+
+type LaunchFormInitial = {
+  videoCount: number;
+  concurrency: number;
+  stepConcurrency: number;
+  dryRun: boolean;
+  voice: string;
+  approvalMode: "manual" | "autonomous";
+  values: Record<string, FieldValue>;
+  remembered: LaunchFormRememberedFlags;
+};
+
+function launchFormStorageKey(workflowId: string): string {
+  return `sfvf.launchForm.${workflowId}`;
+}
+
+function providerOptionsStorageKey(source: string): string {
+  return `sfvf.providerOptions.${source}`;
+}
+
+function readRememberedLaunchRaw(workflowId: string): RememberedLaunchRaw | null {
+  try {
+    const raw = window.localStorage.getItem(launchFormStorageKey(workflowId));
+    if (raw === null) {
+      return null;
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as RememberedLaunchRaw;
+  } catch {
+    return null;
+  }
+}
+
+function rememberedPositiveInt(value: unknown): number | null {
+  if (typeof value === "boolean") {
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    return null;
+  }
+  return value;
+}
+
+function parseDecimalNumber(
+  text: string,
+): { ok: true; value: number } | { ok: false; reason: "comma" | "invalid" } {
+  const trimmed = text.trim();
+  if (trimmed === "") {
+    return { ok: false, reason: "invalid" };
+  }
+  if (trimmed.includes(",")) {
+    return { ok: false, reason: "comma" };
+  }
+  if (!/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(trimmed)) {
+    return { ok: false, reason: "invalid" };
+  }
+  const value = Number(trimmed);
+  if (!Number.isFinite(value)) {
+    return { ok: false, reason: "invalid" };
+  }
+  return { ok: true, value };
+}
+
+function rememberedParamValue(param: Param, raw: unknown): FieldValue | null {
+  switch (param.type) {
+    case "text":
+    case "textarea":
+    case "select":
+    case "file":
+      return typeof raw === "string" ? raw : null;
+    case "number":
+      return typeof raw === "number" && Number.isFinite(raw) ? String(raw) : null;
+    case "bool":
+      return typeof raw === "boolean" ? raw : null;
+    case "multiselect":
+      return isStringArray(raw) ? [...raw] : null;
+    default:
+      return null;
+  }
+}
+
+function buildLaunchFormInitial(
+  workflowId: string,
+  declared: Param[],
+  maxVideos: number | null | undefined,
+): LaunchFormInitial {
+  const remembered = readRememberedLaunchRaw(workflowId);
+  const flags: LaunchFormRememberedFlags = { concurrency: false, stepConcurrency: false };
+
+  let videoCount = 1;
+  const rememberedCount = remembered ? rememberedPositiveInt(remembered.video_count) : null;
+  if (rememberedCount !== null) {
+    if (typeof maxVideos !== "number" || rememberedCount <= maxVideos) {
+      videoCount = rememberedCount;
+    }
+  }
+
+  let concurrency = 1;
+  const rememberedConcurrency = remembered ? rememberedPositiveInt(remembered.concurrency) : null;
+  if (rememberedConcurrency !== null) {
+    concurrency = rememberedConcurrency;
+    flags.concurrency = true;
+  }
+
+  let stepConcurrency = 1;
+  const rememberedStep = remembered ? rememberedPositiveInt(remembered.step_concurrency) : null;
+  if (rememberedStep !== null) {
+    stepConcurrency = rememberedStep;
+    flags.stepConcurrency = true;
+  }
+
+  let dryRun = false;
+  if (remembered && typeof remembered.dry_run === "boolean") {
+    dryRun = remembered.dry_run;
+  }
+
+  let voice = "";
+  if (remembered && typeof remembered.voice === "string") {
+    voice = remembered.voice;
+  }
+
+  let approvalMode: "manual" | "autonomous" = "manual";
+  if (remembered && typeof remembered.gates_auto === "boolean") {
+    approvalMode = remembered.gates_auto ? "autonomous" : "manual";
+  }
+
+  const values = initialValues(declared);
+  if (
+    remembered &&
+    typeof remembered.params === "object" &&
+    remembered.params !== null &&
+    !Array.isArray(remembered.params)
+  ) {
+    const rememberedParams = remembered.params as Record<string, unknown>;
+    for (const param of declared) {
+      if (!(param.key in rememberedParams)) {
+        continue;
+      }
+      const applied = rememberedParamValue(param, rememberedParams[param.key]);
+      if (applied !== null) {
+        values[param.key] = applied;
+      }
+    }
+  }
+
+  return {
+    videoCount,
+    concurrency,
+    stepConcurrency,
+    dryRun,
+    voice,
+    approvalMode,
+    values,
+    remembered: flags,
+  };
+}
+
+function storeRememberedLaunch(
+  workflowId: string,
+  payload: {
+    params: Record<string, unknown>;
+    video_count: number;
+    concurrency: number;
+    step_concurrency: number;
+    gates_auto: boolean;
+    voice: string;
+    dry_run: boolean;
+  },
+): void {
+  try {
+    window.localStorage.setItem(launchFormStorageKey(workflowId), JSON.stringify(payload));
+  } catch {
+    /* untrusted or blocked storage */
+  }
+}
+
+function loadStoredProviderOptions(source: string): ProviderOption[] | null {
+  try {
+    const raw = window.localStorage.getItem(providerOptionsStorageKey(source));
+    if (raw === null) {
+      return null;
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return null;
+    }
+    for (const item of parsed) {
+      if (
+        typeof item !== "object" ||
+        item === null ||
+        typeof (item as ProviderOption).id !== "string" ||
+        typeof (item as ProviderOption).label !== "string" ||
+        typeof (item as ProviderOption).configured !== "boolean"
+      ) {
+        return null;
+      }
+    }
+    return parsed as ProviderOption[];
+  } catch {
+    return null;
+  }
+}
+
+function storeProviderOptions(source: string, options: ProviderOption[]): void {
+  try {
+    window.localStorage.setItem(providerOptionsStorageKey(source), JSON.stringify(options));
+  } catch {
+    /* untrusted or blocked storage */
+  }
+}
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
@@ -111,11 +340,23 @@ function collectParams(
           }
           return { ok: false, error: `${param.label} is required.` };
         }
-        const parsed = Number(text);
-        if (Number.isNaN(parsed)) {
+        const parsed = parseDecimalNumber(text);
+        if (!parsed.ok) {
+          if (parsed.reason === "comma") {
+            return {
+              ok: false,
+              error: `${param.label}: use a point (.) as the decimal separator.`,
+            };
+          }
           return { ok: false, error: `${param.label} is not a number.` };
         }
-        result[param.key] = parsed;
+        if (param.min !== null && parsed.value < param.min) {
+          return { ok: false, error: `${param.label} must be at least ${param.min}.` };
+        }
+        if (param.max !== null && parsed.value > param.max) {
+          return { ok: false, error: `${param.label} must be at most ${param.max}.` };
+        }
+        result[param.key] = parsed.value;
         break;
       }
       case "bool":
@@ -170,9 +411,9 @@ function costParams(
         if (text.trim() === "") {
           break;
         }
-        const parsed = Number(text);
-        if (!Number.isNaN(parsed)) {
-          result[param.key] = parsed;
+        const parsed = parseDecimalNumber(text);
+        if (parsed.ok) {
+          result[param.key] = parsed.value;
         }
         break;
       }
@@ -225,6 +466,7 @@ function FieldHelp({ param, extra }: { param: Param; extra?: string }) {
 type RegistryOptionsState = {
   status: "loading" | "ready" | "error";
   options: ProviderOption[];
+  lastKnown?: boolean;
 };
 
 function RegistryOptionsField({
@@ -255,12 +497,18 @@ function RegistryOptionsField({
     void fetchProviderOptions(source).then(
       (options) => {
         if (!ignore) {
+          storeProviderOptions(source, options);
           setOptionsState({ status: "ready", options });
         }
       },
       () => {
         if (!ignore) {
-          setOptionsState({ status: "error", options: [] });
+          const stored = loadStoredProviderOptions(source);
+          if (stored !== null) {
+            setOptionsState({ status: "ready", options: stored, lastKnown: true });
+          } else {
+            setOptionsState({ status: "error", options: [] });
+          }
         }
       },
     );
@@ -332,7 +580,14 @@ function RegistryOptionsField({
             </span>
           </label>
         ))}
-        <FieldHelp param={param} />
+        <FieldHelp
+          param={param}
+          extra={
+            optionsState.lastKnown
+              ? "Couldn't reach the provider — showing the last known options."
+              : undefined
+          }
+        />
       </div>
     );
   }
@@ -384,7 +639,14 @@ function RegistryOptionsField({
           </option>
         ))}
       </select>
-      <FieldHelp param={param} />
+      <FieldHelp
+        param={param}
+        extra={
+          optionsState.lastKnown
+            ? "Couldn't reach the provider — showing the last known options."
+            : undefined
+        }
+      />
     </label>
   );
 }
@@ -482,10 +744,8 @@ function ParamField({
           <span className="field-label">{label}</span>
           <input
             className="field-input"
-            type="number"
-            min={param.min ?? undefined}
-            max={param.max ?? undefined}
-            step={param.step ?? undefined}
+            type="text"
+            inputMode="decimal"
             value={text}
             disabled={disabled}
             aria-required={param.required}
@@ -582,16 +842,22 @@ export function RunLaunchForm({
   workflowId,
   workflowName,
   params,
+  maxVideos = null,
   onStarted,
   onCancel,
 }: RunLaunchFormProps) {
-  const [videoCount, setVideoCount] = useState(1);
-  const [concurrency, setConcurrency] = useState(1);
-  const [approvalMode, setApprovalMode] = useState<"manual" | "autonomous">("manual");
+  const [launchInitial] = useState(() => buildLaunchFormInitial(workflowId, params, maxVideos));
+  const [videoCount, setVideoCount] = useState(launchInitial.videoCount);
+  const [concurrency, setConcurrency] = useState(launchInitial.concurrency);
+  const [stepConcurrency, setStepConcurrency] = useState(launchInitial.stepConcurrency);
+  const [dryRun, setDryRun] = useState(launchInitial.dryRun);
+  const [approvalMode, setApprovalMode] = useState<"manual" | "autonomous">(
+    launchInitial.approvalMode,
+  );
   const [perVideoBudget, setPerVideoBudget] = useState("");
-  const [voice, setVoice] = useState("");
+  const [voice, setVoice] = useState(launchInitial.voice);
   const [voiceOptions, setVoiceOptions] = useState<Voice[]>([]);
-  const [values, setValues] = useState<Record<string, FieldValue>>(() => initialValues(params));
+  const [values, setValues] = useState<Record<string, FieldValue>>(() => launchInitial.values);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [estimate, setEstimate] = useState<EstimateOut | null>(null);
@@ -638,12 +904,17 @@ export function RunLaunchForm({
     void fetchVoices().then(
       (voices) => {
         if (!ignore) {
-          setVoiceOptions(voices.filter((row) => row.id !== ""));
+          const options = voices.filter((row) => row.id !== "");
+          setVoiceOptions(options);
+          setVoice((current) =>
+            current !== "" && !options.some((row) => row.id === current) ? "" : current,
+          );
         }
       },
       () => {
         if (!ignore) {
           setVoiceOptions([]);
+          setVoice((current) => (current !== "" ? "" : current));
         }
       },
     );
@@ -663,7 +934,20 @@ export function RunLaunchForm({
         return loadSettings().then(
           (settings) => {
             if (!ignore) {
-              setConcurrency(settings.defaults.default_concurrency.effective);
+              if (!launchInitial.remembered.concurrency) {
+                setConcurrency((current) =>
+                  current === launchInitial.concurrency
+                    ? settings.defaults.default_concurrency.effective
+                    : current,
+                );
+              }
+              if (!launchInitial.remembered.stepConcurrency) {
+                setStepConcurrency((current) =>
+                  current === launchInitial.stepConcurrency
+                    ? settings.defaults.default_step_concurrency.effective
+                    : current,
+                );
+              }
             }
           },
           () => {
@@ -677,6 +961,8 @@ export function RunLaunchForm({
     return () => {
       ignore = true;
     };
+    // One-shot settings seed using the mount snapshot in launchInitial.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -712,6 +998,14 @@ export function RunLaunchForm({
       setFormError("Concurrency must be an integer ≥ 1.");
       return;
     }
+    if (!Number.isInteger(stepConcurrency) || stepConcurrency < 1) {
+      setFormError("Parallel steps per video must be an integer ≥ 1.");
+      return;
+    }
+    if (typeof maxVideos === "number" && videoCount > maxVideos) {
+      setFormError(`This workflow allows at most ${maxVideos} videos per request.`);
+      return;
+    }
 
     const gates_auto = approvalMode === "autonomous";
     const budgetText = perVideoBudget.trim();
@@ -731,11 +1025,22 @@ export function RunLaunchForm({
         concurrency,
         gates_auto,
         voice,
+        dry_run: dryRun,
+        step_concurrency: stepConcurrency,
         ...(budgetText !== ""
           ? { per_video_budget: Number(budgetText) }
           : {}),
       });
       if (isStartRunOk(result)) {
+        storeRememberedLaunch(workflowId, {
+          params: parsed.value,
+          video_count: videoCount,
+          concurrency,
+          step_concurrency: stepConcurrency,
+          gates_auto,
+          voice,
+          dry_run: dryRun,
+        });
         onStarted(result.run_id);
         return;
       }
@@ -763,13 +1068,14 @@ export function RunLaunchForm({
           Cancel
         </button>
       </div>
-      <form className="panel-body launch-form" onSubmit={(e) => void onSubmit(e)}>
+      <form className="panel-body launch-form" noValidate onSubmit={(e) => void onSubmit(e)}>
         <label className="field">
           <span className="field-label">Video count</span>
           <input
             className="field-input"
             type="number"
             min={1}
+            max={typeof maxVideos === "number" ? maxVideos : undefined}
             step={1}
             value={videoCount}
             disabled={submitting}
@@ -791,6 +1097,31 @@ export function RunLaunchForm({
               setConcurrency(Number(e.target.value));
             }}
           />
+        </label>
+        <label className="field">
+          <span className="field-label">Parallel steps per video</span>
+          <input
+            className="field-input"
+            type="number"
+            min={1}
+            step={1}
+            value={stepConcurrency}
+            disabled={submitting}
+            onChange={(e) => {
+              setStepConcurrency(Number(e.target.value));
+            }}
+          />
+        </label>
+        <label className="field field-check">
+          <input
+            type="checkbox"
+            checked={dryRun}
+            disabled={submitting}
+            onChange={(e) => {
+              setDryRun(e.target.checked);
+            }}
+          />
+          <span>Dry run</span>
         </label>
         <label className="field">
           <span className="field-label">Approval mode</span>
