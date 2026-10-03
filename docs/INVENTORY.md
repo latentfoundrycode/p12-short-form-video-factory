@@ -73,7 +73,7 @@ Updated: 2026-10-04
 | Remove smoke_openrouter / smoke_higgsfield / smoke_provider / explainer workflows | Stage-E cleanup, batched with the finalization pass | Stage E | no |
 | VERSION bump to 1.1.0 + user manual | End-of-cycle finalization after features land | Stage E | no |
 | Main workflow card §8.1 (avg cost, running-stage, archived state, outline colours) | Audit gap F2; part of the paused audit-driven plan | audit 2026-09-27 | yes — scope approval |
-| Run form remaining §8.2 (R-016 file setting, R-024 budget lines, R-031 read-only view, R-035 balance check: TASK-103..107), reliability §9.3/§7.2/§7.4/§12 (F4), video list §8.3 (F5) | Audit gaps; part of the paused audit-driven plan. F3 estimate, preflight, chassis controls (R-019/021/023/027/028/030/032/034/036) now built | audit 2026-09-27 | yes — scope approval |
+| Run form remaining §8.2 (R-016 file setting, R-024 budget lines, R-031 read-only view, R-035 balance check: TASK-103..107), reliability §9.3/§7.2/§7.4/§12 incl. R-025 max retries and R-072/R-158 20 GB warn (F4), video list §8.3 (F5) | Audit gaps; part of the paused audit-driven plan. F3 estimate, preflight, chassis controls (R-019/021/023/027/028/030/032/034/036) now built | audit 2026-09-27 | yes — scope approval |
 | Self-review hard-gating (H32/H33) | Owner scoped self-review as record-only for now | Stage C | yes — owner (explicitly deferred) |
 | completion.py budget reserve/release latent bugs (same class as the inc0 agents.llm fix) | Follow-up hardening, not on the critical path | inc0 | no |
 | Kling provider (KLING_ACCESS_KEY / KLING_SECRET_KEY) | Owner has not provided keys | Stage P | yes — owner provides keys |
