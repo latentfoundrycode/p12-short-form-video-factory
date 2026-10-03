@@ -41,11 +41,11 @@ requirement (the requirement ID is threaded into those tests as increments touch
 | R-029 | The run form offers an approval mode (require approval vs autonomous) mapping to gate auto-pass. | requirements document §9.6a; mockup "Run" modal | built | tests/api/test_gate_api.py; tests/core/test_supervisor.py |
 | R-030 | Values used last time are remembered per workflow and pre-filled when the form is reopened. | requirements document §8.2 | planned | — |
 | R-031 | Once a Generation Request starts, its settings are fixed; the pop-up can still be opened read-only from a running/paused card. | requirements document §8.2 | planned | — |
-| R-032 | When the form is open, a cost estimate is shown for each meter. | requirements document §8.2, §7.2 | planned | — |
+| R-032 | When the form is open, a cost estimate is shown for each meter. | requirements document §8.2, §7.2 | built | tests/api/test_estimate_api.py; frontend RunLaunchForm.test.tsx |
 | R-033 | Initiate is blocked with a specific message when a declared capability is not offered by any configured provider. | requirements document §8.2, §6.5 | built | tests/api/test_admission_model_config.py |
-| R-034 | Initiate is blocked with a specific message when a required key/connection is missing or a required program is not installed. | requirements document §8.2 | planned | — |
+| R-034 | Initiate is blocked with a specific message when a required key/connection is missing or a required program is not installed. | requirements document §8.2 | built | tests/api/test_launch_preflight.py |
 | R-035 | Initiate is blocked when provider balances are insufficient. | requirements document §8.2, §7.2 | planned | — |
-| R-036 | Initiate is blocked when free disk space is below the hard floor (5 GB). | requirements document §8.2, §8.7 | planned | — |
+| R-036 | Initiate is blocked when free disk space is below the hard floor (5 GB). | requirements document §8.2, §8.7 | built | tests/api/test_launch_preflight.py |
 | R-037 | A workflow may offer a setting to specify the topic or leave it to the research agent; an AI-chosen topic is chosen once per request. | requirements document §8.2 | built | tests/integration/test_ssn_script.py |
 | R-038 | Clicking a card opens a video list pseudo-tab (closable, returns to prior scroll position). | requirements document §8.3; mockup pseudo-tab "video list" | planned | — |
 | R-039 | The video list shows every video the workflow produced, grouped by Generation Request with a divider between groups. | requirements document §8.3; mockup pseudo-tab "video list" | planned | — |

@@ -2,6 +2,21 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-09-28 — Run form: live cost estimate + launch preflight
+
+The Generation Request form now shows a live cost estimate. `POST /api/workflows/{id}/estimate`
+prices a prospective run per meter from the workflow's own history (matched when the on-screen
+cost settings match a past run, a crude workflow-wide average otherwise, "no data" when there is
+none), scaled by the video count; the form panel updates as the cost-affecting settings change,
+debounced, and keeps the last figure on a failed refetch. Completes R-032. (F3-1 + F3-3.)
+
+Launch is now refused **before** anything spawns (a 422, no spend) when a run cannot succeed:
+free disk space on the target volume is below the 5 GB floor (R-036), a `requires_keys` secret
+is not configured (R-034), or a `requires_binaries` program is not on PATH (R-034). The disk
+check reads the nearest existing ancestor of the runs directory, so a fresh install whose
+`runs/` folder does not exist yet is still guarded on a low-disk volume; a genuinely unreadable
+volume degrades to non-blocking rather than 500. Completes R-034 and R-036. (F3-4 + F3-5.)
+
 ## 2026-09-27 — Main-tab cards: cost, run state, and archived workflows
 
 Each workflow card now shows the average cost per meter over its last ten runs ("Average per video · last 10 runs", "No runs yet" when it has none), and reflects its current run at a glance: a yellow outline with the stage it reports while running, green when a run just finished (clearing once you open that workflow's video list, and re-appearing for a new run), and red only for a run that needs attention (a failure or a budget stop — a user stop or a partial success is not red). A workflow whose code has been removed but whose videos remain now appears as a greyed-out "Archived" card that stays browsable instead of a red "Broken" one. Completes R-005/R-006/R-007/R-008/R-011. (F2a + F2b.)
