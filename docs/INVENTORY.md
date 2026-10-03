@@ -1,6 +1,6 @@
 # Inventory — SFVF (Short-Form Video Factory)
-Reflected through: 2026-09-28 — Run form: live cost estimate + launch preflight
-Updated: 2026-09-28
+Reflected through: 2026-10-03 — Launch API: per-request dry run, parallel steps, and the max-videos cap
+Updated: 2026-10-03
 
 ## Features
 | Feature | What it does | Where | Tests | Since |
@@ -22,7 +22,7 @@ Updated: 2026-09-28
 | sfvf launch CLI + reference | `sfvf` command starts the app and serves the SPA; a command reference is generated | app | tests | PKG-1 (#165) |
 | Main-tab workflow cards | Each card shows avg cost per meter (last 10 runs), live run state (running+stage / finished-green until opened / red for failure or budget stop) and greyed browsable archived cards | frontend WorkflowCard/WorkflowGrid + app/api/workflows.py (last_run, avg_cost) + app/core/estimate.py | tests/api/test_workflow_cards.py; frontend WorkflowCard.test.tsx / WorkflowGrid.test.tsx | F2a-b (#179/#180) |
 | Settings tab | Manage API keys from the GUI (configured/missing; set/replace/clear; value never shown) and edit the four §8.7 global defaults (silence limit, concurrency ×2, cache size); env-overridden fields shown read-only | frontend SettingsView.tsx + app/api/settings.py + app/core/app_settings.py | tests/api/test_settings_api.py; tests/core/test_app_settings.py; frontend SettingsView.test.tsx | F1a-c (#176/#177/F1c) |
-| Run-form estimate + launch preflight | The Generation Request form shows a live per-meter cost estimate (matched/crude/no-data, scaled by video count, POST /estimate); launch is refused with a 422 before anything spawns when disk is below the 5 GB floor (ancestor-volume aware), a required key is unconfigured, or a required program is missing | frontend RunLaunchForm.tsx + app/api/runs.py (estimate + launch_run preflight) + app/core/estimate.py | tests/api/test_estimate_api.py; tests/api/test_launch_preflight.py; frontend RunLaunchForm.test.tsx | F3-1/F3-3/F3-4/F3-5 |
+| Run-form estimate + launch preflight | The Generation Request form shows a live per-meter cost estimate (matched/crude/no-data, scaled by video count, POST /estimate); launch is refused with a 422 before anything spawns when disk is below the 5 GB floor (ancestor-volume aware), a required key is unconfigured, a required program is missing, or the video count exceeds the workflow's max_videos; the launch API takes per-request dry_run and step_concurrency | frontend RunLaunchForm.tsx + app/api/runs.py (estimate + launch_run preflight) + app/core/estimate.py | tests/api/test_estimate_api.py; tests/api/test_launch_preflight.py; tests/api/test_launch_chassis.py; frontend RunLaunchForm.test.tsx | F3-1/F3-3/F3-4/F3-5/F3-6a |
 | Continuous integration | GitHub Actions runs ruff, ruff format, mypy, frontend lint/typecheck/vitest and pytest on every PR as the required `gate` merge check | .github/workflows/ci.yml | n/a | 2026-09-01 |
 
 ## Resources

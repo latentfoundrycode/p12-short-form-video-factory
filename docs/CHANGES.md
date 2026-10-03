@@ -2,6 +2,15 @@
 
 A running log of notable changes outside the per-task build history.
 
+## 2026-10-03 — Launch API: per-request dry run, parallel steps, and the max-videos cap
+
+`POST /api/workflows/{id}/runs` now accepts `dry_run` (fake assets, no spending) and
+`step_concurrency` (parallel steps inside each video; omitted → the Settings-tab default) per request,
+both strictly typed (a JSON `true` is not the number 1). A workflow that declares `max_videos` now
+refuses a larger request with a 422 before anything starts, and the workflow list exposes the cap so the
+form can enforce it. The form controls that drive these arrive in F3-6b; R-023/R-027/R-028 are marked
+built then. (F3-6a.)
+
 ## 2026-09-28 — Run form: live cost estimate + launch preflight
 
 The Generation Request form now shows a live cost estimate. `POST /api/workflows/{id}/estimate`
