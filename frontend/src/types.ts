@@ -52,6 +52,7 @@ export type Workflow = {
   runs_counted: number;
   archived: boolean;
   last_run: WorkflowLastRun | null;
+  max_videos?: number | null;
 };
 
 export type VideoQualityInput = {
@@ -246,6 +247,8 @@ export type LaunchBody = {
   gates_auto?: boolean;
   per_video_budget?: number;
   voice?: string;
+  dry_run?: boolean;
+  step_concurrency?: number;
 };
 
 export type EstimateMeter = {

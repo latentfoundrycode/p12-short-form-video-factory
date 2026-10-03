@@ -1,6 +1,6 @@
 # Inventory — SFVF (Short-Form Video Factory)
-Reflected through: 2026-10-03 — Launch API: per-request dry run, parallel steps, and the max-videos cap
-Updated: 2026-10-03
+Reflected through: 2026-10-04 — Run form: dry run, parallel steps, video cap, point decimals, remembered values
+Updated: 2026-10-04
 
 ## Features
 | Feature | What it does | Where | Tests | Since |
@@ -22,7 +22,7 @@ Updated: 2026-10-03
 | sfvf launch CLI + reference | `sfvf` command starts the app and serves the SPA; a command reference is generated | app | tests | PKG-1 (#165) |
 | Main-tab workflow cards | Each card shows avg cost per meter (last 10 runs), live run state (running+stage / finished-green until opened / red for failure or budget stop) and greyed browsable archived cards | frontend WorkflowCard/WorkflowGrid + app/api/workflows.py (last_run, avg_cost) + app/core/estimate.py | tests/api/test_workflow_cards.py; frontend WorkflowCard.test.tsx / WorkflowGrid.test.tsx | F2a-b (#179/#180) |
 | Settings tab | Manage API keys from the GUI (configured/missing; set/replace/clear; value never shown) and edit the four §8.7 global defaults (silence limit, concurrency ×2, cache size); env-overridden fields shown read-only | frontend SettingsView.tsx + app/api/settings.py + app/core/app_settings.py | tests/api/test_settings_api.py; tests/core/test_app_settings.py; frontend SettingsView.test.tsx | F1a-c (#176/#177/F1c) |
-| Run-form estimate + launch preflight | The Generation Request form shows a live per-meter cost estimate (matched/crude/no-data, scaled by video count, POST /estimate); launch is refused with a 422 before anything spawns when disk is below the 5 GB floor (ancestor-volume aware), a required key is unconfigured, a required program is missing, or the video count exceeds the workflow's max_videos; the launch API takes per-request dry_run and step_concurrency | frontend RunLaunchForm.tsx + app/api/runs.py (estimate + launch_run preflight) + app/core/estimate.py | tests/api/test_estimate_api.py; tests/api/test_launch_preflight.py; tests/api/test_launch_chassis.py; frontend RunLaunchForm.test.tsx | F3-1/F3-3/F3-4/F3-5/F3-6a |
+| Run-form estimate + launch preflight | The Generation Request form shows a live per-meter cost estimate (matched/crude/no-data, scaled by video count, POST /estimate); launch is refused with a 422 before anything spawns when disk is below the 5 GB floor (ancestor-volume aware), a required key is unconfigured, a required program is missing, or the video count exceeds the workflow's max_videos; the form offers Dry run and Parallel steps per video, enforces the max-videos cap, takes point-only decimals, remembers the last successful start per workflow (localStorage) and falls back to the last-known option list | frontend RunLaunchForm.tsx + app/api/runs.py (estimate + launch_run preflight) + app/core/estimate.py | tests/api/test_estimate_api.py; tests/api/test_launch_preflight.py; tests/api/test_launch_chassis.py; frontend RunLaunchForm.test.tsx, RunLaunchForm.chassis.test.tsx, RunLaunchForm.r2.test.tsx | F3-1/F3-3/F3-4/F3-5/TASK-101/TASK-102 |
 | Continuous integration | GitHub Actions runs ruff, ruff format, mypy, frontend lint/typecheck/vitest and pytest on every PR as the required `gate` merge check | .github/workflows/ci.yml | n/a | 2026-09-01 |
 
 ## Resources
@@ -73,7 +73,7 @@ Updated: 2026-10-03
 | Remove smoke_openrouter / smoke_higgsfield / smoke_provider / explainer workflows | Stage-E cleanup, batched with the finalization pass | Stage E | no |
 | VERSION bump to 1.1.0 + user manual | End-of-cycle finalization after features land | Stage E | no |
 | Main workflow card §8.1 (avg cost, running-stage, archived state, outline colours) | Audit gap F2; part of the paused audit-driven plan | audit 2026-09-27 | yes — scope approval |
-| Run form secondary settings §8.2 (R-016/023/025/027/028/030/031: F3-6), reliability §9.3/§7.2/§7.4/§12 (F4), video list §8.3 (F5) | Audit gaps; part of the paused audit-driven plan. F3 estimate + preflight (R-032/034/036) now built | audit 2026-09-27 | yes — scope approval |
+| Run form remaining §8.2 (R-016 file setting, R-024 budget lines, R-031 read-only view, R-035 balance check: TASK-103..107), reliability §9.3/§7.2/§7.4/§12 incl. R-025 max retries and R-072/R-158 20 GB warn (F4), video list §8.3 (F5) | Audit gaps; part of the paused audit-driven plan. F3 estimate, preflight, chassis controls (R-019/021/023/027/028/030/032/034/036) now built | audit 2026-09-27 | yes — scope approval |
 | Self-review hard-gating (H32/H33) | Owner scoped self-review as record-only for now | Stage C | yes — owner (explicitly deferred) |
 | completion.py budget reserve/release latent bugs (same class as the inc0 agents.llm fix) | Follow-up hardening, not on the critical path | inc0 | no |
 | Kling provider (KLING_ACCESS_KEY / KLING_SECRET_KEY) | Owner has not provided keys | Stage P | yes — owner provides keys |

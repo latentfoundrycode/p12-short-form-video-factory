@@ -28,18 +28,18 @@ requirement (the requirement ID is threaded into those tests as increments touch
 | R-016 | The "file" setting type (reference media input) is accepted and rendered as a dedicated file picker in the run form. | requirements document §8.2, §13 | planned | — (accepted in schema and shown as a plain text field; a dedicated file picker is absent) |
 | R-017 | A choice list may be supplied by a named provider source and filled in when the form opens. | requirements document §8.2 | built | tests/api/test_providers.py |
 | R-018 | The chosen provider-supplied value is recorded as a pinned identifier so the run stays reproducible. | requirements document §8.2 | built | tests/api/test_providers.py |
-| R-019 | If the provider cannot be reached, the last-known option list is offered with a note (fallback to manual entry). | requirements document §8.2 | planned | — (on fetch failure RunLaunchForm offers manual entry with a note, but no last-known list is retained; app/api/providers.py stores no previous list) |
+| R-019 | If the provider cannot be reached, the last-known option list is offered with a note (fallback to manual entry). | requirements document §8.2 | built | frontend RunLaunchForm.chassis.test.tsx |
 | R-020 | Numeric settings are validated before the run starts, with the unit shown beside the field. | requirements document §8.2 | built | frontend/src/components/RunLaunchForm.tsx (unit via controlLabel; validation in collectParams) — a dedicated numeric-validation test is still to be added |
-| R-021 | Decimal values use a point regardless of regional settings. | requirements document §8.2 | planned | — |
+| R-021 | Decimal values use a point regardless of regional settings. | requirements document §8.2 | built | frontend RunLaunchForm.chassis.test.tsx; RunLaunchForm.r2.test.tsx |
 | R-022 | Chassis setting: Number of videos, per Generation Request. | requirements document §8.2 | built | tests/api/test_run_settings_api.py |
-| R-023 | Number of videos is capped where the workflow declares a maximum. | requirements document §8.2, §5.1 | planned | — |
+| R-023 | Number of videos is capped where the workflow declares a maximum. | requirements document §8.2, §5.1 | built | tests/api/test_launch_chassis.py; frontend RunLaunchForm.chassis.test.tsx |
 | R-024 | Chassis setting: Budget, with one line per active meter. | requirements document §8.2, §7.2 | planned | — |
 | R-025 | Chassis setting: Maximum retries (default 3), set per Generation Request. | requirements document §8.2, §9.3 | planned | — |
 | R-026 | Chassis setting: Concurrency (videos produced at the same time). | requirements document §8.2 | built | tests/api/test_run_settings_api.py (the "ignored for a sequence workflow" clause is tracked under R-082, planned) |
-| R-027 | Chassis setting: Parallel steps per video (default 1). | requirements document §8.2 | planned | — |
-| R-028 | Chassis setting: Dry run (fake assets, no spending) selectable per run from the form. | requirements document §8.2 | planned | — |
+| R-027 | Chassis setting: Parallel steps per video (default 1). | requirements document §8.2 | built | tests/api/test_launch_chassis.py; frontend RunLaunchForm.chassis.test.tsx; RunLaunchForm.settingsrace.test.tsx |
+| R-028 | Chassis setting: Dry run (fake assets, no spending) selectable per run from the form. | requirements document §8.2 | built | tests/api/test_launch_chassis.py; frontend RunLaunchForm.chassis.test.tsx; RunLaunchForm.r2.test.tsx |
 | R-029 | The run form offers an approval mode (require approval vs autonomous) mapping to gate auto-pass. | requirements document §9.6a; mockup "Run" modal | built | tests/api/test_gate_api.py; tests/core/test_supervisor.py |
-| R-030 | Values used last time are remembered per workflow and pre-filled when the form is reopened. | requirements document §8.2 | planned | — |
+| R-030 | Values used last time are remembered per workflow and pre-filled when the form is reopened. | requirements document §8.2 | built | frontend RunLaunchForm.chassis.test.tsx; RunLaunchForm.r2.test.tsx |
 | R-031 | Once a Generation Request starts, its settings are fixed; the pop-up can still be opened read-only from a running/paused card. | requirements document §8.2 | planned | — |
 | R-032 | When the form is open, a cost estimate is shown for each meter. | requirements document §8.2, §7.2 | built | tests/api/test_estimate_api.py; frontend RunLaunchForm.test.tsx |
 | R-033 | Initiate is blocked with a specific message when a declared capability is not offered by any configured provider. | requirements document §8.2, §6.5 | built | tests/api/test_admission_model_config.py |

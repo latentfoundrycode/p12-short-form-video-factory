@@ -198,6 +198,7 @@ export function WorkflowCard({ workflow, seen, onStarted, onViewRuns }: Workflow
         workflowId={workflow.id}
         workflowName={title}
         params={workflow.params}
+        maxVideos={workflow.max_videos ?? null}
         onCancel={() => {
           setLaunching(false);
         }}
