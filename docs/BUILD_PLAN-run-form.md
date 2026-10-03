@@ -37,7 +37,7 @@ A vertical slice: each pair below crosses the launch API, the SDK/run where need
 - Parallel: no
 - Satisfies: R-019, R-021, R-023, R-027, R-028, R-030
 - Diagrams: none
-- Scope: frontend/src/components/RunLaunchForm.tsx, frontend/src/components/WorkflowCard.tsx, frontend/src/types.ts, frontend/src/api.ts, frontend/src/styles.css
+- Scope: frontend/src/components/RunLaunchForm.tsx, frontend/src/components/WorkflowCard.tsx, frontend/src/types.ts, frontend/src/api.ts, frontend/src/index.css
 
 Dry-run checkbox; "Parallel steps per video" seeded from the Settings default; the video-count input capped by `maxVideos` (passed from `workflow.max_videos`); `number` params as text inputs with `inputMode="decimal"`, point-only; the last successful start remembered per workflow in localStorage (`sfvf.launchForm.<id>`, try/catch, defaults on failure, wins over Settings seeding); each options fetch cached (`sfvf.providerOptions.<source>`) and offered with a "last known" warning when a later fetch fails. Frozen tests: frontend/src/components/RunLaunchForm.chassis.test.tsx.
 
@@ -57,7 +57,7 @@ Dry-run checkbox; "Parallel steps per video" seeded from the Settings default; t
 - Parallel: no
 - Satisfies: R-024
 - Diagrams: none
-- Scope: frontend/src/components/RunLaunchForm.tsx, frontend/src/types.ts, frontend/src/api.ts, frontend/src/styles.css
+- Scope: frontend/src/components/RunLaunchForm.tsx, frontend/src/types.ts, frontend/src/api.ts, frontend/src/index.css
 
 One line per meter from the estimate, pre-filled with the estimate amount and unit, point-only decimals, blank = no request cap; the old "Per-video budget (USD)" field is removed.
 
